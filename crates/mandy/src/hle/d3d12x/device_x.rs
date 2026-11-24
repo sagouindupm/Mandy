@@ -674,6 +674,13 @@ pub fn pc_resource_desc(x: &[u8; 0x38]) -> [u8; 0x38] {
     if matches!(format, 86 | 115) && flags & 5 != 0 {
         d[0x20..0x24].copy_from_slice(&28u32.to_le_bytes());
     }
+    // R9G9B9E5_SHAREDEXP targets: the console renders to them and writes them from shaders, a PC
+    // driver takes them for neither (a retail game's 1920x1080 one in its Series S mode, flags
+    // 0x5: E_INVALIDARG, and the title stops) – R11G11B10_FLOAT, the PC's HDR target of the same
+    // size; the GPU's own
+    if format == 67 && flags & 5 != 0 {
+        d[0x20..0x24].copy_from_slice(&26u32.to_le_bytes());
+    }
     // a depth buffer the console also lets shaders write (a retail game's: ALLOW_DEPTH_STENCIL |
     // ALLOW_UNORDERED_ACCESS): the PC refuses the pair – the depth buffer stays
     if flags & 2 != 0 {
@@ -715,6 +722,7 @@ fn depth_typeless(f: u32) -> Option<u32> {
 pub fn pc_target_format(f: u32) -> u32 {
     match f {
         86 | 115 => 28,
+        67 => 26,
         f => pc_view_format(f),
     }
 }
@@ -737,6 +745,8 @@ pub fn pc_shader_view_format(resource: u32, view: u32) -> u32 {
         (53 | 55, 0 | 53 | 55) => 56,
         // a target made R8G8B8A8 (`pc_resource_desc`)
         (28, 86 | 115) => 28,
+        // a target made R11G11B10_FLOAT (`pc_resource_desc`)
+        (26, 67) => 26,
         (_, v) => v,
     }
 }
@@ -1073,6 +1083,8 @@ mod tests {
         assert_eq!(pc_shader_view_format(19, 62), 22);
         assert_eq!(pc_shader_view_format(28, 86), 28);
         assert_eq!(pc_shader_view_format(86, 86), 86, "a B5G5R5A1 texture that stayed one");
+        assert_eq!((pc_target_format(67), pc_shader_view_format(26, 67)), (26, 26));
+        assert_eq!(pc_shader_view_format(67, 67), 67, "an R9G9B9E5 texture that stayed one");
         assert_eq!((pc_target_format(86), pc_target_format(118), pc_view_format(117)), (28, 45, 10));
     }
 
