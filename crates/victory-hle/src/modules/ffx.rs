@@ -1,9 +1,11 @@
 //! `amd_fidelityfx_loader_xbox.dll` and `amd_fidelityfx_upscaler_xbox.dll`:
 //! the title's FidelityFX upscaler.
 //!
-//! Without `VICTORY_FFX_DIR` both are the title's own DLLs and run as they
-//! are. With it they are served by AMD's PC upscaler on the host GPU
-//! (`victory_gpu::ffx`, [`module`]).
+//! Without `VICTORY_FFX_DIR` or `VICTORY_DLSS_DIR` both are the title's own
+//! DLLs and run as they are. With `VICTORY_FFX_DIR` they are served by AMD's
+//! PC upscaler on the host GPU (`victory_gpu::ffx`, [`module`]); with
+//! `VICTORY_DLSS_DIR` they are answered by NVIDIA DLSS through Streamline
+//! instead.
 
 #[cfg(windows)]
 use crate::{HleExport, HleModule};
