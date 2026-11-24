@@ -557,6 +557,19 @@ pub fn emit(
                 return again.map(|(shader, _)| shader);
             }
         }
+        // A thread group of several console waves, which the wave-wide form does not take:
+        // every form once more with the group's LDS left to the title's own barriers
+        // ([`lower::with_group_barriers`]; `VICTORY_WAVE_GROUP_BARRIERS=0` turns it off).
+        let several = matches!(native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() > 64);
+        let group_on = std::env::var_os("VICTORY_WAVE_GROUP_BARRIERS").is_none_or(|v| v != "0");
+        if several && group_on && matches!(&original, Ok((_, Some(64)))) {
+            if why {
+                eprintln!("WAVE64-RETRY the group's LDS left to the title's barriers:");
+            }
+            if let Some(Ok(shader)) = lower::with_group_barriers(|| emit(c, native, p, st, io, res)) {
+                return Ok(shader);
+            }
+        }
     }
     // SCC of a mask operation joined with a scalar test behind a per-lane skip (the 32-lane
     // trace programs): right once the wave takes that skip together ([`widen`]; the

@@ -365,6 +365,22 @@ fn all_lane_blocks(st: &Structured) -> Option<Vec<bool>> {
     Some(all)
 }
 
+/// Per IR block: every thread of the group runs it, and once. No branch of any kind decides
+/// whether (it lies in no branch's region), and it is in no loop: the console waves of a group
+/// each take their own way, scalar tests included. None with an indirect exit.
+fn every_thread_blocks(st: &Structured) -> Option<Vec<bool>> {
+    let mut all = vec![true; st.exits.len()];
+    for (d, region) in branch_regions(st, |_, _| true)? {
+        if comes_round(st, d, &region) {
+            all[d] = false;
+        }
+        for (b, _) in region.iter().enumerate().filter(|r| *r.1) {
+            all[b] = false;
+        }
+    }
+    Some(all)
+}
+
 /// Every per-lane branch (by its block) with its region: the blocks reachable from it that do
 /// not post-dominate it, which only some lanes run. Not the branches the wave takes together
 /// ([`Structured::wide`]), nor those on scalar conditions. None with an indirect exit.
@@ -1269,6 +1285,8 @@ thread_local! {
     static NEEDS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
     /// See [`take_meets`].
     static MEETS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// See [`with_group_barriers`].
+    static GROUP_BARRIERS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// See [`with_loop_exits`].
     static LOOP_EXITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// See [`with_agreed`].
@@ -1291,6 +1309,26 @@ pub(super) fn with_local_waves_any<R>(f: impl FnOnce() -> R) -> R {
     let r = with_local_waves(f);
     LOCAL_ANY.set(was);
     r
+}
+
+/// Runs `f` (unless already inside one) with the LDS of a console wave64 program whose thread
+/// groups hold several console waves left to the title's own barriers: the two host waves of a
+/// console wave get no barrier of the translation's before an LDS access. Threads of such a
+/// group are in different waves on the console too, so what one writes for another to read
+/// already has the program's `s_barrier` in between; only a group of one wave is compiled
+/// without (its lanes run in step). What is left of the translation's barriers, the exchanges
+/// between the halves, then stands only where every thread of the group goes
+/// ([`every_thread_blocks`]): a branch the console waves decide each for themselves cannot be
+/// around a group barrier. `None` inside another call.
+// shortcut: a program that relies on the lanes of one wave running in step for LDS it shares
+// without a barrier (wrong in HLSL, right on the console by accident) loses that order.
+pub(super) fn with_group_barriers<R>(f: impl FnOnce() -> R) -> Option<R> {
+    if GROUP_BARRIERS.replace(true) {
+        return None;
+    }
+    let r = f();
+    GROUP_BARRIERS.set(false);
+    Some(r)
 }
 
 /// Runs `f` with a per-lane branch's own block counted among the blocks only some lanes run
@@ -1735,6 +1773,12 @@ impl<'a> Lower<'a> {
             // `v_readlane`, `v_writelane`, `ds_(b)permute`, masks as numbers or lane-constant
             // masks), nor when LDS may be shared within the console wave without barriers (a
             // group over 32 threads with LDS): those still need 64-lane waves.
+            // In a group of several console waves the title's own barriers order its LDS (it
+            // cannot tell which threads share a wave): the two halves of a console wave need no
+            // barrier of ours for it ([`with_group_barriers`]).
+            // (not where the thread relabelling's dword and the exchange dwords would take the
+            // LDS past what a host thread group may have)
+            let ordered = GROUP_BARRIERS.get() && group > 64 && s.lds_dwords + 1 + 2 * group.div_ceil(64) <= 32768 / 4;
             if wave == 64 && host_max_wave() == 32 && (console_lanes || one_wave && s.lds_dwords > 0) {
                 let crosses = insts().any(|i| {
                     let n = i.name();
@@ -1745,7 +1789,7 @@ impl<'a> Lower<'a> {
                         || reads_mask_as_data(x.st, i)
                 }) || lane_constant_masks(x.st)
                     || !x.st.wide.is_empty();
-                if !crosses && (s.lds_dwords == 0 || group <= 32) {
+                if !crosses && (s.lds_dwords == 0 || group <= 32 || ordered) {
                     wave = 32;
                 } else {
                     // (Groups of several console waves too: each console wave is two host
@@ -1758,13 +1802,16 @@ impl<'a> Lower<'a> {
                         matches!(i.fields, Fields::Ds { .. })
                             && !(i.name().starts_with("ds_swizzle") || i.name().contains("permute"))
                     };
-                    if let Some(all) = all_lane_blocks(x.st) {
+                    // (`ordered`: the halves meet only to exchange, and only where every thread
+                    // of the group goes; each host wave on its own meets no one)
+                    let blocks = if ordered && !LOCAL_WAVES.get() { every_thread_blocks(x.st) } else { all_lane_blocks(x.st) };
+                    if let Some(all) = blocks {
                         let ok = p.blocks.iter().enumerate().all(|(b, blk)| {
                             blk.insts.iter().all(|inst| {
                                 !lds(inst) || all.get(b).copied().unwrap_or(false)
                             })
                         });
-                        let mut lds_ok = !(s.lds_dwords > 0 && group > 32) || ok;
+                        let mut lds_ok = !(s.lds_dwords > 0 && group > 32) || ok || ordered;
                         if !lds_ok && let Some(meet) = lds_meetings(p, x.st, &all) {
                             lds_meet = Some((all.clone(), meet));
                             lds_ok = true;
@@ -1780,7 +1827,7 @@ impl<'a> Lower<'a> {
                         }
                         if lds_ok {
                             wave = 32;
-                            split_lds = s.lds_dwords > 0 && group > 32;
+                            split_lds = s.lds_dwords > 0 && group > 32 && !ordered;
                             if crosses {
                                 // lanes 32..63 are the other host wave: masks, lane reads and lane
                                 // numbers go through two exchange dwords past the program's LDS

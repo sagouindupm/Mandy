@@ -938,3 +938,73 @@ fn a_loop_lanes_leave_one_by_one_is_taken_wave_wide_before_host_waves_meet_in_it
     // (the other forms keep the block as one every lane runs: see `lower::with_loop_exits`)
     assert_eq!(lower::branches_around(&st, &[head]), Some(Vec::new()));
 }
+
+/// A thread group of two console waves (128 threads) with LDS, a wave OR, and each thread's
+/// own LDS word written and read back inside a per-lane branch. Run as host waves of 32, the
+/// two halves of a console wave cannot be given a barrier between that write and that read
+/// (not every lane is there), so the program kept its 64-lane waves, which a 32-lane host
+/// refuses. Such a group's threads are in different waves on the console as well: the title
+/// orders what they share with its own barriers, and the halves need none of ours.
+#[test]
+fn the_lds_of_a_group_of_several_console_waves_is_left_to_the_titles_barriers() {
+    let mut code = vec![
+        0x7E0A_0281, // v_mov_b32 v5, 1
+        0x2C0C_0081, // v_lshrrev_b32 v6, 1, v0
+        0x340E_0B06, // v_lshlrev_b32 v7, v6, v5
+    ];
+    code.extend_from_slice(&super::wave::WAVE_OR_V7_TO_S7);
+    code.extend_from_slice(&[
+        0x340C_0082, // v_lshlrev_b32 v6, 2, v0
+        0x7D88_0000, // v_cmp_gt_u32 vcc, s0, v0
+        0xBE8C_246A, // s_and_saveexec_b64 s[12:13], vcc
+        0xBF88_0004, // s_cbranch_execz to the restore of EXEC
+        0xD834_0000,
+        0x0000_0006, // ds_write_b32 v6, v0
+        0xD8D8_0000,
+        0x0100_0006, // ds_read_b32 v1, v6
+        0xBEFE_040C, // s_mov_b64 exec, s[12:13]
+        0x7E00_0207, // v_mov_b32 v0, s7
+        0x38 << 26 | 0x1C << 18,
+        0x80 << 24 | 2 << 16, // buffer_store_dword v0, off, s[8:11], 0
+    ]);
+    let mut native = native_of(&code, true, 128);
+    // (5 user SGPRs, 512 bytes of LDS)
+    native.io = StageIo::Cs(ComputeIo { rsrc2: 5 << 1 | 1 << 15, threads: [128, 1, 1] });
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let names: Vec<&str> = p.blocks.iter().flat_map(|b| &b.insts).map(|i| i.name()).collect();
+    for name in ["ds_write_b32", "ds_read_b32", "s_cbranch_execz"] {
+        assert!(names.contains(&name), "{name} in {names:?}");
+    }
+    let st = structure::structure(&p).expect("structure");
+    let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("resource::track");
+    let io = io::raise(&p, &native).expect("io::raise");
+    let lower = || {
+        let was = lower::TEST_HOST_WAVE.replace(Some(32));
+        let l = lower::lower(&lower::Parts {
+            native: &native,
+            p: &p,
+            st: &st,
+            io: &io,
+            res: &res,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            prims: Vec::new(),
+            mesh_stride: 0,
+        });
+        lower::TEST_HOST_WAVE.set(was);
+        l.expect("lower")
+    };
+    assert_eq!(lower().wave_size, Some(64));
+    lower::take_meets();
+    let halved = lower::with_group_barriers(lower).expect("not inside another");
+    assert_eq!(halved.wave_size, Some(32));
+    // the halves meet only to exchange the OR, in the entry block, which every thread of the
+    // group runs (and `take_meets` leaves out); not at the LDS accesses
+    assert_eq!(lower::take_meets(), Vec::<usize>::new());
+    let mut dxil = halved.dxil;
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        v.validate(&mut dxil).expect("DXIL validation failed");
+    }
+    // (the switch is off again)
+    assert_eq!(lower().wave_size, Some(64));
+}
