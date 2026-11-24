@@ -543,6 +543,20 @@ pub fn emit(
                 }
             }
         }
+        // Last of all, for a program that would still ask for 64-lane waves, which this host
+        // refuses outright: the wave-wide form after all (unless `VICTORY_WAVE_WIDE=0`). Every
+        // group barrier it adds now stands behind decisions the two host waves take as one
+        // ([`widen`]). Not before the forms above: the programs they take keep their
+        // translation.
+        let wide_last = !wide_on && std::env::var_os("VICTORY_WAVE_WIDE").is_none_or(|v| v != "0");
+        if wide_last && matches!(&original, Ok((_, Some(64)))) {
+            let deep_on = std::env::var_os("VICTORY_WAVE_DEEP_SKIPS").is_none_or(|v| v != "0");
+            let deep = if deep_on { form(ir::without_skips(p, true)) } else { None };
+            let again = wide_form(deep.as_ref().map(|f| &f.0));
+            if done(&again) {
+                return again.map(|(shader, _)| shader);
+            }
+        }
     }
     // SCC of a mask operation joined with a scalar test behind a per-lane skip (the 32-lane
     // trace programs): right once the wave takes that skip together ([`widen`]; the
