@@ -42,6 +42,8 @@ mod gfxwatch;
 #[cfg(windows)]
 mod pacing;
 pub mod dxgi;
+#[cfg(windows)]
+pub mod ffx;
 pub mod fence;
 pub mod frame;
 #[cfg(all(windows, feature = "diagnostics"))]
