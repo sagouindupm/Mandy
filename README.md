@@ -1,7 +1,9 @@
 # MANDY – Xbox Series X|S → Windows compatibility layer
 
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/xcl)
-**Discord: <https://discord.gg/xcl>**
+> **Mandy is a fork of [XCL](https://github.com/ivall/xcl), renamed.** All of XCL's work is its
+> authors'; Mandy keeps XCL's license (GPL-2.0-only, see `LICENSE` and `THIRD_PARTY.md`) and follows
+> upstream: see [`docs/mandy/upstream.md`](docs/mandy/upstream.md). What this repository changed is in
+> its git history, on top of the `vendor/xcl-renamed` branch.
 
 MANDY is a compatibility layer that runs Xbox Series X|S (GDK) games you own on a Windows PC - in the spirit of Wine/Proton. There is no CPU emulation: the game's x64 code runs natively, and MANDY provides its own, independently written implementations of the console system libraries the PC does not have (`kernelx.dll`, XGameRuntime, `d3d12_xs.dll`, …). The console's GPU code (RDNA2 machine code) is recompiled into PC shaders (HLSL → DXIL).
 
