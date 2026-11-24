@@ -369,6 +369,36 @@ fn all_lane_blocks(st: &Structured) -> Option<Vec<bool>> {
 /// not post-dominate it, which only some lanes run. Not the branches the wave takes together
 /// ([`Structured::wide`]), nor those on scalar conditions. None with an indirect exit.
 fn lane_regions(st: &Structured) -> Option<Vec<(usize, Vec<bool>)>> {
+    let lane = |d: usize, when: Bool| !st.wide.contains(&d) && !scalar_test(st, when);
+    let mut regions = branch_regions(st, lane)?;
+    if LOOP_EXITS.get() {
+        // The branch's own block, where it comes round again with only the lanes the branch
+        // kept: a loop that lanes leave one by one there.
+        for (d, region) in &mut regions {
+            region[*d] = comes_round(st, *d, region);
+        }
+    }
+    Some(regions)
+}
+
+/// Whether block `d` is reached again from the branch closing it through the blocks of that
+/// branch's `region` alone.
+fn comes_round(st: &Structured, d: usize, region: &[bool]) -> bool {
+    let to = |b: usize| match st.exits[b] {
+        LaneExit::Jump(t) => t == d,
+        LaneExit::Branch { taken, not_taken, .. } => taken == d || not_taken == d,
+        LaneExit::End | LaneExit::Indirect => false,
+    };
+    to(d) || (0..region.len()).any(|b| region[b] && to(b))
+}
+
+/// Whether the branch condition `when` is a scalar test: the same for every lane of a wave.
+fn scalar_test(st: &Structured, when: Bool) -> bool {
+    st.bools.support(when).iter().all(|a| matches!(a, Atom::Uniform(_)))
+}
+
+/// [`lane_regions`] for the branches `pick` chooses (by block and condition).
+fn branch_regions(st: &Structured, pick: impl Fn(usize, Bool) -> bool) -> Option<Vec<(usize, Vec<bool>)>> {
     let n = st.exits.len();
     let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
     for (b, e) in st.exits.iter().enumerate() {
@@ -409,8 +439,8 @@ fn lane_regions(st: &Structured) -> Option<Vec<(usize, Vec<bool>)>> {
     let mut regions = Vec::new();
     for (d, e) in st.exits.iter().enumerate() {
         let LaneExit::Branch { when, .. } = *e else { continue };
-        if st.wide.contains(&d) || st.bools.support(when).iter().all(|a| matches!(a, Atom::Uniform(_))) {
-            continue; // a wave-wide or uniform branch: all lanes go the same way
+        if !pick(d, when) {
+            continue; // (for lane regions: a wave-wide or uniform branch, all lanes go the same way)
         }
         // blocks reachable from the lane branch that do not post-dominate it
         let mut seen = vec![false; n];
@@ -447,6 +477,30 @@ pub(super) fn branches_around(st: &Structured, needs: &[usize]) -> Option<Vec<us
 /// waves meeting there), which the other forms of the program may give it.
 pub(super) fn needs_every_lane(what: &str) -> bool {
     what.ends_with("where not every lane runs") || what == MASK_ELSEWHERE
+}
+
+/// The branches on scalar tests (by block) around a block of `meets` (blocks where the two host
+/// waves of a console wave meet at a group barrier, [`take_meets`]): each host wave tests its
+/// own copy of the scalar, and if the copies differed (a load from memory another thread group
+/// writes meanwhile) one half would wait at a barrier the other never reaches. The branch's
+/// own block counts when it lies in a loop the branch decides.
+pub(super) fn scalar_branches_around(st: &Structured, meets: &[usize]) -> Option<Vec<usize>> {
+    let scalar = |d: usize, when: Bool| !st.wide.contains(&d) && scalar_test(st, when);
+    let mut out = Vec::new();
+    for (d, region) in branch_regions(st, scalar)? {
+        // (the region leaves out the branch's block itself: it is in it when it comes round again)
+        if meets.iter().any(|&b| region.get(b).copied().unwrap_or(false) || b == d && comes_round(st, d, &region)) {
+            out.push(d);
+        }
+    }
+    Some(out)
+}
+
+/// The blocks where the last lowering on this thread made the two host waves of a console wave
+/// meet (a group barrier of the translation's own), which it forgets. `usize::MAX`: in a block
+/// that could not be named.
+pub(super) fn take_meets() -> Vec<usize> {
+    MEETS.take()
 }
 
 /// The blocks where the last lowering on this thread wanted every lane and did not have it
@@ -1213,6 +1267,12 @@ pub fn set_host_max_wave(lanes: u32) {
 thread_local! {
     /// See [`take_needs`].
     static NEEDS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// See [`take_meets`].
+    static MEETS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// See [`with_loop_exits`].
+    static LOOP_EXITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// See [`with_agreed`].
+    static AGREED: std::cell::RefCell<HashSet<usize>> = std::cell::RefCell::new(HashSet::new());
     /// See [`with_local_waves`].
     static LOCAL_WAVES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// See [`with_local_waves_any`].
@@ -1230,6 +1290,31 @@ pub(super) fn with_local_waves_any<R>(f: impl FnOnce() -> R) -> R {
     let was = LOCAL_ANY.replace(true);
     let r = with_local_waves(f);
     LOCAL_ANY.set(was);
+    r
+}
+
+/// Runs `f` with a per-lane branch's own block counted among the blocks only some lanes run
+/// ([`lane_regions`]) where it lies in a loop the branch lets lanes out of one by one: from
+/// the second iteration on, the lanes that left are not there, and a group barrier in that
+/// block would wait for them. For the wave-wide form ([`super::widen`]), which then takes
+/// such a branch wave-wide: the wave stays in the loop until every lane is done, as on the
+/// console.
+// shortcut: the other forms still take such a block for one every lane runs (their
+// translations are kept as they are); move them over once a run shows it changes nothing.
+pub(super) fn with_loop_exits<R>(f: impl FnOnce() -> R) -> R {
+    let was = LOOP_EXITS.replace(true);
+    let r = f();
+    LOOP_EXITS.set(was);
+    r
+}
+
+/// Runs `f` with the scalar branches closing `blocks` taken by the two host waves of a console
+/// wave as one ([`Lower::agreed`]): the ones around a place where the waves meet
+/// ([`scalar_branches_around`]), so that both get there.
+pub(super) fn with_agreed<R>(blocks: &HashSet<usize>, f: impl FnOnce() -> R) -> R {
+    let was = AGREED.replace(blocks.clone());
+    let r = f();
+    AGREED.set(was);
     r
 }
 
@@ -4457,9 +4542,27 @@ impl<'a> Lower<'a> {
 
     /// A group barrier with an LDS fence in `block`.
     fn group_sync(&mut self, block: usize) {
+        self.met(block);
         let mode = self.s.m.i32(meeting_mode());
         let void = self.s.t.void;
         self.s.op(block, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
+    }
+
+    /// Notes that the host waves meet in DXIL block `at` ([`take_meets`]).
+    fn met(&mut self, at: usize) {
+        if at == self.s.entry {
+            return; // (every thread runs the entry block, once)
+        }
+        let b = if at == self.cur {
+            self.cur_ir
+        } else {
+            self.tail.iter().position(|&t| t == Some(at)).unwrap_or(usize::MAX)
+        };
+        MEETS.with_borrow_mut(|m| {
+            if !m.contains(&b) {
+                m.push(b);
+            }
+        });
     }
 
     /// `exchange`: each host wave gives `mine` (the same in all its lanes) for its half; both get
@@ -4501,6 +4604,22 @@ impl<'a> Lower<'a> {
         // the slots are written again only after every thread read them
         self.group_sync(at);
         (lo, hi)
+    }
+
+    /// The scalar test `cond` of the branch closing IR block `b` as both host waves of a console
+    /// wave take it ([`with_agreed`]): the lower half's. Each half tests its own copy of the
+    /// scalar; the console has one. Where the copies differ (a load from memory another thread
+    /// group writes meanwhile) the halves would part, and a group barrier behind the branch
+    /// would wait for threads that never come, which stops the card.
+    fn agreed(&mut self, b: usize, cond: V) -> Result<V, Why> {
+        if !self.all_lanes(b) {
+            return Err("a scalar branch around a meeting of host waves where not every lane runs");
+        }
+        let i32t = self.s.t.i32;
+        let mine = self.s.m.cast(self.cur, Cast::ZExt, cond, i32t);
+        let (lo, _) = self.exchange_halves(self.cur, mine);
+        let z = self.s.m.i32(0);
+        Ok(self.s.m.cmp(self.cur, pred::NE, lo, z))
     }
 
     /// The first of the two exchange dwords of this thread's console wave (made in the entry
@@ -5648,6 +5767,7 @@ impl<'a> Lower<'a> {
         {
             // the two host waves of a console wave meet before each LDS access: what the other
             // half wrote is visible, and what it still reads is not overwritten
+            self.met(self.cur);
             let mode = self.s.m.i32(meeting_mode());
             let void = self.s.t.void;
             self.s.op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
@@ -5712,6 +5832,7 @@ impl<'a> Lower<'a> {
     /// The two host waves of a console wave meet (a group barrier with a shared-memory
     /// fence): LDS writes before are seen by reads after.
     fn lds_meeting(&mut self) {
+        self.met(self.cur);
         let mode = self.s.m.i32(meeting_mode());
         let void = self.s.t.void;
         self.s.op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
@@ -12149,6 +12270,11 @@ impl<'a> Lower<'a> {
                             .map_err(|w| unsupported(offset, w))?;
                         (c, taken, not_taken)
                     }
+                };
+                let cond = if AGREED.with_borrow(|a| a.contains(&b)) {
+                    self.agreed(b, cond).map_err(|w| unsupported(offset, w))?
+                } else {
+                    cond
                 };
                 // A back edge is taken only below the iteration limit.
                 let back =
