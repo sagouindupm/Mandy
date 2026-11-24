@@ -4,6 +4,9 @@
 > authors'; Mandy keeps XCL's license (GPL-2.0-only, see `LICENSE` and `THIRD_PARTY.md`) and follows
 > upstream: see [`docs/mandy/upstream.md`](docs/mandy/upstream.md). What this repository changed is in
 > its git history, on top of the `vendor/xcl-renamed` branch.
+>
+> Mandy is a personal project. Its own work is tested on NVIDIA GPUs first; reports and fixes for
+> other GPUs are welcome.
 
 MANDY is a compatibility layer that runs Xbox Series X|S (GDK) games you own on a Windows PC - in the spirit of Wine/Proton. There is no CPU emulation: the game's x64 code runs natively, and MANDY provides its own, independently written implementations of the console system libraries the PC does not have (`kernelx.dll`, XGameRuntime, `d3d12_xs.dll`, …). The console's GPU code (RDNA2 machine code) is recompiled into PC shaders (HLSL → DXIL).
 
