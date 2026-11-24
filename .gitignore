@@ -43,3 +43,4 @@ frame_*.bmp
 
 # Python bytecode of the scripts
 __pycache__/
+/bench-results
