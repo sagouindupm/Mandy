@@ -26,7 +26,7 @@ GAME_DATA = re.compile(
     r"\.(rpf|xvd|xvc|msixvc|appx|msix|appxbundle|xex|xbe|pak|bk2|bik|ttpf|dds|ktx2?|wem|bnk|"
     r"exe|dll|pdb|sys|dmp|mdmp|bin|dat|img|iso|pkg|xsp|cab)$", re.I)
 GAME_FILES = re.compile(r"(^|/)(MicrosoftGame\.config|appxmanifest\.xml|resources\.pri)$", re.I)
-# where test data of XCL's own may live (synthetic, small)
+# where test data of MANDY's own may live (synthetic, small)
 TEST_DATA = ("tests/data/",)
 MAX_BINARY = 1 << 20
 FRAMES_KEPT = 0.8   # the PR's frames at least this share of main's
@@ -34,10 +34,10 @@ COMMIT_GROWTH = 1.25  # the PR's peak commit at most this times main's
 
 
 def smoke_blocks(body):
-    """The `xcl-smoke v1` blocks of `body`: each a dict of its `key: value` lines. A block ends at
+    """The `mandy-smoke v1` blocks of `body`: each a dict of its `key: value` lines. A block ends at
     a code fence or at the next block's header (both blocks pasted in one fence)."""
     out = []
-    for m in re.finditer(r"xcl-smoke v1\s*\n(.*?)(?=xcl-smoke v1|```|\Z)", body, re.S):
+    for m in re.finditer(r"mandy-smoke v1\s*\n(.*?)(?=mandy-smoke v1|```|\Z)", body, re.S):
         block = {}
         for line in m.group(1).splitlines():
             k, sep, v = line.partition(":")
@@ -53,17 +53,17 @@ def number(s):
 
 
 def runtime(path):
-    return path.startswith("crates/xcl/src/") and "/tests" not in path and not path.endswith("tests.rs")
+    return path.startswith("crates/mandy/src/") and "/tests" not in path and not path.endswith("tests.rs")
 
 
-# built into xcl.exe from outside crates/xcl/src: the data it compiles in (stubdb.toml, by
+# built into mandy.exe from outside crates/mandy/src: the data it compiles in (stubdb.toml, by
 # include_str!), its build script, and the manifests and lock file that pick its dependencies
 # and the release profile
-RUNTIME_BUILD = ("crates/xcl/build.rs", "crates/xcl/Cargo.toml", "Cargo.toml", "Cargo.lock")
+RUNTIME_BUILD = ("crates/mandy/build.rs", "crates/mandy/Cargo.toml", "Cargo.toml", "Cargo.lock")
 
 
 def builds_runtime(path):
-    return path.startswith("crates/xcl/data/") or path in RUNTIME_BUILD
+    return path.startswith("crates/mandy/data/") or path in RUNTIME_BUILD
 
 
 def section_has_content(body, section):
@@ -117,11 +117,11 @@ def check(body, head, files, is_main_ancestor, *, test_only=False):
         clean = [b for b in mine if "uncommitted" not in b.get("commit", "")]
         base = [b for b in blocks if b not in mine and len(b.get("commit", "").split()[0] if b.get("commit") else "") >= 7]
         if not clean:
-            problems.append(f"the PR changes the runtime: **Regression run** needs an `xcl-smoke` block made on this PR's "
+            problems.append(f"the PR changes the runtime: **Regression run** needs an `mandy-smoke` block made on this PR's "
                             f"head commit {head[:12]} with no uncommitted changes (rerun scripts/smoke.ps1 after every push)")
         main = [b for b in base if is_main_ancestor(b["commit"].split()[0])]
         if not main:
-            problems.append("**Regression run** needs an `xcl-smoke` block made on a commit of main (not the PR's), "
+            problems.append("**Regression run** needs an `mandy-smoke` block made on a commit of main (not the PR's), "
                             "with the same title and time as the PR's")
         if clean:
             pr = clean[-1]

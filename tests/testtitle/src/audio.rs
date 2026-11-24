@@ -1,5 +1,5 @@
 //! XAudio2 the way a console title uses it: engine with console-only flags, mastering
-//! voice with a console device id, an XMA2 voice (decoded to PCM16 by XCL), an Opus voice
+//! voice with a console device id, an XMA2 voice (decoded to PCM16 by MANDY), an Opus voice
 //! (decoded via MSOpusDecoder) and a plain PCM voice. Buffer callbacks must come back with
 //! the title's contexts and the streams must end on time.
 
@@ -196,7 +196,7 @@ pub fn xaudio2_console_voices() -> Result<(), String> {
             return Ok(());
         }
 
-        // XMA2 mono 48 kHz – decoded to PCM16 by XCL (Windows XAudio2 cannot play it natively)
+        // XMA2 mono 48 kHz – decoded to PCM16 by MANDY (Windows XAudio2 cannot play it natively)
         let xma = Xma2Format {
             wfx: WaveFormatEx { tag: 0x166, channels: 1, rate: 48_000, avg_bytes: 6000, block_align: 1, bits: 16, cb_size: 34 },
             num_streams: 1,
@@ -271,7 +271,7 @@ pub fn xaudio2_console_voices() -> Result<(), String> {
             return Err("SubmitSourceBuffer(PCM)".into());
         }
 
-        // Opus mono 48 kHz (0x704F) in a 2048 B AWC-framed block – decoded to PCM16 by XCL
+        // Opus mono 48 kHz (0x704F) in a 2048 B AWC-framed block – decoded to PCM16 by MANDY
         let opus_fmt = WaveFormatEx { tag: 0x704F, channels: 1, rate: 48_000, avg_bytes: 4000, block_align: 2048, bits: 0, cb_size: 0 };
         let mut ov: *mut c_void = std::ptr::null_mut();
         let hr = create_source(eng, &mut ov, &opus_fmt as *const WaveFormatEx as *const c_void, 0, 2.0, cb, std::ptr::null(), std::ptr::null());

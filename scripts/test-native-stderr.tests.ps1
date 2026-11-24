@@ -1,7 +1,7 @@
 # Run with powershell.exe or pwsh.exe. The fixture writes stderr through a native process.
 $ErrorActionPreference = 'Stop'
 $runner = Join-Path $PSScriptRoot 'test.ps1'
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('xcl-native-stderr-' + [guid]::NewGuid())
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('mandy-native-stderr-' + [guid]::NewGuid())
 $null = New-Item -ItemType Directory -Path $fixture
 $cargo = Join-Path $fixture 'cargo.cmd'
 $log = Join-Path $fixture 'runner.log'

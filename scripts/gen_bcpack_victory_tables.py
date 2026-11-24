@@ -1,4 +1,4 @@
-"""Turn VIctory's bcpack-tables.bin into Rust constants for XCL.
+"""Turn VIctory's bcpack-tables.bin into Rust constants for MANDY.
 
 bcpack-tables.bin is from the VIctory repo (github.com/Marvisak/VIctory),
 victory-formats/bcpack-tables.bin.

@@ -25,7 +25,7 @@ vector reads (DPP16, DPP8, `ds_swizzle`, `v_permlane(x)16`, `ds_bpermute`) also 
 
 One console wave64 = two hardware wave32s of the same thread group ("halves"): the console
 group keeps its `numthreads` and the shader gets `[WaveSize(32)]`. Which hardware threads
-play which console thread is decided at the start (`xcl_x_thread`): the threads of a group
+play which console thread is decided at the start (`mandy_x_thread`): the threads of a group
 are interchangeable, but the console forms its waves from consecutive thread indices and
 the PC GPU need not – on the RTX 5070 Ti, 1-D groups get consecutive `SV_GroupIndex` values
 per wave, an 8 × 8 × 4 group does not. Each hardware wave takes the next 32 console threads
@@ -66,10 +66,10 @@ SGPRs of both halves and the tests fail if they ever differ.
   verdict (`WaveReadLaneFirst`); a fence, then the read. Slots are double-buffered by the
   parity of k: the partner can be at most one exchange ahead, so it never overwrites the
   slot being read. The wait is bounded (2^20 polls): if it ever runs out (a desynchronised
-  pair – should not happen, see hazards), the wave stops exchanging (`xcl_x_dead`) and
+  pair – should not happen, see hazards), the wave stops exchanging (`mandy_x_dead`) and
   finishes with half-local values instead of hanging the GPU until a TDR. This relies on
   co-resident waves of one group making progress, which holds on GPUs (all waves of a group
-  are resident on one SM / CU) but not necessarily on WARP. `XCL_WAVE64_SPIN=1` forces this
+  are resident on one SM / CU) but not necessarily on WARP. `MANDY_WAVE64_SPIN=1` forces this
   variant everywhere (the test suite passes with it too).
 
 A console wave whose upper half does not exist (group of 32 or 96 threads) exchanges with
@@ -80,10 +80,10 @@ GS phase of ES+GS runs in the lower half only (≤ 21 primitives), likewise with
 
 The exchange needs groupshared space: per console wave 2 counters + 2 halves × 2 parities ×
 slot (1 word, 16 with wide GLC scalar loads, 32 with `ds_bpermute`). Without console LDS it
-has arrays of its own; with LDS (`xcl_lds`, already the full 32 KB D3D12 limit) it lives in
+has arrays of its own; with LDS (`mandy_lds`, already the full 32 KB D3D12 limit) it lives in
 the top of the LDS block (as PR #33 did), and the program's LDS accesses are clamped below
 it. A program that really uses the whole 32 KB of LDS therefore loses its top dwords on a
-32-lane GPU (the console allows 64 KB; XCL already wraps at 32 KB).
+32-lane GPU (the console allows 64 KB; MANDY already wraps at 32 KB).
 
 ## Hazards (and why they are handled)
 
@@ -95,7 +95,7 @@ it. A program that really uses the whole 32 KB of LDS therefore loses its top dw
    is exactly one console wave, whose control flow is identical in both halves; console
    `s_barrier` stays a group barrier (all console waves reach it, as on the console). The GS
    phase (lower half only) has no exchanges and its `s_barrier` is dropped (one wave).
-3. **Lane numbering** – handled by `xcl_x_thread` (see above); NVIDIA really does form waves
+3. **Lane numbering** – handled by `mandy_x_thread` (see above); NVIDIA really does form waves
    of non-consecutive thread indices for 3-D groups (`gpu_split_wave64_waves_diverge` fails
    without the remap).
 4. **`WaveReadLaneAt` with a per-lane index** – used inside a half as before.
@@ -105,7 +105,7 @@ it. A program that really uses the whole 32 KB of LDS therefore loses its top dw
 
 A mask whose only readers take the reading lane's own bit – `v_cndmask_b32`'s selector, the
 carry-in of `v_add_co_ci` / `v_sub(rev)_co_ci` – needs just that lane's half, so it is not
-exchanged: `xcl_x_ballot_local` gives the half's own word and 0 for the other half
+exchanged: `mandy_x_ballot_local` gives the half's own word and 0 for the other half
 (`x64_masks.rs`). Which masks those are is a backward liveness analysis over the SGPRs: a
 register is *whole-live* after an instruction when some path may read its whole value (any
 SALU / SMEM operand, a VALU scalar operand, `s_cbranch_vcc*`, `src_vccz`, …) before it is
@@ -133,7 +133,7 @@ A mask with no destination (VOP3 compare into NULL) or one that is 0 in every la
 choice, so their exchange counts stay in step. Geometry mode (ES → GS through `s_setpc`)
 has no liveness pass: its masks are exchanged as before, except those two kinds (no
 destination, 0 in every lane), which are the same in both halves either way.
-`XCL_X64_ALL_MASKS=1` exchanges every mask (for comparison).
+`MANDY_X64_ALL_MASKS=1` exchanges every mask (for comparison).
 
 ## Cost
 
@@ -165,7 +165,7 @@ exchanges a loop iteration makes and times each dispatch with GPU timestamps (me
 dispatches in one command list; `runner::dispatch_timed`). Before, it took the wall time of
 a whole `runner::dispatch` – pipeline creation, buffers, uploads, submission and the CPU's
 wait included – which shrank every ratio towards 1 (the 5070 Ti figures above were taken
-that way). On an RTX 3090, three runs with all masks exchanged (`XCL_X64_ALL_MASKS=1`) and
+that way). On an RTX 3090, three runs with all masks exchanged (`MANDY_X64_ALL_MASKS=1`) and
 five with the default:
 
 | | mask only | mask + `v_readfirstlane` |
@@ -225,8 +225,8 @@ For a wave64 VS / PS with `split_wave64`, `upper_lanes.rs` follows what the cons
 Each read then gets:
 - unwritten: the read as it is – the console reads what an earlier wave left in the register,
   which no program can depend on;
-- a constant: that constant (`uint t = c; if (!xcl_hw32) t = rla(…);`);
-- a slot: its shadow `xcl_sh<vgpr>_<lane>`, a scalar every `v_writelane` of that slot also
+- a constant: that constant (`uint t = c; if (!mandy_hw32) t = rla(…);`);
+- a slot: its shadow `mandy_sh<vgpr>_<lane>`, a scalar every `v_writelane` of that slot also
   writes;
 - unknown: stays a hazard – `wave_hazards` reports only these.
 
@@ -235,7 +235,7 @@ other instruction has written the VGPR since the slot's `v_writelane`: in a part
 primitive's edge) a lane that was not launched loses what `v_writelane` put there. 287 pixel
 shaders of the pack (3 540 reads) spill to lanes < 32.
 
-The wave size is checked at run time (`xcl_hw32 = WaveGetLaneCount() < 64`), so a driver that
+The wave size is checked at run time (`mandy_hw32 = WaveGetLaneCount() < 64`), so a driver that
 picks 64 lanes runs the program as before.
 
 Which GPUs get the form: every GPU whose wave range includes 32 (`pso::graphics_wave32`), not

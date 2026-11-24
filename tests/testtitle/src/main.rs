@@ -1,7 +1,7 @@
-//! XCL test title – a fake "console executable".
+//! MANDY test title – a fake "console executable".
 //!
 //! Its import table names console DLLs (kernelx.dll, xgameruntime.dll, d3d12_xs.dll) and
-//! a DLL shipped "with the game" (testgame_mw.dll). Plain Windows cannot start it; XCL
+//! a DLL shipped "with the game" (testgame_mw.dll). Plain Windows cannot start it; MANDY
 //! can. Every check prints [PASS]/[FAIL]; the exit code is the number of failures.
 
 use std::cell::Cell;
@@ -26,7 +26,7 @@ struct SystemOsVersionInfo {
     revision: u16,
 }
 
-// Fortnite imports these from xmem.dll (XCL finds console functions by name)
+// Fortnite imports these from xmem.dll (MANDY finds console functions by name)
 #[link(name = "xmem", kind = "raw-dylib")]
 extern "system" {
     fn XMemGetWorkingSetStatistics(flags: u32, stats: *mut u64) -> i32;
@@ -47,11 +47,11 @@ extern "system" {
     fn TitleMemoryStatus(buf: *mut TitleMemoryStatus) -> i32;
     fn GetSystemOSVersion(out: *mut SystemOsVersionInfo);
     /// Not implemented anywhere – must become a logging stub returning 0.
-    fn XclDefinitelyMissingFunction(a: u64, b: u64) -> u64;
+    fn MandyDefinitelyMissingFunction(a: u64, b: u64) -> u64;
 }
 
-// Same DLL/names as Rust std's own imports, so no duplicate-symbol conflicts; XCL routes
-// kernel32 to its kernelx module, so these hit XCL's shims.
+// Same DLL/names as Rust std's own imports, so no duplicate-symbol conflicts; MANDY routes
+// kernel32 to its kernelx module, so these hit MANDY's shims.
 #[link(name = "kernel32", kind = "raw-dylib")]
 extern "system" {
     fn GetCurrentThread() -> *mut c_void;
@@ -214,14 +214,14 @@ unsafe extern "system" fn set_flag(ctx: *mut c_void, canceled: bool) {
 }
 
 fn main() {
-    println!("xcl_testtitle: start");
+    println!("mandy_testtitle: start");
 
     check("argv: command line belongs to the game", || {
         let args: Vec<String> = std::env::args().collect();
-        ensure!(args[0].to_lowercase().ends_with("xcl_testtitle.exe"), "argv[0] = {}", args[0]);
+        ensure!(args[0].to_lowercase().ends_with("mandy_testtitle.exe"), "argv[0] = {}", args[0]);
         ensure!(args.iter().any(|a| a == "--hello"), "args = {args:?}");
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        ensure!(exe.file_name().unwrap().to_string_lossy().eq_ignore_ascii_case("xcl_testtitle.exe"), "current_exe = {exe:?}");
+        ensure!(exe.file_name().unwrap().to_string_lossy().eq_ignore_ascii_case("mandy_testtitle.exe"), "current_exe = {exe:?}");
         Ok(())
     });
 
@@ -336,7 +336,7 @@ fn main() {
         let a = XMemAlloc(0x20000, attrs);
         let b = XMemAlloc(0x10000, attrs);
         ensure!(!a.is_null() && !b.is_null(), "null");
-        // in the region (from 16 GiB up), 64 KiB aligned; the region's first range is XCL's own
+        // in the region (from 16 GiB up), 64 KiB aligned; the region's first range is MANDY's own
         // (32-bit descriptor heaps), so the title's first allocation is not its start
         ensure!(a as usize >> 32 >= 4 && a as usize & 0xFFFF == 0, "a = {a:?}");
         ensure!(b as usize == a as usize + 0x20000, "b = {b:?}, a = {a:?}");
@@ -359,7 +359,7 @@ fn main() {
 
     check("user32: a top-level window made either way (CreateWindowExW / A) is the hidden 1920x1080 console screen", || unsafe {
         let wide = |t: &str| t.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-        let class = wide("XclTestTitleWindow");
+        let class = wide("MandyTestTitleWindow");
         let wc = WndClassW { style: 0, proc_: DefWindowProcW as *const () as usize, cls_extra: 0, wnd_extra: 0, instance: GetModuleHandleW(std::ptr::null()), icon: 0, cursor: 0, background: 0, menu: std::ptr::null(), class: class.as_ptr() };
         ensure!(RegisterClassW(&wc) != 0, "RegisterClassW");
         // WS_OVERLAPPEDWINDOW | WS_VISIBLE, an ordinary PC frame of 1280x720
@@ -373,7 +373,7 @@ fn main() {
         ensure!(fw != 0 && fa != 0, "CreateWindowExW {fw:#x} / A {fa:#x} from the ntuser API sets");
         let (cw, ca): (CreateWindowExFn<u16>, CreateWindowExFn<u8>) = (std::mem::transmute(fw), std::mem::transmute(fa));
         let w = cw(0x4_0000, class.as_ptr(), title.as_ptr(), style, 100, 100, 1280, 720, std::ptr::null_mut(), std::ptr::null_mut(), wc.instance, std::ptr::null());
-        let a = ca(0, b"XclTestTitleWindow ".as_ptr(), b"test title ".as_ptr(), style, 100, 100, 1280, 720, std::ptr::null_mut(), std::ptr::null_mut(), wc.instance, std::ptr::null());
+        let a = ca(0, b"MandyTestTitleWindow ".as_ptr(), b"test title ".as_ptr(), style, 100, 100, 1280, 720, std::ptr::null_mut(), std::ptr::null_mut(), wc.instance, std::ptr::null());
         ensure!(!w.is_null() && !a.is_null(), "CreateWindowExW {w:?} / A {a:?}");
         for (name, h) in [("W", w), ("A", a)] {
             let ex = GetWindowLongW(h, -20) as u32;
@@ -417,7 +417,7 @@ fn main() {
 
     check("kernelx: SetThreadName / GetThreadName", || unsafe {
         let h = std::thread::spawn(|| {
-            let ok = SetThreadName(GetCurrentThread(), wide("xcl-test-worker").as_ptr());
+            let ok = SetThreadName(GetCurrentThread(), wide("mandy-test-worker").as_ptr());
             let mut buf = [0u16; 64];
             let mut n = 0usize;
             let ok2 = GetThreadName(GetCurrentThread(), buf.as_mut_ptr(), 64, &mut n);
@@ -425,12 +425,12 @@ fn main() {
         });
         let (ok, ok2, name) = h.join().map_err(|_| "panic")?;
         ensure!(ok != 0 && ok2 != 0, "ok={ok} ok2={ok2}");
-        ensure!(name == "xcl-test-worker", "name = {name}");
+        ensure!(name == "mandy-test-worker", "name = {name}");
         Ok(())
     });
 
     check("kernelx: unimplemented import becomes a stub and the title keeps running", || unsafe {
-        ensure!(XclDefinitelyMissingFunction(1, 2) == 0, "stub returned non-zero");
+        ensure!(MandyDefinitelyMissingFunction(1, 2) == 0, "stub returned non-zero");
         Ok(())
     });
 
@@ -548,7 +548,7 @@ fn main() {
         ensure!(XGameRuntimeInitialize() == 0, "init");
         let mut buf = [0u8; 256];
         ensure!(XPackageGetCurrentProcessPackageIdentifier(256, buf.as_mut_ptr()) == 0, "package id");
-        ensure!(cstr(&buf).starts_with("XCL.TestTitle"), "id = {}", cstr(&buf));
+        ensure!(cstr(&buf).starts_with("MANDY.TestTitle"), "id = {}", cstr(&buf));
         Ok(())
     });
 
@@ -669,7 +669,7 @@ fn main() {
         let root = cstr(&pls);
         ensure!(root.len() == 3 && root.ends_with(":\\"), "PLS path {root:?} is not a drive root");
         // Minecraft keeps only the drive name and builds "<drive>:/Users/<xuid>/games/com.mojang"
-        let dir = format!("{}:/Users/xcl/games", &root[..1]);
+        let dir = format!("{}:/Users/mandy/games", &root[..1]);
         std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir}: {e}"))?;
         std::fs::write(format!("{dir}/world.dat"), b"blocks").map_err(|e| format!("write {dir}/world.dat: {e}"))?;
         let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
@@ -699,6 +699,6 @@ fn main() {
     check("XAudio2: console flags/device, XMA2 & Opus voices decoded, PCM passes, callbacks", audio::xaudio2_console_voices);
 
     let failures = FAILURES.load(Ordering::SeqCst);
-    println!("xcl_testtitle: done, failures: {failures}");
+    println!("mandy_testtitle: done, failures: {failures}");
     std::process::exit(failures as i32);
 }

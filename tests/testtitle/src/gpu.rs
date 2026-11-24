@@ -1,4 +1,4 @@
-//! D3D12.X checks of the test title. The device comes from `d3d12_xs.dll` (XCL);
+//! D3D12.X checks of the test title. The device comes from `d3d12_xs.dll` (MANDY);
 //! the `windows` crate is only used for D3D12 types and vtable calls – exactly what a
 //! console title compiled against a PC-compatible D3D12.X layout would do.
 
@@ -29,7 +29,7 @@ extern "system" {
 }
 
 // Media Foundation: standard exports fall back to Windows' mfplat.dll, while
-// MFResetDXGIDeviceManagerX routes to XCL's HLE export.
+// MFResetDXGIDeviceManagerX routes to MANDY's HLE export.
 #[link(name = "mfplat", kind = "raw-dylib")]
 extern "system" {
     fn MFStartup(version: u32, flags: u32) -> HRESULT;
@@ -65,10 +65,10 @@ macro_rules! ensure {
     ($c:expr, $($m:tt)*) => { if !$c { return Err(format!($($m)*)); } };
 }
 
-/// An export of `d3d12_xs.dll` (XCL), looked up by name. Not a static import: the `windows`
+/// An export of `d3d12_xs.dll` (MANDY), looked up by name. Not a static import: the `windows`
 /// crate imports the same two functions from `d3d12.dll`, and of two imports of one symbol
 /// the linker keeps one – the system's. The title then got the system's device for the
-/// default adapter, which is XCL's device only while that adapter is the one XCL chose
+/// default adapter, which is MANDY's device only while that adapter is the one MANDY chose
 /// (D3D12 hands out one device per adapter); on a machine with two GPUs it is another one.
 unsafe fn xs<F: Copy>(name: &str) -> Result<F, String> {
     let h = crate::LoadLibraryW(crate::wide("d3d12_xs.dll").as_ptr());
@@ -272,7 +272,7 @@ pub fn pso_capture_and_fallback() -> Result<(), String> {
         let xb = console_container();
         let console_ps = D3D12_SHADER_BYTECODE { pShaderBytecode: xb.as_ptr() as *const c_void, BytecodeLength: xb.len() };
         let desc = pso_desc(&rs, bc(&vs), console_ps);
-        // the PC driver rejects the console PS; XCL must substitute a stand-in shader
+        // the PC driver rejects the console PS; MANDY must substitute a stand-in shader
         let pso: Result<ID3D12PipelineState, _> = dev.CreateGraphicsPipelineState(&desc);
         ensure!(pso.is_ok(), "CreateGraphicsPipelineState with a console shader failed: {:?}", pso.err());
         Ok(())
@@ -375,7 +375,7 @@ pub fn present_x_frame() -> Result<(), String> {
 /// graphics memory (#44 CreatePlacedResourceX) is copied by a DMA queue (#48
 /// CreateCommandQueueX), allocator (#9) and list (#73 CreateCommandListX, the DMA list's IID)
 /// into a readback buffer; page pools (#74 / #75), SetDebugFlagsX (#52),
-/// SerializePipelineStateX (#56) and an extension XCL does not model (#47).
+/// SerializePipelineStateX (#56) and an extension MANDY does not model (#47).
 pub fn console_device_methods() -> Result<(), String> {
     const DMA: u32 = 0x10;
     const IID_DMA_LIST: windows::core::GUID = windows::core::GUID::from_u128(0x30bc77b9_8379_4b25_95de_b8588c42275d);
@@ -1516,7 +1516,7 @@ pub fn sparse_buffer_heap_coherence() -> Result<(), String> {
 }
 
 /// Coherent Window 3 headroom: general `CUSTOM + WRITE_BACK` buffer heaps and buffers must
-/// route to sparse VRAM (windows 0..2), leaving Window 3 free for XCL's Arena pool and small
+/// route to sparse VRAM (windows 0..2), leaving Window 3 free for MANDY's Arena pool and small
 /// explicit readback buffers, while `COPY_DEST` buffers in a sparse `CUSTOM + WRITE_BACK` heap
 /// (and oversized `READBACK` buffers that spill to sparse VRAM) still read back automatically
 /// on `Map(0, NULL, ...)`.

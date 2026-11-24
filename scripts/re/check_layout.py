@@ -3,10 +3,10 @@ to the root arguments packed in order (constant = 4 B, root descriptor = 8 B, no
 Every scalar load from the table (s_load from the register pair holding s0/s1) must start
 at a descriptor boundary or inside the constants.
 
-usage: python check_layout.py <dir with the .dxbc files of bvhb_shaders.py> (needs target/debug/xcl.exe)"""
+usage: python check_layout.py <dir with the .dxbc files of bvhb_shaders.py> (needs target/debug/mandy.exe)"""
 import os, re, struct, subprocess, sys
 
-XCL = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'target', 'debug', 'xcl.exe')
+MANDY = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'target', 'debug', 'mandy.exe')
 D = sys.argv[1]
 
 
@@ -42,7 +42,7 @@ for name in sorted(os.listdir(D)):
     if lay is None:
         continue
     consts, descs, size = lay
-    lst = subprocess.run([XCL, 'disasm', os.path.join(D, name)], capture_output=True, text=True, encoding='utf-8', errors='replace').stdout
+    lst = subprocess.run([MANDY, 'disasm', os.path.join(D, name)], capture_output=True, text=True, encoding='utf-8', errors='replace').stdout
     # the pair the table pointer was copied to: s_mov sA, s0 ; s_and sB, s1, 0xff
     m = re.search(r's_and_b32 s(\d+), s1, 0xff\s', lst)
     if not m or not re.search(rf's_mov_b32 s{int(m.group(1)) - 1}, s0\s', lst):

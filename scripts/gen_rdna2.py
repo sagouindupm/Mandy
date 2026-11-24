@@ -1,7 +1,7 @@
-"""Generate crates/xcl/src/gpu/rdna2_spec.rs from AMD's Machine-Readable ISA spec.
+"""Generate crates/mandy/src/gpu/rdna2_spec.rs from AMD's Machine-Readable ISA spec.
 
 Input:  amdgpu_isa_rdna2.xml from https://gpuopen.com/machine-readable-isa/ (MIT licence)
-Usage:  python -I scripts/gen_rdna2.py <path/to/amdgpu_isa_rdna2.xml> crates/xcl/src/gpu/rdna2_spec.rs
+Usage:  python -I scripts/gen_rdna2.py <path/to/amdgpu_isa_rdna2.xml> crates/mandy/src/gpu/rdna2_spec.rs
 
 Only the "primary" encodings (condition "default") are emitted with operands; the
 literal / SDWA / DPP / NSA variants are derived at decode time from operand values,

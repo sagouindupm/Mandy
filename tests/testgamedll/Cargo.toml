@@ -1,6 +1,6 @@
 [package]
 name = "testgame-mw"
-description = "Fake game-shipped middleware DLL used by the XCL test title."
+description = "Fake game-shipped middleware DLL used by the MANDY test title."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,5 +11,5 @@ name = "testgame_mw"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 # no unit tests: the GNU linker keeps the kernelx.dll import in the test harness's exe,
-# which then does not start (kernelx.dll exists only inside XCL)
+# which then does not start (kernelx.dll exists only inside MANDY)
 test = false

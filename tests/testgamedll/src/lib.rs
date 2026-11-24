@@ -1,4 +1,4 @@
-//! Fake middleware DLL shipped "with the game". It is loaded by XCL's own loader, not by
+//! Fake middleware DLL shipped "with the game". It is loaded by MANDY's own loader, not by
 //! Windows: it imports a console DLL (kernelx.dll), has static TLS and a DllMain.
 
 use std::cell::Cell;

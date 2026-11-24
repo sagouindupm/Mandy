@@ -1,4 +1,4 @@
-"""Generate crates/xcl/src/gpu/tiling_tables.rs from AMD addrlib (Mesa, MIT):
+"""Generate crates/mandy/src/gpu/tiling_tables.rs from AMD addrlib (Mesa, MIT):
 GFX10 RB+ (gfx10.3) swizzle pattern info for the 2D colour / depth modes and the 3D thick
 modes, with the nibble tables reduced to the rows they use.
 
@@ -7,7 +7,7 @@ usage: python scripts/gen_tiling.py <path to gfx10SwizzlePattern.h>
 import io, os, re, sys
 
 src = io.open(sys.argv[1], encoding='utf-8').read()
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'crates', 'xcl', 'src', 'gpu', 'tiling_tables.rs')
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'crates', 'mandy', 'src', 'gpu', 'tiling_tables.rs')
 
 # symbolic bits
 def bit(c, i):

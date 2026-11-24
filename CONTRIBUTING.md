@@ -1,6 +1,6 @@
-# Contributing to XCL
+# Contributing to MANDY
 
-Thanks for helping. XCL gets far more pull requests than one maintainer can read carefully, so
+Thanks for helping. MANDY gets far more pull requests than one maintainer can read carefully, so
 these rules exist to make every PR **cheap to review and safe to merge**. A PR that ignores them
 may be closed without a review, however good the code is.
 
@@ -9,7 +9,7 @@ the same for code written by hand and by an agent.
 
 ## What a PR needs to be merged
 
-XCL gets more pull requests in an hour than anyone can test by hand, most of them written with AI
+MANDY gets more pull requests in an hour than anyone can test by hand, most of them written with AI
 tools. So a PR is merged only when it shows that it was tested and that it breaks nothing. These are
 checked before anything else; a PR that does not meet them waits (or is closed after a week).
 
@@ -17,9 +17,9 @@ checked before anything else; a PR that does not meet them waits (or is closed a
    (the description: the sections below, and the regression runs when they are needed).
 2. **The whole suite ran on a GPU**, with the counts in **Tested**
    (`cargo test --workspace -- --test-threads=4`: N passed, N failed, N ignored, and the SKIPPED tests).
-3. **A PR that changes the runtime** (`crates/xcl/src` outside tests) **has a regression run on a real
+3. **A PR that changes the runtime** (`crates/mandy/src` outside tests) **has a regression run on a real
    title**: `scripts/smoke.ps1 -Game <your game folder>` built from `main` and built from the PR's head
-   commit, both `xcl-smoke` blocks pasted under **Regression run**, of the same title for the same
+   commit, both `mandy-smoke` blocks pasted under **Regression run**, of the same title for the same
    time. The PR's block must name its head commit with no uncommitted changes (rerun it after every
    push); the other must be made on a commit of `main`. The PR's run must show no device removal and
    no crash (the `main` run may: a PR that fixes a crash shows it there), at least 80 % of `main`'s
@@ -92,7 +92,7 @@ Use this outline:
 - game checked (if any), and what got better, with numbers if you have them
 
 **Regression run**
-- for a runtime change: the two `xcl-smoke` blocks (main, this PR's head) – see above
+- for a runtime change: the two `mandy-smoke` blocks (main, this PR's head) – see above
 
 **Not tested**
 - what you could not check, e.g. AMD / NVIDIA, the retail title, wave32-only GPUs
@@ -115,7 +115,7 @@ History is merged with merge commits, so every commit on a PR ends up in `main`.
   D3D12.X: draws with untranslated pipelines get the title's root signature
   ```
   The prefix is the subsystem: `Recompiler`, `D3D12.X`, `DirectStorage`, `XGameRuntime`,
-  `kernelx`, `XAudio2`, `VFS`, `Memory`, `TLS`, `PE loader`, `Shaders`, `Frame clock`, `xcl run`,
+  `kernelx`, `XAudio2`, `VFS`, `Memory`, `TLS`, `PE loader`, `Shaders`, `Frame clock`, `mandy run`,
   `Tests`, `e2e`, `Scripts`, `README`, `Docs`, `Issue templates`. Use one that exists already when it fits.
   No `fix:` / `feat(...)` style prefixes; this repo does not use Conventional Commits.
 - Subject line of about 72 characters or less, saying what the change does, not "update file.rs" or
@@ -135,13 +135,13 @@ and passes after it, and new behaviour gets a test that shows it working. Docs, 
 and pure renames need no test.
 
 - **Unit tests** go in a `#[cfg(test)] mod tests` in the same file, the way the rest of the crate does it.
-- **Integration / end-to-end tests** go in `crates/xcl/tests/`. The e2e test drives our own console
+- **Integration / end-to-end tests** go in `crates/mandy/tests/`. The e2e test drives our own console
   title in `tests/testtitle` / `tests/testgamedll`: extend it when a change concerns the path a title
   takes.
 - **GPU tests** must run without a GPU too: when the adapter cannot run them, call
   `gpu::recomp::runner::skip_test("no GPU" | "no DXC" | "no wave64" | "no mesh shaders")` and return.
   Never mark a test `#[ignore]` only so that it passes.
-- **Tests on game data** read files the contributor owns through the `XCL_SAMPLE_*` variables
+- **Tests on game data** read files the contributor owns through the `MANDY_SAMPLE_*` variables
   (see README / `scripts/test.ps1`), and pass without doing anything when the variable is not set.
   **Never commit game data**, console SDK headers or binaries, or output dumped from a game.
 - **Recompiler instructions** get a per-instruction GPU test compared against an expected result,
@@ -150,12 +150,12 @@ and pure renames need no test.
   ```powershell
   .\scripts\test.ps1        # cargo build --workspace + cargo test --workspace
   ```
-  XCL builds and runs on Windows only. If you could not run the tests (e.g. you work on macOS or
+  MANDY builds and runs on Windows only. If you could not run the tests (e.g. you work on macOS or
   Linux), say so in **Not tested**; a PR with no Windows test run waits until someone runs one.
 
 ## Licence and provenance
 
-XCL is **GPL-2.0-only**.
+MANDY is **GPL-2.0-only**.
 
 - Dependencies must be GPL-2.0-compatible (no Apache-2.0-only, no GPL-3.0). New dependencies need a
   reason in the PR description; avoid them for a few lines of code.
@@ -191,7 +191,7 @@ XCL is **GPL-2.0-only**.
 
 You can use AI tools. In return:
 
-- **Use a frontier model.** XCL is low-level code (a recompiler, a console runtime, D3D12 memory
+- **Use a frontier model.** MANDY is low-level code (a recompiler, a console runtime, D3D12 memory
   and synchronisation): small and local models get it subtly wrong, and every wrong PR costs a
   review. PRs written with small or open-weight models – Qwen (27B / 32B class and the like),
   DeepSeek, Llama, Mistral, Gemma, Phi and their distills – are closed without a review. Name the

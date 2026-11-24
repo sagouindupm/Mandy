@@ -1,10 +1,10 @@
-"""Generate crates/xcl/src/hle/d3d12_layout.rs from d3d12.h (microsoft/DirectX-Headers, MIT).
+"""Generate crates/mandy/src/hle/d3d12_layout.rs from d3d12.h (microsoft/DirectX-Headers, MIT).
 
-Usage: python -I scripts/gen_d3d12_layout.py <d3d12.h> crates/xcl/src/hle/d3d12_layout.rs
+Usage: python -I scripts/gen_d3d12_layout.py <d3d12.h> crates/mandy/src/hle/d3d12_layout.rs
 
 Extracts, for every ID3D12* COM interface: IID, parent interface and the full vtable
 method order (including inherited IUnknown/ID3D12Object methods) from the C-style
-`XxxVtbl` structs. XCL uses PC order as the first guess for D3D12.X objects and names
+`XxxVtbl` structs. MANDY uses PC order as the first guess for D3D12.X objects and names
 every slot in its logs/reports.
 """
 

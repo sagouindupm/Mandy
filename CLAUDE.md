@@ -13,4 +13,4 @@ Specific to Claude Code:
 - Run the tests and report the real output; do not stop at "the tests should pass".
 - Fill in the **AI use** section of the PR description with Claude Code and your exact model name.
 - For a runtime change, run `scripts/smoke.ps1` on main and on the PR's head commit and paste both
-  `xcl-smoke` blocks; do not write or edit them by hand.
+  `mandy-smoke` blocks; do not write or edit them by hand.
