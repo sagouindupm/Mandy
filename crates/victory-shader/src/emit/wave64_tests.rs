@@ -755,10 +755,11 @@ fn bpermute_in_lane_branch_widens_and_lds_overflow_refuses() {
         assert_eq!(got, want, "widened lane-branch bpermute");
     }
 
-    // (b) Pre-allocated 32 KiB LDS leaves no room for the 64-dword/wave scratch.
-    let big_lds = bpermute_program(128, 0, false, 32768);
-    let p_big = ir::build(&big_lds.code, big_lds.wave64, big_lds.vgprs).expect("ir::build");
-    let overflow = lowered(&big_lds, &p_big, &HashSet::new());
+    // (b) Room for `exchange_dwords` (8128 + 4 <= 8192) enters wave=32, but leaves no room
+    // for the 64-dword/wave `bpermute` scratch.
+    let near_full_lds = bpermute_program(128, 0, false, 32512);
+    let p_near = ir::build(&near_full_lds.code, near_full_lds.wave64, near_full_lds.vgprs).expect("ir::build");
+    let overflow = lowered(&near_full_lds, &p_near, &HashSet::new());
     assert!(
         matches!(
             &overflow,
@@ -768,6 +769,27 @@ fn bpermute_in_lane_branch_widens_and_lds_overflow_refuses() {
         "expected LDS overflow refusal, got {:?}",
         overflow.err()
     );
+    // Full 32 KiB LDS has no room for `exchange_dwords` either: keeps wave=64 so `emit()` retries local forms.
+    let big_lds = bpermute_program(128, 0, false, 32768);
+    let p_big = ir::build(&big_lds.code, big_lds.wave64, big_lds.vgprs).expect("ir::build");
+    let st_big = structure::structure_wide(&p_big, &HashSet::new()).expect("structure");
+    let res_big = resource::track(&p_big, &big_lds.layout, big_lds.stage, Some(&st_big)).expect("resource::track");
+    let io_big = io::raise(&p_big, &big_lds).expect("io::raise");
+    let was = lower::TEST_HOST_WAVE.replace(Some(32));
+    let kept64 = lower::lower(&lower::Parts {
+        native: &big_lds,
+        p: &p_big,
+        st: &st_big,
+        io: &io_big,
+        res: &res_big,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        prims: Vec::new(),
+        mesh_stride: 0,
+    });
+    lower::TEST_HOST_WAVE.set(was);
+    let kept64 = kept64.expect("keeps wave 64 for retry");
+    assert_eq!(kept64.wave_size, Some(64));
 }
 
 /// One console wave of 64 threads with 512 bytes of LDS: thread 0's lane zeroes the flag at
@@ -968,8 +990,8 @@ fn a_loop_lanes_leave_one_by_one_is_taken_wave_wide_before_host_waves_meet_in_it
             v.validate(&mut copy).expect("DXIL validation failed");
         }
     });
-    // (the other forms keep the block as one every lane runs: see `lower::with_loop_exits`)
-    assert_eq!(lower::branches_around(&st, &[head]), Some(Vec::new()));
+    // (`128520ff` tracks divergent loop re-entry across all forms too)
+    assert_eq!(lower::branches_around(&st, &[head]), Some(vec![head]));
 }
 
 /// A thread group of two console waves (128 threads) with LDS, a wave OR, and each thread's
