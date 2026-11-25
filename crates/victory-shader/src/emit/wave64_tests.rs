@@ -731,3 +731,89 @@ fn bpermute_in_lane_branch_widens_and_lds_overflow_refuses() {
         overflow.err()
     );
 }
+
+/// One console wave of 64 threads with 512 bytes of LDS: thread 0's lane zeroes the flag at
+/// LDS 0, the threads below s0 raise it (`ds_write_b32` of 1) and read it back inside their
+/// branch, and every thread reads it after the branch and stores it to the UAV. `second`: a
+/// second write in the branch after the read, of that constant.
+fn flag_program(second: Option<u32>) -> NativeProgram {
+    let mut body = vec![
+        0x7E12_0280, // v_mov_b32 v9, 0
+    ];
+    body.extend_from_slice(&ds(DS_WRITE_B32, 0, 9, 9)); // ds_write_b32 v9, v9
+    let mut branch = vec![0x7E04_0281]; // v_mov_b32 v2, 1
+    branch.extend_from_slice(&ds(DS_WRITE_B32, 0, 9, 2)); // ds_write_b32 v9, v2
+    // (a scalar exit from the branch makes it blocks of their own, which only its lanes run)
+    let mut rest = ds(DS_READ_B32, 3, 9, 0).to_vec(); // ds_read_b32 v3, v9
+    if let Some(k) = second {
+        rest.push(0x7E0C_02FF); // v_mov_b32 v6, lit
+        rest.push(k);
+        rest.extend_from_slice(&ds(DS_WRITE_B32, 0, 9, 6)); // ds_write_b32 v9, v6
+    }
+    branch.extend_from_slice(&[
+        0xBF07_8001,                       // s_cmp_lg_u32 s1, 0
+        0xBF85_0000 | rest.len() as u32, // s_cbranch_scc1 past the rest
+    ]);
+    branch.extend_from_slice(&rest);
+    body.extend_from_slice(&[
+        0x7D88_0000, // v_cmp_gt_u32 vcc, s0, v0
+        0xBE8C_246A, // s_and_saveexec_b64 s[12:13], vcc
+        0xBF88_0000 | branch.len() as u32, // s_cbranch_execz past the branch
+    ]);
+    body.extend_from_slice(&branch);
+    body.push(0xBEFE_040C); // s_mov_b64 exec, s[12:13]
+    body.extend_from_slice(&ds(DS_READ_B32, 5, 9, 0)); // ds_read_b32 v5, v9
+    body.extend_from_slice(&[
+        0x38 << 26 | 0x1C << 18,
+        0x80 << 24 | 2 << 16 | 5 << 8, // buffer_store_dword v5, off, s[8:11], 0
+    ]);
+    let mut native = native(&body);
+    if let StageIo::Cs(cs) = &mut native.io {
+        cs.rsrc2 |= 1 << 15; // 512 bytes of LDS
+    }
+    native
+}
+
+/// DS `op vdst, addr, data0` at offset 0.
+const fn ds(op: u8, vdst: u8, addr: u8, data0: u8) -> [u32; 2] {
+    [0x36 << 26 | (op as u32) << 18, (vdst as u32) << 24 | (data0 as u32) << 8 | addr as u32]
+}
+
+const DS_WRITE_B32: u8 = 0x0D;
+const DS_READ_B32: u8 = 0x36;
+
+/// The wave size `native` lowers to on a host of 32-lane waves.
+fn flag_wave(native: &NativeProgram) -> Option<u32> {
+    let p = crate::spill::build(native).expect("build");
+    let st = structure::structure(&p).expect("structure");
+    let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("resource::track");
+    let io = io::raise(&p, native).expect("io::raise");
+    let was = lower::TEST_HOST_WAVE.replace(Some(32));
+    let lowered = lower::lower(&lower::Parts {
+        native,
+        p: &p,
+        st: &st,
+        io: &io,
+        res: &res,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        prims: Vec::new(),
+        mesh_stride: 0,
+    });
+    lower::TEST_HOST_WAVE.set(was);
+    lowered.expect("lower").wave_size
+}
+
+#[test]
+fn a_branch_that_only_raises_an_lds_flag_runs_in_waves_of_32() {
+    // a read that misses the other host wave's write changes nothing the branch leaves behind
+    assert_eq!(flag_wave(&flag_program(None)), Some(32));
+    // after the read the branch writes the flag again, with the same constant
+    assert_eq!(flag_wave(&flag_program(Some(1))), Some(32));
+}
+
+#[test]
+fn a_branch_that_writes_lds_two_different_values_keeps_64_lanes() {
+    // a second value after the read: what the flag ends up holding depends on what was read
+    assert_eq!(flag_wave(&flag_program(Some(2))), Some(64));
+}
