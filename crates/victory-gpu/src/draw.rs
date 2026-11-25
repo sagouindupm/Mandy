@@ -409,12 +409,23 @@ pub(crate) static HEAP_SLOTS_USED: AtomicU64 = AtomicU64::new(0);
 
 /// The buffer shaders mark the heap slots they take views from in
 /// (`victory_shader::emit::SLOT_HEAP_USED`): PC memory the card writes
-/// and the pass reads, its mapping and its GPU address.
+/// and the pass reads, its mapping and its GPU address; and a sink of the
+/// same size in the card's memory, bound in the frames between marking
+/// ones ([`marking`]).
 struct HeapUsed {
     _buffer: windows::Win32::Graphics::Direct3D12::ID3D12Resource,
     data: *mut u32,
     gpu: u64,
+    _sink: windows::Win32::Graphics::Direct3D12::ID3D12Resource,
+    sink: u64,
 }
+
+/// Whether this frame's shaders mark into PC memory ([`HeapUsed`]): one
+/// frame in every two seconds at most. Each mark is a write over the bus,
+/// and marking every frame took the opening cutscene's GPU time from 0.2
+/// to 1.2 s a frame (with the late depth test the marks also caused).
+static MARKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+const MARK_EVERY_MS: u64 = 2000;
 // SAFETY: the buffer lives for the process; the card writes 1s, the pass
 // reads and clears them (a mark lost to the race comes back next frame).
 unsafe impl Send for HeapUsed {}
@@ -424,14 +435,17 @@ fn heap_used() -> Option<&'static HeapUsed> {
     static USED: std::sync::OnceLock<Option<HeapUsed>> = std::sync::OnceLock::new();
     USED.get_or_init(|| {
         let bytes = u64::from(victory_shader::emit::SLOT_STRIDES_COUNT) * 4;
-        let (buffer, data) = crate::host::host()?.shared_buffer(bytes)?;
+        let host = crate::host::host()?;
+        let (buffer, data) = host.shared_buffer(bytes)?;
         crate::host::name(&buffer, || "heap slots shaders took".to_owned());
+        let sink = host.uav_buffer(bytes)?;
+        crate::host::name(&sink, || "heap slots shaders took: sink".to_owned());
         // SAFETY: a fresh mapping of that many bytes; a live buffer.
-        let gpu = unsafe {
+        let (gpu, sink_gpu) = unsafe {
             std::ptr::write_bytes(data, 0, bytes as usize);
-            buffer.GetGPUVirtualAddress()
+            (buffer.GetGPUVirtualAddress(), sink.GetGPUVirtualAddress())
         };
-        Some(HeapUsed { _buffer: buffer, data: data.cast(), gpu })
+        Some(HeapUsed { _buffer: buffer, data: data.cast(), gpu, _sink: sink, sink: sink_gpu })
     })
     .as_ref()
 }
@@ -1268,12 +1282,13 @@ impl State {
                         once!("a shader marks the heap slots it takes, with no buffer for them: the draw is dropped");
                         return false;
                     };
-                    // SAFETY: an open list; the buffer lives for the process.
+                    let gpu = if MARKING.load(Ordering::Relaxed) { used.gpu } else { used.sink };
+                    // SAFETY: an open list; the buffers live for the process.
                     unsafe {
                         if compute {
-                            l.SetComputeRootUnorderedAccessView(param, used.gpu);
+                            l.SetComputeRootUnorderedAccessView(param, gpu);
                         } else {
-                            l.SetGraphicsRootUnorderedAccessView(param, used.gpu);
+                            l.SetGraphicsRootUnorderedAccessView(param, gpu);
                         }
                     }
                     continue;
@@ -1864,11 +1879,19 @@ impl State {
         // What the frame's shaders took (`SLOT_HEAP_USED`), once a frame:
         // kept as recently used, served first, brought back if given up.
         static USED_FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
+        static MARKED_AT: AtomicU64 = AtomicU64::new(0);
         static EVICTED: AtomicU64 = AtomicU64::new(0);
         let now = crate::host::now_ms();
         let first = USED_FRAME.swap(frame, Ordering::Relaxed) != frame;
         if first {
-            host.texture_slots_used(&take_heap_used(), frame, now);
+            if MARKING.load(Ordering::Relaxed) {
+                // The marks of the frames since the last look (lists still
+                // running add theirs to the next one).
+                host.texture_slots_used(&take_heap_used(), frame, now);
+                MARKED_AT.store(now, Ordering::Relaxed);
+            }
+            let due = now.saturating_sub(MARKED_AT.load(Ordering::Relaxed)) >= MARK_EVERY_MS;
+            MARKING.store(due, Ordering::Relaxed);
         }
         let mut room = crate::resource::room();
         // Bytes uploaded by this pass since the card was last asked
@@ -1885,7 +1908,7 @@ impl State {
             // the system shares with the card take the rest
             // (`resource::spill_room`).
             if first {
-                let evicted = host.texture_slots_evict(now.saturating_sub(4000), 1024) as u64;
+                let evicted = host.texture_slots_evict(now.saturating_sub(3 * MARK_EVERY_MS), 1024) as u64;
                 EVICTED.store(evicted, Ordering::Relaxed);
                 HEAP_TEXTURES_EVICTED.fetch_add(evicted, Ordering::Relaxed);
             }
