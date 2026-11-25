@@ -5256,6 +5256,61 @@ impl<'a> Lower<'a> {
         self.s.m.select(c, helper, own, first)
     }
 
+    /// Whether every lane running an instruction that reads `v` holds the same
+    /// VGPR value: made, by instructions all of those lanes ran, of
+    /// scalars, constants and shared memory read at such an address (the
+    /// builder's prefix sums over the group's waves).
+    fn alike_running(&self, v: Value, depth: u32) -> bool {
+        let site = self.x.p.blocks.iter().enumerate().find_map(|(b, k)| {
+            let i = k.insts.iter().position(|i| i.writes.iter().any(|w| w.1 == v))?;
+            Some((b, i))
+        });
+        let Some((b, i)) = site else {
+            return false;
+        };
+        let inst = &self.x.p.blocks[b].insts[i];
+        // No guard: every lane that arrives there, so every lane that arrives
+        // where it is used, ran it.
+        if depth == 0 || self.x.st.guards[b][i].is_some() {
+            return false;
+        }
+        let is_mask = |v: Value| self.x.st.masks.contains_key(&v) || self.x.st.highs.contains_key(&v);
+        let same = |op: &Operand| match *op {
+            Operand::Vector { reg, .. } => {
+                inst.read(Reg::V(reg)).is_some_and(|x| self.alike_running(x, depth - 1))
+            }
+            Operand::Scalar { code, .. } if code != NULL => {
+                inst.read(Reg::S(code)).is_some_and(|x| !is_mask(x))
+            }
+            Operand::Const(_) | Operand::Literal(_) => true,
+            _ => false,
+        };
+        match &inst.fields {
+            Fields::Valu(f) if matches!(inst.name(), "v_mov_b32" | "v_add_nc_u32") => {
+                f.dpp.is_none() && f.sdwa.is_none() && f.src.iter().all(same)
+            }
+            Fields::Ds { .. } if inst.name() == "ds_read_b32" => {
+                // Nothing of the block stores to shared memory.
+                let stores = self.x.p.blocks[b].insts.iter().any(|i| {
+                    i.name().starts_with("ds_") && !i.name().starts_with("ds_read")
+                });
+                let addr: Vec<Value> = inst
+                    .reads
+                    .iter()
+                    .filter(|r| matches!(r.0, Reg::V(_)))
+                    .map(|r| r.1)
+                    .collect();
+                let mine = inst.writes.first().map(|w| w.0);
+                // The address, and the old value lanes outside EXEC keep.
+                !stores
+                    && mine.is_some()
+                    && !addr.is_empty()
+                    && addr.iter().all(|&x| self.alike_running(x, depth - 1))
+            }
+            _ => false,
+        }
+    }
+
     /// `x` in the first lane of this host wave where `guard` holds, and whether it has such a
     /// lane: the console reads the first lane of EXEC, and a lane that got here with EXEC clear
     /// (a guard, not a branch) is not one. With none, `x` of the wave's first lane here.
@@ -8718,9 +8773,9 @@ impl<'a> Lower<'a> {
                 // two host waves that exchange: the console's first lane may be in the other
                 // one, unless every lane holds the same value
                 let alike = match v.src.first() {
-                    Some(&Operand::Vector { reg, .. }) => {
-                        inst.read(Reg::V(reg)).is_some_and(|x| self.uniform.contains(&x))
-                    }
+                    Some(&Operand::Vector { reg, .. }) => inst.read(Reg::V(reg)).is_some_and(|x| {
+                        self.uniform.contains(&x) || self.alike_running(x, 8)
+                    }),
                     _ => true,
                 };
                 let halves = self.exchange.as_ref().is_some_and(|e| !e.1) && !self.local;

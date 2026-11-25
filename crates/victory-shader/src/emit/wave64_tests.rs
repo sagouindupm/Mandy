@@ -1008,3 +1008,48 @@ fn the_lds_of_a_group_of_several_console_waves_is_left_to_the_titles_barriers() 
     // (the switch is off again)
     assert_eq!(lower().wave_size, Some(64));
 }
+
+/// `if (t < s0) { v8 = lds[s1] + <term>; s7 = v8 of the first lane; store s7 }` in a group of
+/// two console waves that count their lanes (so each is two host waves that exchange), as
+/// those lower it.
+fn a_first_lane_read_of_a_sum(term: u32) -> Result<(), ShaderError> {
+    let code = [
+        0xD765_0007,
+        0x0001_00C1, // v_mbcnt_lo_u32_b32 v7, -1, 0
+        0x7D88_0000, // v_cmp_gt_u32 vcc, s0, v0
+        0xBE8C_246A, // s_and_saveexec_b64 s[12:13], vcc
+        0xBF88_0008, // s_cbranch_execz to the restore of EXEC
+        0x7E10_0201, // v_mov_b32 v8, s1
+        0xD8D8_0000,
+        0x0800_0008, // ds_read_b32 v8, v8
+        0x4A10_1000 | term, // v_add_nc_u32 v8, <term>, v8
+        0x7E0E_0508, // v_readfirstlane_b32 s7, v8
+        0x7E00_0207, // v_mov_b32 v0, s7
+        0x38 << 26 | 0x1C << 18,
+        0x80 << 24 | 2 << 16, // buffer_store_dword v0, off, s[8:11], 0
+        0xBEFE_040C, // s_mov_b64 exec, s[12:13]
+    ];
+    let mut native = native_of(&code, true, 128);
+    // (5 user SGPRs, 512 bytes of LDS)
+    native.io = StageIo::Cs(ComputeIo { rsrc2: 5 << 1 | 1 << 15, threads: [128, 1, 1] });
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let halved = lower::with_group_barriers(|| lowered(&native, &p, &HashSet::new())).expect("not inside another")?;
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        let mut copy = halved.dxil.clone();
+        v.validate(&mut copy).expect("DXIL validation failed");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_first_lane_read_of_what_every_running_lane_holds_is_the_host_waves_own() {
+    // A scalar and shared memory at a scalar address (the structure builder's sums over the
+    // waves before this one): the same in every lane that took the branch, in either host wave.
+    a_first_lane_read_of_a_sum(2 /* s2 */).expect("lower");
+    // With the thread index, the console's first lane may be in the other host wave.
+    let per_lane = a_first_lane_read_of_a_sum(0x100 /* v0 */);
+    assert!(
+        matches!(&per_lane, Err(ShaderError::Unsupported { what, .. }) if *what == "a first-lane read where not every lane runs"),
+        "{per_lane:?}"
+    );
+}
