@@ -1703,6 +1703,24 @@ mod barycentric_tests {
         validate(&shader);
     }
 
+    /// P0 + i(P1 - P0) is a value even when no second half reads it.
+    #[test]
+    fn standalone_interpolation_first_half_reads_the_vertices() {
+        let [e0, e1] = exp_mrt0(2);
+        let words = [
+            0xC808_0000, // v_interp_p1_f32 v2, v0, attr0.x
+            e0,
+            e1,
+            S_ENDPGM,
+        ];
+        let shader = pixel(&words, PERSP_CENTER).unwrap();
+        let (features, inputs) = parts(&shader);
+        assert_ne!(features & 0x2_0000, 0, "no Barycentrics feature");
+        assert_eq!(inputs.iter().filter(|e| e.kind == 28).count(), 1);
+        assert_eq!(texcoord_mode(&shader), 1);
+        validate(&shader);
+    }
+
     /// Both: the attribute is interpolated and J is used as a value.
     #[test]
     fn interpolation_and_a_barycentric_value_together() {

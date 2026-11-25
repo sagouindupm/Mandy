@@ -138,8 +138,7 @@ pub enum Interp {
     /// One vertex's value (`v_interp_mov_f32`), as encoded: 0 for P10,
     /// 1 for P20, 2 for P0 (the provoking vertex).
     Vertex { attribute: Attribute, vertex: u8 },
-    /// A half of an interpolation whose i or j is computed rather than
-    /// loaded: each half evaluates as the hardware does, from the
+    /// A half of an interpolation that evaluates on its own, from the
     /// attribute's vertex values (`v_interp_p1*`: P0 + i P10, with P10 =
     /// P1 - P0; `v_interp_p2*`: its old dst + j P20, with P20 = P2 - P0).
     Weighted { attribute: Attribute },
@@ -369,6 +368,7 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
         defs: &defs,
         phis: &phis,
     };
+    let mut first_halves = Vec::new();
     for (b, block) in p.blocks.iter().enumerate() {
         for (i, inst) in block.insts.iter().enumerate() {
             let site = (b, i);
@@ -382,7 +382,9 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
                             io.interps
                                 .push((site, Interp::Vertex { attribute, vertex }));
                         }
-                        ("v_interp_p1_f32", _) => {}
+                        ("v_interp_p1_f32", _) => {
+                            first_halves.push((site, Interp::Weighted { attribute }));
+                        }
                         ("v_interp_p2_f32", Operand::Vector { reg, .. }) => {
                             let Operand::Vector { reg: d, .. } = *dst else {
                                 return Err(unsupported(at, "an interpolation operand"));
@@ -460,6 +462,25 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
             }
         }
     }
+    // Paired first halves either already evaluate on their own or are
+    // folded into the host interpolation. A standalone p1 still has a
+    // result: P0 + i(P1 - P0).
+    let covered: std::collections::HashSet<_> = io
+        .interps
+        .iter()
+        .flat_map(|(site, interp)| {
+            let first = match interp {
+                Interp::Interpolated { first, .. } => first.as_slice(),
+                _ => &[],
+            };
+            std::iter::once(*site).chain(first.iter().copied())
+        })
+        .collect();
+    io.interps.extend(
+        first_halves
+            .into_iter()
+            .filter(|(site, _)| !covered.contains(site)),
+    );
     Ok(io)
 }
 
