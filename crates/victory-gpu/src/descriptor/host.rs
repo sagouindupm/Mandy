@@ -535,6 +535,9 @@ struct Waiting {
     /// the fingerprint it had at the upload, how many looks found it
     /// unchanged, and the frame of the upload. A fingerprint of 0: none.
     checked: (u64, u64, u64, u8, u64),
+    /// A shader took the slot's view since it was queued
+    /// ([`TextureQueue::used`]): served before the others.
+    used: bool,
 }
 
 /// The queue of title slots whose texture view waits to be brought up to
@@ -548,6 +551,14 @@ pub(crate) struct TextureQueue {
     /// they need ([`TextureQueue::hold`]), each with the write it was
     /// held as.
     held: std::collections::BTreeMap<u32, u64>,
+    /// Slots the pass made a host copy for, and when (ms) they were made or
+    /// last used ([`TextureQueue::used`]): the copies a slot holds are let
+    /// go only by [`TextureQueue::evict`], or by the slot's memory being
+    /// unmapped.
+    resident: std::collections::BTreeMap<u32, u64>,
+    /// Slots [`TextureQueue::evict`] took out, until written again or
+    /// used ([`TextureQueue::used`]).
+    evicted: std::collections::BTreeSet<u32>,
 }
 
 impl TextureQueue {
@@ -559,9 +570,31 @@ impl TextureQueue {
         if seen && self.slots.contains_key(&index) {
             return;
         }
+        self.evicted.remove(&index);
         self.writes += 1;
         let write = self.writes;
-        self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0) });
+        self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0), used: false });
+    }
+
+    /// Shaders took the views of slots `used` in `frame` (at `now` ms,
+    /// `SLOT_HEAP_USED`): a slot the pass made is kept as recently used,
+    /// so [`TextureQueue::evict`] takes the ones no frame samples first; a
+    /// waiting one is served before the others; an evicted one is queued
+    /// again, due now. The write numbers of queued slots stay as they are
+    /// (a pass at work on one hands its number back).
+    fn used(&mut self, used: &[u32], frame: u64, now: u64) {
+        for &index in used {
+            if let Some(at) = self.resident.get_mut(&index) {
+                *at = now;
+            } else if let Some(w) = self.slots.get_mut(&index) {
+                w.used = true;
+            } else if self.evicted.remove(&index) {
+                self.changed(index, frame, frame);
+                if let Some(w) = self.slots.get_mut(&index) {
+                    w.used = true;
+                }
+            }
+        }
     }
 
     fn remove(&mut self, index: u32) {
@@ -570,6 +603,7 @@ impl TextureQueue {
 
     /// Up to `max` slots due at `frame`, each with its write number, in
     /// the order to serve them:
+    /// - first the ones shaders took the view of ([`TextureQueue::used`]);
     /// - first the ones looked at before (their memory was not mapped, or
     ///   only part of it): the look is a query, and memory that has
     ///   arrived since is what the title streamed in last;
@@ -579,17 +613,26 @@ impl TextureQueue {
     ///   (run 52: 98% of the drawn pixels had no colour texture in the
     ///   first 3D frames).
     fn due(&self, frame: u64, max: usize) -> Vec<(u32, u64)> {
+        let mut used: Vec<(u64, u32, u64)> = Vec::new();
         let mut again: Vec<(u64, u32, u64)> = Vec::new();
         let mut fresh: Vec<(u64, u32, u64)> = Vec::new();
         for (&index, w) in self.slots.iter().filter(|(_, w)| w.due <= frame) {
-            let class = if w.looks > 0 || w.mapped > 0 { &mut again } else { &mut fresh };
+            let class = if w.used {
+                &mut used
+            } else if w.looks > 0 || w.mapped > 0 {
+                &mut again
+            } else {
+                &mut fresh
+            };
             class.push((w.written, index, w.write));
         }
         // By the number of the write, counted over the run.
         let newest_first = |a: &(u64, u32, u64), b: &(u64, u32, u64)| b.2.cmp(&a.2);
+        used.sort_unstable_by(newest_first);
         again.sort_unstable_by(newest_first);
         fresh.sort_unstable_by(newest_first);
-        let mut order: Vec<(u32, u64)> = again.iter().map(|&(_, index, write)| (index, write)).collect();
+        let mut order: Vec<(u32, u64)> =
+            used.iter().chain(&again).map(|&(_, index, write)| (index, write)).collect();
         let (mut new, mut old) = (0, fresh.len());
         while new < old && order.len() < max {
             order.push((fresh[new].1, fresh[new].2));
@@ -606,6 +649,31 @@ impl TextureQueue {
     /// The entry of `index` if it is still the write the pass was handed.
     fn same(&mut self, index: u32, write: u64) -> Option<&mut Waiting> {
         self.slots.get_mut(&index).filter(|w| w.write == write)
+    }
+
+    /// The pass made slot `index` a host copy at `now` ms.
+    fn made_at(&mut self, index: u32, now: u64) {
+        self.resident.insert(index, now);
+    }
+
+    /// Takes out up to `n` of the slots last made or used before `before`
+    /// ms, the least recently first: their copies are given up to make
+    /// room for newer writes (a copy a slot holds is never idle to the
+    /// sweep).
+    fn evict(&mut self, before: u64, n: usize) -> Vec<u32> {
+        let mut old: Vec<(u64, u32)> = self
+            .resident
+            .iter()
+            .filter(|&(_, &at)| at < before)
+            .map(|(&i, &at)| (at, i))
+            .collect();
+        old.sort_unstable();
+        old.truncate(n);
+        for (_, i) in &old {
+            self.resident.remove(i);
+            self.evicted.insert(*i);
+        }
+        old.into_iter().map(|(_, i)| i).collect()
     }
 
     /// Slot `index` is up to date: out of the queue until written again.
@@ -689,7 +757,7 @@ impl TextureQueue {
         self.writes += 1;
         let write = self.writes;
         let due = self.slots.get(&index).map_or(due, |w| w.due.min(due));
-        self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0) });
+        self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0), used: false });
     }
 
     /// Bytes of slot `index`'s memory that were mapped at its last upload
@@ -1165,6 +1233,39 @@ impl HostHeap {
             Some((frame, mapped)) => textures.partly(index, write, frame, mapped),
             None => textures.done(index, write),
         }
+    }
+
+    /// The pass made title slot `index` a host copy at `now` ms.
+    pub(crate) fn texture_slot_made(&self, index: u32, now: u64) {
+        self.textures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .made_at(index, now);
+    }
+
+    /// Shaders took the views of title slots `used`: see [`TextureQueue::used`].
+    pub(crate) fn texture_slots_used(&self, used: &[u32], frame: u64, now: u64) {
+        if !used.is_empty() {
+            self.textures.lock().unwrap_or_else(|e| e.into_inner()).used(used, frame, now);
+        }
+    }
+
+    /// Makes room: up to `n` slots the pass made before `before` ms, the
+    /// least recently used first (made, or taken by a pixel or compute
+    /// shader: `SLOT_HEAP_USED`), are made null so their host copies can go
+    /// ([`TextureQueue::evict`]). Returns how many were. One given up comes
+    /// back when a shader takes it again, or the title writes or maps it.
+    /// shortcut: vertex and mesh shaders leave no mark; what only they
+    /// sample counts from when it was made.
+    pub(crate) fn texture_slots_evict(&self, before: u64, n: usize) -> usize {
+        let out = self
+            .textures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .evict(before, n);
+        out.into_iter()
+            .filter(|&i| self.texture_slot_gone(i))
+            .count()
     }
 
     /// Title slot `index` was uploaded whole: see [`TextureQueue::recheck`].
@@ -3314,6 +3415,41 @@ mod tests {
     /// slot whose memory is not there is looked at again after
     /// 1, 2, 4 frames up to the limit; and what the pass reports about a
     /// slot written again meanwhile is dropped.
+    #[test]
+    fn eviction_takes_the_oldest_made_slots_and_spares_the_recent() {
+        let mut q = TextureQueue::default();
+        for (index, at) in [(5, 300), (1, 100), (9, 200), (2, 9_000)] {
+            q.made_at(index, at);
+        }
+        assert_eq!(q.evict(5_000, 2), [1, 9]);
+        assert_eq!(q.evict(5_000, 8), [5]);
+        assert!(q.evict(5_000, 8).is_empty());
+        assert_eq!(q.evict(10_000, 8), [2]);
+    }
+
+    #[test]
+    fn slots_shaders_take_are_kept_served_first_and_brought_back() {
+        let mut q = TextureQueue::default();
+        for (index, at) in [(1, 100), (2, 200), (3, 300)] {
+            q.made_at(index, at);
+        }
+        // Slot 1 was made first but a shader took it since: 2 goes first.
+        q.used(&[1], 7, 6_000);
+        assert_eq!(q.evict(5_000, 1), [2]);
+        // Of the waiting slots, the one a shader took is served first.
+        for (index, frame) in [(10, 1), (11, 2), (12, 3)] {
+            q.written(index, frame, 0, false);
+        }
+        q.used(&[10], 8, 6_100);
+        assert_eq!(q.due(8, 1)[0].0, 10);
+        // An evicted slot a shader takes again is queued, due now, first.
+        q.used(&[2], 9, 6_200);
+        assert_eq!(q.due(9, 1)[0].0, 2);
+        // Slots nobody knows of stay out.
+        q.used(&[99], 9, 6_200);
+        assert!(!q.due(u64::MAX, 100).iter().any(|d| d.0 == 99));
+    }
+
     #[test]
     fn the_texture_queue_serves_the_newest_writes_first() {
         let mut q = TextureQueue::default();

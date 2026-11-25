@@ -402,6 +402,68 @@ pub(crate) static HEAP_TEXTURES_WAITING: AtomicU64 = AtomicU64::new(0);
 /// Passes that made no texture because the card had no room
 /// (`crate::resource::room`), for the memory line.
 pub(crate) static HEAP_TEXTURES_FULL: AtomicU64 = AtomicU64::new(0);
+/// Slots given up for lack of room, since the start.
+pub(crate) static HEAP_TEXTURES_EVICTED: AtomicU64 = AtomicU64::new(0);
+/// Heap slots shaders marked as taken (`SLOT_HEAP_USED`), since the start.
+pub(crate) static HEAP_SLOTS_USED: AtomicU64 = AtomicU64::new(0);
+
+/// The buffer shaders mark the heap slots they take views from in
+/// (`victory_shader::emit::SLOT_HEAP_USED`): PC memory the card writes
+/// and the pass reads, its mapping and its GPU address.
+struct HeapUsed {
+    _buffer: windows::Win32::Graphics::Direct3D12::ID3D12Resource,
+    data: *mut u32,
+    gpu: u64,
+}
+// SAFETY: the buffer lives for the process; the card writes 1s, the pass
+// reads and clears them (a mark lost to the race comes back next frame).
+unsafe impl Send for HeapUsed {}
+unsafe impl Sync for HeapUsed {}
+
+fn heap_used() -> Option<&'static HeapUsed> {
+    static USED: std::sync::OnceLock<Option<HeapUsed>> = std::sync::OnceLock::new();
+    USED.get_or_init(|| {
+        let bytes = u64::from(victory_shader::emit::SLOT_STRIDES_COUNT) * 4;
+        let (buffer, data) = crate::host::host()?.shared_buffer(bytes)?;
+        crate::host::name(&buffer, || "heap slots shaders took".to_owned());
+        // SAFETY: a fresh mapping of that many bytes; a live buffer.
+        let gpu = unsafe {
+            std::ptr::write_bytes(data, 0, bytes as usize);
+            buffer.GetGPUVirtualAddress()
+        };
+        Some(HeapUsed { _buffer: buffer, data: data.cast(), gpu })
+    })
+    .as_ref()
+}
+
+/// Takes the heap slots shaders marked since the last call, clearing them.
+/// shortcut: one buffer for all view heaps, taken by the pass that runs
+/// first in a frame (a title has one view heap); one per heap if a title
+/// has more.
+fn take_heap_used() -> Vec<u32> {
+    let Some(used) = heap_used() else { return Vec::new() };
+    let count = victory_shader::emit::SLOT_STRIDES_COUNT as usize;
+    // SAFETY: the whole mapping, as u64s (8 MiB, 8-byte aligned); the card
+    // writes whole dwords of 1, so a torn read sees a mark or none.
+    let words = unsafe { std::slice::from_raw_parts_mut(used.data.cast::<u64>(), count / 2) };
+    let mut out = Vec::new();
+    for (i, w) in words.iter_mut().enumerate() {
+        // SAFETY: inside the mapping; the card may write it at any time.
+        let v = unsafe { std::ptr::read_volatile(w) };
+        if v == 0 {
+            continue;
+        }
+        // SAFETY: as above.
+        unsafe { std::ptr::write_volatile(w, 0) };
+        for half in 0..2 {
+            if v >> (32 * half) & 0xFFFF_FFFF != 0 {
+                out.push((i * 2 + half) as u32);
+            }
+        }
+    }
+    HEAP_SLOTS_USED.fetch_add(out.len() as u64, Ordering::Relaxed);
+    out
+}
 
 /// Frames after a whole upload of a texture picked by index at which its
 /// memory is looked at again, each counted from the look before.
@@ -1200,6 +1262,22 @@ impl State {
                 }
             }
             for &(slot, param) in &stage.root_uavs {
+                if slot == victory_shader::emit::SLOT_HEAP_USED {
+                    // Ours: where shaders mark the heap slots they take.
+                    let Some(used) = heap_used() else {
+                        once!("a shader marks the heap slots it takes, with no buffer for them: the draw is dropped");
+                        return false;
+                    };
+                    // SAFETY: an open list; the buffer lives for the process.
+                    unsafe {
+                        if compute {
+                            l.SetComputeRootUnorderedAccessView(param, used.gpu);
+                        } else {
+                            l.SetGraphicsRootUnorderedAccessView(param, used.gpu);
+                        }
+                    }
+                    continue;
+                }
                 if slot == victory_shader::emit::SLOT_FAULTS {
                     // Ours: where shaders note the pages they found empty.
                     if let Some(m) = &memory {
@@ -1783,6 +1861,15 @@ impl State {
         // makes room again: so the slots are still looked at (the pass
         // returned here, and a slot whose texture had been streamed out
         // kept its host copy for as long as the card was full).
+        // What the frame's shaders took (`SLOT_HEAP_USED`), once a frame:
+        // kept as recently used, served first, brought back if given up.
+        static USED_FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
+        static EVICTED: AtomicU64 = AtomicU64::new(0);
+        let now = crate::host::now_ms();
+        let first = USED_FRAME.swap(frame, Ordering::Relaxed) != frame;
+        if first {
+            host.texture_slots_used(&take_heap_used(), frame, now);
+        }
         let mut room = crate::resource::room();
         // Bytes uploaded by this pass since the card was last asked
         // whether it has room: asked again every 32 MiB (a pass may upload
@@ -1791,7 +1878,20 @@ impl State {
         let mut since_asked = 0u64;
         if !room {
             HEAP_TEXTURES_FULL.fetch_add(1, Ordering::Relaxed);
-            once!("textures picked by index: the card has no room for more; they wait");
+            once!("textures picked by index: the card has no room for more; the least recently used make room");
+            // Once a frame (their copies go when the lists holding them
+            // are done): what no shader took for seconds goes first. Only
+            // when all that is there was used since does the PC's memory
+            // the system shares with the card take the rest
+            // (`resource::spill_room`).
+            if first {
+                let evicted = host.texture_slots_evict(now.saturating_sub(4000), 1024) as u64;
+                EVICTED.store(evicted, Ordering::Relaxed);
+                HEAP_TEXTURES_EVICTED.fetch_add(evicted, Ordering::Relaxed);
+            }
+            room = EVICTED.load(Ordering::Relaxed) == 0 && crate::resource::spill_room();
+        } else if first {
+            EVICTED.store(0, Ordering::Relaxed);
         }
         let mut refused = 0;
         // Room again: the slots held back while the card was full are due
@@ -1826,7 +1926,6 @@ impl State {
         // (About a second before the runtime told of the memory it maps:
         // the looks are now only for what that does not tell.)
         static PASSED: AtomicU64 = AtomicU64::new(0);
-        let now = crate::host::now_ms();
         let took = now.saturating_sub(PASSED.swap(now, Ordering::Relaxed)).max(1);
         let most = (4000 / took).clamp(16, 256);
         // What a table entry of a texture a shader samples says.
@@ -2055,6 +2154,7 @@ impl State {
             }
             HEAP_TEXTURE_BYTES.fetch_add(bytes, Ordering::Relaxed);
             HEAP_TEXTURES.fetch_add(1, Ordering::Relaxed);
+            host.texture_slot_made(index, now);
             match memory {
                 // Whole and uploaded: looked at again (see above).
                 Some((at, len)) => {

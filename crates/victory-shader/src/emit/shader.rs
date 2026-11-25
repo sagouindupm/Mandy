@@ -58,6 +58,21 @@ pub const SLOT_TABLE_DWORDS: u32 = SLOT_ADDRESSES + 2 * SLOT_STRIDES_COUNT;
 pub const SLOT_MEMORY: u8 = 254;
 /// See [`SLOT_MEMORY`].
 pub const SLOT_FAULTS: u8 = 253;
+/// The root UAV `u<SLOT_HEAP_USED>` in [`ROOT_CBV_SPACE`] of a pixel or
+/// compute shader that takes shader resource views from the view heap: a
+/// raw buffer of [`SLOT_STRIDES_COUNT`] dwords, dword `i` set to 1 when a
+/// lane takes the view at heap slot `i`. The host reads and clears it to
+/// keep on the card the textures picked by index that frames sample, and
+/// to let go of the others first (`VICTORY_HEAP_USAGE=0`: no marks).
+pub const SLOT_HEAP_USED: u8 = 252;
+
+/// Whether translated pixel and compute shaders mark the heap slots they
+/// take views from ([`SLOT_HEAP_USED`]); off in unit tests, whose harness
+/// binds only the parameters each test names.
+pub fn heap_usage_marks() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !cfg!(test) && *ON.get_or_init(|| std::env::var_os("VICTORY_HEAP_USAGE").is_none_or(|v| v != "0"))
+}
 /// Entries of the [`SLOT_MEMORY`] directory: title addresses below 128 GiB.
 pub const MEMORY_PAGES: u32 = 1 << 21;
 /// Dwords of the [`SLOT_FAULTS`] buffer.
@@ -471,7 +486,37 @@ impl Shader {
         } else {
             props.0
         };
+        // A shader resource view taken from the heap in a pixel or compute
+        // shader (not a mesh one: its UAVs would need every stage's) marks
+        // its slot ([`SLOT_HEAP_USED`]).
+        let compute = self.threads.is_some() && self.mesh.is_none();
+        if !sampler && props.0 & 0x1000 == 0 && (self.pixel || compute) && heap_usage_marks() {
+            self.mark_heap_use(block, index);
+        }
         self.annotate(block, h, props0, props.1)
+    }
+
+    /// Sets dword `index` of the heap-usage buffer ([`SLOT_HEAP_USED`]):
+    /// a plain store of 1, the same value from every lane, so no atomic.
+    fn mark_heap_use(&mut self, block: usize, index: V) {
+        use super::bitcode::Bin;
+        let i32t = self.t.i32;
+        let last = self.m.i32(SLOT_STRIDES_COUNT - 1);
+        let index = self.op(block, "binary.i32", Attr::ReadNone, i32t, 40, &[index, last]);
+        self.m.tag(index, super::bitcode::Tag::Clamp);
+        let two = self.m.i32(2);
+        let byte = self.m.bin(block, Bin::Shl, index, two);
+        let used = self.root_uav_handle(SLOT_HEAP_USED);
+        let (iu, one, mask, align) = (self.m.undef(i32t), self.m.i32(1), self.m.i8(1), self.m.i32(4));
+        let void = self.t.void;
+        self.op(
+            block,
+            "rawBufferStore.i32",
+            Attr::NoUnwind,
+            void,
+            140,
+            &[used, byte, iu, one, iu, iu, iu, mask, align],
+        );
     }
 
     /// The finished container.
