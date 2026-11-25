@@ -410,7 +410,8 @@ fn lane_regions(st: &Structured) -> Option<Vec<(usize, Vec<bool>)>> {
         let mut seen = vec![false; n];
         let mut stack: Vec<usize> = succ[d].clone();
         while let Some(b) = stack.pop() {
-            if seen[b] || pdom[d][b / 64] >> (b % 64) & 1 == 1 {
+            // A backedge can revisit the split before its lanes reconverge.
+            if seen[b] || (b != d && pdom[d][b / 64] >> (b % 64) & 1 == 1) {
                 continue;
             }
             seen[b] = true;
@@ -12192,6 +12193,26 @@ mod tests {
     use crate::{io, ir, resource, structure};
 
     const S_ENDPGM: u32 = 0xBF81_0000;
+
+    #[test]
+    fn a_lane_branch_revisited_by_its_loop_is_not_an_all_lane_block() {
+        let words = [
+            0xbe88_0380, // s_mov_b32 s8, 0 (preheader)
+            0x7d88_0000, // v_cmp_gt_u32 vcc, s0, v0
+            0xbf87_fffe, // s_cbranch_vccnz back to the compare
+            S_ENDPGM,
+        ];
+        let code: Vec<_> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+        let p = ir::build(&code, true, 8).unwrap();
+        let branch = p.blocks.iter().position(|b| b.offset == 4).unwrap();
+        let st = structure::structure(&p).unwrap();
+        assert_eq!(st.wave_any[branch], Some(true));
+        assert!(!super::all_lane_blocks(&st).unwrap()[branch]);
+        assert_eq!(super::branches_around(&st, &[branch]), Some(vec![branch]));
+
+        let wide = structure::structure_wide(&p, &[branch].into_iter().collect()).unwrap();
+        assert!(super::all_lane_blocks(&wide).unwrap()[branch]);
+    }
 
     #[test]
     fn packed_pixel_inputs_find_their_second_row() {
