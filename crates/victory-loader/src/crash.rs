@@ -24,7 +24,7 @@ use windows_sys::Win32::System::LibraryLoader::{
     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
     GetModuleFileNameW, GetModuleHandleExW,
 };
-use windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits;
+use windows_sys::Win32::System::Threading::{GetCurrentProcessorNumber, GetCurrentThreadStackLimits};
 
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 /// Frames listed per report.
@@ -149,9 +149,46 @@ unsafe fn emulate_amd_only(info: *mut EXCEPTION_POINTERS) -> bool {
         }
         let code = context.Rip as *const u8;
         match code.cast::<[u8; 3]>().read_unaligned() {
-            [0x0f, 0x01, 0xfc] => ((context.Rax & !63) as *mut u8).write_bytes(0, 64),
+            [0x0f, 0x01, 0xfc] => {
+                let room = 0x1000 - (context.Rip as usize & 0xfff);
+                let mut bytes = [0u8; 16];
+                let n = room.min(bytes.len());
+                std::ptr::copy_nonoverlapping(code, bytes.as_mut_ptr(), n);
+                if let Some(pass) = clzero_loop(&bytes[..n]) {
+                    // A whole zeroing loop in one exception (see `clzero_loop`).
+                    let end = *gpr(context, pass.end);
+                    let mut at = context.Rax;
+                    while at < end {
+                        ((at & !63) as *mut u8).write_bytes(0, 64);
+                        at = at.wrapping_add(64);
+                    }
+                    if at == context.Rax {
+                        // Not below the end at the first pass: one line, as the loop does.
+                        ((at & !63) as *mut u8).write_bytes(0, 64);
+                        at = at.wrapping_add(64);
+                    }
+                    context.Rax = at;
+                    context.EFlags = context.EFlags & !CMP_FLAGS | cmp_flags(at, end);
+                    context.Rip += pass.len as u64;
+                    return true;
+                }
+                ((context.Rax & !63) as *mut u8).write_bytes(0, 64)
+            }
             [0x0f, 0x01, 0xfa] => {}
             [0x0f, 0x01, 0xfb] => std::thread::yield_now(),
+            [0x0f, 0x01, 0xfd] => {
+                // rdpru: ecx 0 reads MPERF, 1 APERF, into edx:eax; CF set when
+                // the register exists, else zeroes and CF clear. Both counters
+                // run at a fixed rate the title only ever divides by each
+                // other, so the time stamp counter stands in for both.
+                let (value, valid) = match context.Rcx as u32 {
+                    0 | 1 => (core::arch::x86_64::_rdtsc(), true),
+                    _ => (0, false),
+                };
+                context.Rax = value & 0xffff_ffff;
+                context.Rdx = value >> 32;
+                context.EFlags = context.EFlags & !1 | u32::from(valid);
+            }
             _ => {
                 // Only bytes inside the faulting instruction's page are read: the next page may
                 // not be mapped.
@@ -177,6 +214,12 @@ unsafe fn emulate_amd_only(info: *mut EXCEPTION_POINTERS) -> bool {
                     && let Some(len) = clwb_len(bytes[..15].try_into().unwrap_or([0; 15]))
                 {
                     // A write-back hint: the PC's memory is coherent, so it has nothing to do.
+                    context.Rip += len as u64;
+                    return true;
+                }
+                if let Some((register, len)) = rdpid(&bytes[..n]) {
+                    // rdpid: the processor number (TSC_AUX on Windows).
+                    *gpr(context, register) = u64::from(GetCurrentProcessorNumber());
                     context.Rip += len as u64;
                     return true;
                 }
@@ -277,6 +320,66 @@ fn clwb_loop(code: &[u8]) -> Option<ClwbLoop> {
     (limit != base).then_some(ClwbLoop { base, limit, len })
 }
 
+/// A `clzero` loop as the title zeroes memory with at its start (`end` any
+/// register but `rax`):
+///
+/// ```text
+/// top: clzero
+///      add  rax, 0x40
+///      cmp  rax, end
+///      jb   top
+/// ```
+///
+/// One exception a 64-byte line is a microsecond each over whole buffers, so
+/// the loop is done in one.
+struct ClzeroLoop {
+    end: u8,
+    /// Bytes from `clzero` to the instruction after `jb`.
+    len: usize,
+}
+
+fn clzero_loop(code: &[u8]) -> Option<ClzeroLoop> {
+    // clzero; add rax, 0x40 (REX.W 83 /0 ib).
+    if code.get(..7)? != [0x0f, 0x01, 0xfc, 0x48, 0x83, 0xc0, 0x40] {
+        return None;
+    }
+    // cmp rax, end: REX.W 39 /r (rax in r/m) or REX.W 3b /r (rax in reg).
+    let &[rex @ 0x48..=0x4f, op, modrm] = code.get(7..10)? else {
+        return None;
+    };
+    if modrm >> 6 != 3 {
+        return None;
+    }
+    let (reg, rm) = ((modrm >> 3) & 7 | (rex & 4) << 1, modrm & 7 | (rex & 1) << 3);
+    let end = match op {
+        0x39 if rm == 0 => reg,
+        0x3b if reg == 0 => rm,
+        _ => return None,
+    };
+    // jb top: 72 rel8, back to the clzero.
+    if *code.get(10)? != 0x72 || i64::from(*code.get(11)? as i8) != -12 {
+        return None;
+    }
+    (end != 0).then_some(ClzeroLoop { end, len: 12 })
+}
+
+/// `rdpid r64` (`f3 [rex] 0f c7 /7`, a register operand), which Intel CPUs
+/// before Ice Lake lack: the register and the instruction's length.
+fn rdpid(code: &[u8]) -> Option<(u8, usize)> {
+    let (rex, at) = match *code.get(1)? {
+        r @ 0x40..=0x4f => (r, 2),
+        _ => (0, 1),
+    };
+    if *code.first()? != 0xf3 || code.get(at..at + 2)? != [0x0f, 0xc7] {
+        return None;
+    }
+    let modrm = *code.get(at + 2)?;
+    if modrm >> 6 != 3 || (modrm >> 3) & 7 != 7 {
+        return None;
+    }
+    Some((modrm & 7 | (rex & 1) << 3, at + 3))
+}
+
 /// The general register numbered `n` as instructions encode it.
 fn gpr(context: &mut CONTEXT, n: u8) -> &mut u64 {
     match n & 15 {
@@ -358,14 +461,6 @@ unsafe fn sse4a(code: *const u8, xmm: &mut [M128A; 16]) -> Option<usize> {
 
 unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     // an instruction of the console's CPU this one lacks: emulated, the title goes on
-    // SAFETY: the system passes valid exception pointers.
-    if unsafe { (*(*info).ExceptionRecord).ExceptionCode } == EXCEPTION_ILLEGAL_INSTRUCTION {
-        // SAFETY: the faulting thread's context, for the exception being dispatched.
-        let r = unsafe { crate::console_insn::emulate(&mut *(*info).ContextRecord) };
-        if r != 0 {
-            return r;
-        }
-    }
     // SAFETY: the system passes valid exception pointers.
     if unsafe { emulate_amd_only(info) } {
         return -1; // EXCEPTION_CONTINUE_EXECUTION
@@ -661,6 +756,27 @@ fn memory_at(address: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clzero_loops_are_read() {
+        // clzero; add rax, 0x40; cmp rax, rdx (39 /r); jb -12
+        let l = clzero_loop(&[0x0f, 0x01, 0xfc, 0x48, 0x83, 0xc0, 0x40, 0x48, 0x39, 0xd0, 0x72, 0xf4]).unwrap();
+        assert_eq!((l.end, l.len), (2, 12));
+        // cmp rax, r9 written 3b /r
+        let l = clzero_loop(&[0x0f, 0x01, 0xfc, 0x48, 0x83, 0xc0, 0x40, 0x49, 0x3b, 0xc1, 0x72, 0xf4]).unwrap();
+        assert_eq!(l.end, 9);
+        // another jump is not the loop
+        assert!(clzero_loop(&[0x0f, 0x01, 0xfc, 0x48, 0x83, 0xc0, 0x40, 0x48, 0x39, 0xd0, 0x72, 0xf0]).is_none());
+        assert!(clzero_loop(&[0x0f, 0x01, 0xfc, 0x90]).is_none());
+    }
+
+    #[test]
+    fn rdpid_is_read() {
+        assert_eq!(rdpid(&[0xf3, 0x0f, 0xc7, 0xf8]), Some((0, 4)));
+        assert_eq!(rdpid(&[0xf3, 0x41, 0x0f, 0xc7, 0xf9]), Some((9, 5)));
+        // rdrand (/6) is not rdpid
+        assert_eq!(rdpid(&[0xf3, 0x0f, 0xc7, 0xf0]), None);
+    }
     use windows_sys::Win32::System::Diagnostics::Debug::{
         EXCEPTION_RECORD, RtlCaptureContext, RtlCaptureStackBackTrace,
     };
