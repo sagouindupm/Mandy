@@ -1023,12 +1023,30 @@ extern "system" fn delete_blob(_: This, update: *mut Update, name: *const c_char
     }
 }
 
+/// Applies an update and says so in the log: the container, its blobs and
+/// the result, so a save that does not stick can be told from one never made.
+fn submit_logged(update: *const Update, how: &str) -> HRESULT {
+    let Some(u) = get(update) else {
+        tracing::warn!(how, "game save: submit of an unknown update");
+        return E_INVALIDARG;
+    };
+    let hr = u.submit();
+    let written: usize = u.changes.iter().map(|(_, d)| d.as_ref().map_or(0, Vec::len)).sum();
+    let blobs: Vec<&str> = u.changes.iter().map(|(n, _)| n.as_str()).collect();
+    if hr == S_OK {
+        tracing::info!(how, container = %u.name, ?blobs, written, "game save: written");
+    } else {
+        tracing::warn!(how, container = %u.name, ?blobs, written, hr = format_args!("{hr:#010x}"), "game save: refused");
+    }
+    hr
+}
+
 extern "system" fn submit(_: This, update: *const Update) -> HRESULT {
-    get(update).map_or(E_INVALIDARG, Update::submit)
+    submit_logged(update, "blocking")
 }
 
 extern "system" fn submit_async(_: This, update: *const Update, block: *mut AsyncBlock) -> HRESULT {
-    let hr = get(update).map_or(E_INVALIDARG, Update::submit);
+    let hr = submit_logged(update, "async");
     xasync::finished(block, (&raw const SUBMIT).cast(), hr)
 }
 extern "system" fn submit_result(_: This, block: *mut AsyncBlock) -> HRESULT {
