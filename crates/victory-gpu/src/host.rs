@@ -333,7 +333,7 @@ pub(crate) fn removal_context() -> String {
 
 /// Says [`removal_context`] in the log, once: called by whoever finds the
 /// host device removed.
-pub(crate) fn log_removal_context() {
+fn log_removal_context() {
     static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !trail_on() || SAID.swap(true, Ordering::Relaxed) {
         return;

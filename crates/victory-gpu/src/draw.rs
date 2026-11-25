@@ -1488,10 +1488,10 @@ impl State {
             changed
         };
         *passes += 1;
-        // Whether the device was there before the pass: a view that removes
-        // it is named below.
-        static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        let mut alive = !GONE.load(Ordering::Relaxed) && crate::descriptor::host::device_removed().is_none();
+        if let Some(why) = crate::descriptor::host::device_removed() {
+            drop(kept);
+            crate::host::fail(format_args!("host device lost before preparing buffer views: {why}"));
+        }
         HEAP_PASS_PARTS[1].fetch_add(slots.len() as u64, Ordering::Relaxed);
         for (n, &index) in slots.iter().enumerate() {
             ranges.remove(&index);
@@ -1502,19 +1502,18 @@ impl State {
                 continue;
             };
             // Every 64 views while the device lives (a cheap query).
-            if alive
-                && n % 64 == 63
+            if n % 64 == 63
                 && let Some(why) = crate::descriptor::host::device_removed()
             {
-                alive = false;
-                GONE.store(true, Ordering::Relaxed);
                 let last: Vec<String> = slots[n - 63..=n]
                     .iter()
                     .filter_map(|&i| crate::descriptor::view(heap.handle(i)?).map(|v| format!("{i}: {v:?}")))
                     .map(|s| s.chars().take(200).collect())
                     .collect();
-                tracing::error!(why, slot = index, "the host device went while buffer views of the heap were made; one of: {last:#?}");
-                crate::host::log_removal_context();
+                drop(kept);
+                crate::host::fail(format_args!(
+                    "host device lost while preparing buffer views at slot {index}: {why}; recent views: {last:#?}"
+                ));
             }
             // The copy the slot shows (`buffer_copy`), not the one the
             // view's range alone would find.
@@ -2003,16 +2002,12 @@ impl State {
             if let Some(view) = &view {
                 readable(list, sampled.kind, view);
             }
-            // A texture view the host refuses removes the device: name it.
-            static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-            if !GONE.load(Ordering::Relaxed)
-                && let Some(why) = crate::descriptor::host::device_removed()
-            {
-                GONE.store(true, Ordering::Relaxed);
+            // Preserve the last view and stop once the host confirms device loss.
+            if let Some(why) = crate::descriptor::host::device_removed() {
                 let text: String = format!("{view:?}").chars().take(300).collect();
-                tracing::error!(why, slot = index, "the host device went while textures picked by index were made ready; last: {text}");
-                crate::host::log_removal_context();
-                return;
+                crate::host::fail(format_args!(
+                    "host device lost while preparing textures picked by index at slot {index}: {why}; last view: {text}"
+                ));
             }
             let (bytes, whole) = crate::texture::staged(resource).unwrap_or((0, true));
             // Not all of it there: looked at again next frame, and from

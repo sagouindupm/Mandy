@@ -731,9 +731,8 @@ pub(crate) fn is_texture_view(view: &View) -> bool {
 /// ([`buffer_view_ok`]), since the start.
 pub(crate) static REFUSED_VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Whether the host device is gone, and why (the first time it is asked
-/// after that): for passes that make many views, to name the one that did
-/// it.
+/// Queries the removal reason while preparing host views so the failure
+/// report can include the views in progress.
 pub(crate) fn device_removed() -> Option<String> {
     let host = host()?;
     // SAFETY: a plain query.
