@@ -109,6 +109,7 @@ pub(crate) mod flags {
     pub const RAW_BUFFERS: u64 = 1 << 4;
     pub const DOUBLES: u64 = 1 << 2;
     pub const STENCIL_REF: u64 = 1 << 11;
+    pub const EARLY_DEPTH: u64 = 1 << 3;
     pub const TYPED_UAV_LOADS: u64 = 1 << 13;
     pub const ROVS: u64 = 1 << 18;
     pub const WAVE_OPS: u64 = 1 << 19;
@@ -195,6 +196,10 @@ pub(crate) struct Shader {
     /// A pixel shader with a primitive-ordered section (console POPS): its
     /// heap UAVs are rasterizer-ordered views.
     pub rov: bool,
+    /// It discards pixels (`dx.op.discard`).
+    discards: bool,
+    /// It takes unordered access views from the heap.
+    heap_uavs: bool,
     /// A compute shader with this thread-group size.
     pub threads: Option<[u32; 3]>,
     /// The wave size a compute shader requires (`WaveSize`).
@@ -252,6 +257,8 @@ impl Shader {
             flags: 0,
             nonuniform_handles: 0,
             rov: false,
+            discards: false,
+            heap_uavs: false,
             threads: None,
             wave_size: None,
             lds_dwords: 0,
@@ -283,6 +290,7 @@ impl Shader {
         opcode: u32,
         args: &[V],
     ) -> V {
+        self.discards |= opcode == 82;
         let mut params = vec![self.t.i32];
         params.extend(args.iter().map(|&a| self.m.type_of(a)));
         let fty = self.m.func_ty(ret, params);
@@ -489,6 +497,7 @@ impl Shader {
         // A shader resource view taken from the heap in a pixel or compute
         // shader (not a mesh one: its UAVs would need every stage's) marks
         // its slot ([`SLOT_HEAP_USED`]).
+        self.heap_uavs |= props.0 & 0x1000 != 0;
         let compute = self.threads.is_some() && self.mesh.is_none();
         if !sampler && props.0 & 0x1000 == 0 && (self.pixel || compute) && heap_usage_marks() {
             self.mark_heap_use(block, index);
@@ -770,6 +779,20 @@ impl Shader {
         // A pixel shader with an SV_StencilRef output (as DXC collects it).
         if self.pixel && self.outputs.iter().any(|o| o.kind == 20) {
             self.flags |= flags::STENCIL_REF;
+        }
+        // A pixel shader whose only unordered access is our heap marks, with
+        // no discard and no depth, coverage or stencil output, keeps its depth
+        // test before it (`ForceEarlyDepthStencil`): a UAV write otherwise
+        // moves the test after the shader, and every hidden pixel of the
+        // draw was shaded (GPU time 5x in the opening cutscene).
+        if self.pixel
+            && !self.root_uavs.is_empty()
+            && self.root_uavs.iter().all(|r| r.0 == SLOT_HEAP_USED)
+            && !self.heap_uavs
+            && !self.discards
+            && !self.outputs.iter().any(|o| matches!(o.kind, 14 | 17..=20))
+        {
+            self.flags |= flags::EARLY_DEPTH;
         }
         // Entry properties: shader flags (tag 0), geometry state (1),
         // thread-group size (4), wave size (11).
