@@ -2637,4 +2637,15 @@ mod barycentric_tests {
         assert!(lowered.funcs.iter().any(|n| n == "dx.op.quadReadLaneAt.i32"));
         assert!(!lowered.funcs.iter().any(|n| n == "dx.op.waveReadLaneAt.i32"));
     }
+
+    #[test]
+    fn host_rovs_changes_translation_fingerprint() {
+        let prev = super::host_rovs();
+        super::set_host_rovs(false);
+        let without = super::translation_fingerprint();
+        super::set_host_rovs(true);
+        let with_rovs = super::translation_fingerprint();
+        super::set_host_rovs(prev);
+        assert_ne!(without, with_rovs);
+    }
 }
