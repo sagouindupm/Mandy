@@ -31,6 +31,8 @@
 //! lane sends the output counts (`s_sendmsg` GS_ALLOC_REQ, m0 = vertices |
 //! primitives << 12).
 
+use std::collections::{HashMap, HashSet};
+
 use crate::ShaderError;
 use crate::gfx10::{Fields, Operand};
 use crate::ir::{Exit, Inst, Program, Reg, Value, operand_reads};
@@ -404,7 +406,10 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
                     }
                 }
                 Fields::Valu(v) if name.starts_with("v_interp_") => match name {
-                    "v_interp_p1ll_f16" => {}
+                    "v_interp_p1ll_f16" => {
+                        let attribute = attribute(inst, &v.src[0])?;
+                        first_halves.push((site, Interp::Weighted { attribute }));
+                    }
                     "v_interp_p2_f16" => {
                         let attribute = attribute(inst, &v.src[0])?;
                         let read = |k: usize| match v.src.get(k) {
@@ -462,24 +467,39 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
             }
         }
     }
-    // Paired first halves either already evaluate on their own or are
-    // folded into the host interpolation. A standalone p1 still has a
-    // result: P0 + i(P1 - P0).
-    let covered: std::collections::HashSet<_> = io
-        .interps
-        .iter()
-        .flat_map(|(site, interp)| {
-            let first = match interp {
-                Interp::Interpolated { first, .. } => first.as_slice(),
-                _ => &[],
-            };
-            std::iter::once(*site).chain(first.iter().copied())
-        })
-        .collect();
+    // A paired first half still needs a value when something else reads
+    // it. Merely carrying its value through a phi to the pair does not
+    // need the first half to be emitted.
+    let assigned: HashSet<_> = io.interps.iter().map(|(site, _)| *site).collect();
+    let mut folded = HashSet::new();
+    let mut fused_accumulators = HashMap::new();
+    for (site, interp) in &io.interps {
+        if let Interp::Interpolated { first, .. } = interp {
+            folded.extend(first.iter().copied());
+            let inst = &p.blocks[site.0].insts[site.1];
+            // f32's old dst is implicit. The f16 accumulator is an
+            // explicit third operand, which the folded pair also replaces.
+            if let Fields::Valu(v) = &inst.fields
+                && let Some(&Operand::Vector { reg, .. }) = v.src.get(2)
+            {
+                fused_accumulators.insert(*site, Reg::V(reg));
+            }
+        }
+    }
+    let reads = if folded.is_empty() {
+        HashSet::new()
+    } else {
+        halves.independent_reads(&folded, &fused_accumulators)
+    };
     io.interps.extend(
-        first_halves
-            .into_iter()
-            .filter(|(site, _)| !covered.contains(site)),
+        first_halves.into_iter().filter(|(site, _)| {
+            !assigned.contains(site)
+                && (!folded.contains(site)
+                    || p.blocks[site.0].insts[site.1]
+                        .writes
+                        .iter()
+                        .any(|(_, value)| reads.contains(value)))
+        }),
     );
     Ok(io)
 }
@@ -545,6 +565,55 @@ struct Halves<'a> {
 }
 
 impl Halves<'_> {
+    /// Values read outside a folded pair, following explicit operand
+    /// reads back through phis to first halves that define them.
+    fn independent_reads(
+        &self,
+        folded: &HashSet<Site>,
+        fused_accumulators: &HashMap<Site, Reg>,
+    ) -> HashSet<Value> {
+        let relevant = |value: &Value| {
+            self.phis.contains_key(value)
+                || self.defs.get(value).is_some_and(|site| folded.contains(site))
+        };
+        let mut pending = Vec::new();
+        for (b, block) in self.p.blocks.iter().enumerate() {
+            for (i, inst) in block.insts.iter().enumerate() {
+                if !inst
+                    .reads
+                    .iter()
+                    .any(|(reg, value)| matches!(reg, Reg::V(_)) && relevant(value))
+                {
+                    continue;
+                }
+                let inputs = operand_reads(self.p, inst);
+                let acc = fused_accumulators.get(&(b, i));
+                // P2 writes one half of its destination and reads the
+                // other half even when the interpolation itself is folded.
+                let kept = if inst.name() == "v_interp_p2_f16" {
+                    inst.writes.first().map(|(reg, _)| reg)
+                } else {
+                    None
+                };
+                pending.extend(inst.reads.iter().filter_map(|(reg, value)| {
+                    (matches!(reg, Reg::V(_))
+                        && relevant(value)
+                        && (Some(reg) == kept || (inputs.contains(reg) && Some(reg) != acc)))
+                        .then_some(*value)
+                }));
+            }
+        }
+        let mut reads = HashSet::new();
+        while let Some(value) = pending.pop() {
+            if reads.insert(value)
+                && let Some(&(b, i)) = self.phis.get(&value)
+            {
+                pending.extend(self.p.blocks[b].phis[i].args.iter().copied().filter(relevant));
+            }
+        }
+        reads
+    }
+
     /// The interpolation whose second half reads the first half's result
     /// `acc`, the barycentric `j`, and attribute `attr`: every first half
     /// must read the same attribute channel. With j and every first half's
@@ -717,6 +786,29 @@ mod tests {
         // attr1 is not in the stage data.
         let other = program(&[0xC808_0400, S_ENDPGM]); // v_interp_p1_f32 v2, v0, attr1.x
         assert!(raise(&other, &pixel(vec![TEXCOORD], 2)).is_err());
+    }
+
+    #[test]
+    fn joined_first_halves_are_kept_only_if_the_join_is_read_as_a_value() {
+        for (use_half, read) in [(false, 0xBF80_0000), (true, 0x7E06_0302)] {
+            let p = program(&[
+                0xBF06_8000, // s_cmp_eq_u32 s0, 0
+                0xBF85_0002, // s_cbranch_scc1 -> 16
+                0xC808_0000, // v_interp_p1_f32 v2, v0, attr0.x
+                0xBF82_0001, // s_branch -> 20
+                0xC808_0000, // 16: v_interp_p1_f32 v2, v0, attr0.x
+                read,        // 20: s_nop or v_mov_b32 v3, v2
+                0xC809_0001, // v_interp_p2_f32 v2, v1, attr0.x
+                S_ENDPGM,
+            ]);
+            let io = raise(&p, &pixel(vec![TEXCOORD], 2)).unwrap();
+            let weighted = io
+                .interps
+                .iter()
+                .filter(|(_, interp)| matches!(interp, Interp::Weighted { .. }))
+                .count();
+            assert_eq!(weighted, if use_half { 2 } else { 0 });
+        }
     }
 
     #[test]
