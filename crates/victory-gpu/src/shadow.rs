@@ -1744,6 +1744,45 @@ fn back_piece(
     Some((first, n))
 }
 
+/// Joins runs (offset, length; in order, apart) that have fewer than `gap`
+/// bytes between them: one run from the first's start to the last's end.
+fn join_runs(runs: &mut Vec<(usize, usize)>, gap: usize) {
+    let mut kept = 0;
+    for i in 1..runs.len() {
+        let (off, len) = runs[i];
+        let end = runs[kept].0 + runs[kept].1;
+        if off - end < gap {
+            runs[kept].1 = off + len - runs[kept].0;
+        } else {
+            kept += 1;
+            runs[kept] = (off, len);
+        }
+    }
+    runs.truncate(kept + 1);
+}
+
+/// How close two runs of a piece [`Shadow::copy_back`] puts back must lie
+/// to be written as one, in bytes between them (`VICTORY_BACK_RUN_GAP`, 64;
+/// `0`: every run is a write of its own, as before).
+///
+/// A shader that writes records leaves many short runs: every byte of a
+/// record that comes out as it was ends one. In the world frames of the
+/// opening scene (RX 7900 XT, Wine) about 250 pieces a frame held 240,000
+/// to 280,000 runs, each a call into the kernel: 0.8 to 1.2 s of a frame of
+/// 1.4 s where that call goes through Wine. Joined over gaps under 64
+/// bytes they are about 4,000 writes a frame and 20 ms (under 8 bytes about
+/// 15,000 writes, under 512 about 1,100).
+///
+/// What it gives up: the bytes between two joined runs are written as they
+/// were read a moment before, so a title write landing on one of them
+/// between the read and the write is lost, as it was for the whole stretch
+/// before only the GPU's bytes were written. That is now a byte less than
+/// `gap` bytes from one the shader wrote, not anywhere in the stretch.
+fn back_run_gap() -> usize {
+    static GAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *GAP.get_or_init(|| std::env::var("VICTORY_BACK_RUN_GAP").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(64))
+}
+
 /// Since the last frame-rate line, of [`Shadow::merge_under_writes`]: pages
 /// compared, changed runs put in, and their bytes.
 static MERGED: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
@@ -1822,7 +1861,34 @@ fn changed_runs(now: &[u8], was: &[u8]) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod merge_tests {
-    use super::{PIECE, back_piece, changed_runs};
+    use super::{PIECE, back_piece, changed_runs, join_runs};
+
+    /// Runs with fewer bytes between them than the gap become one, from the
+    /// first's start to the last's end; the others stay as they are.
+    #[test]
+    fn runs_closer_than_the_gap_are_joined() {
+        let runs = vec![(0, 1), (4, 1), (8, 2), (74, 3), (100, 1), (1000, 5)];
+        let joined = |gap| {
+            let mut r = runs.clone();
+            join_runs(&mut r, gap);
+            r
+        };
+        // No gap: every run its own.
+        assert_eq!(joined(0), runs);
+        // 3 bytes lie between the first two and between the next two.
+        assert_eq!(joined(3), runs);
+        assert_eq!(joined(4), [(0, 10), (74, 3), (100, 1), (1000, 5)]);
+        // 64 lie between 10 and 74: not under 64.
+        assert_eq!(joined(64), [(0, 10), (74, 27), (1000, 5)]);
+        assert_eq!(joined(65), [(0, 101), (1000, 5)]);
+        assert_eq!(joined(usize::MAX), [(0, 1005)]);
+        let mut none: Vec<(usize, usize)> = Vec::new();
+        join_runs(&mut none, 64);
+        assert!(none.is_empty());
+        let mut one = vec![(7, 2)];
+        join_runs(&mut one, 64);
+        assert_eq!(one, [(7, 2)]);
+    }
 
     /// A piece put back takes the GPU's bytes where the copy changed and
     /// the title's everywhere else, reads and writes title memory only from
@@ -2553,7 +2619,9 @@ impl Shadow {
                 crate::watch::writing(start + at, n);
                 // Only the GPU's bytes (upstream #2009): the rest of the
                 // stretch is the title's as read, and a title write landing
-                // there since stays.
+                // there since stays. Runs a few bytes apart go in one write
+                // (`back_run_gap`).
+                join_runs(&mut runs, back_run_gap());
                 for &(off, len) in &runs {
                     crate::host::write_mapped((start + at + off) as *mut u8, title[off..].as_ptr(), len);
                     written += len;
