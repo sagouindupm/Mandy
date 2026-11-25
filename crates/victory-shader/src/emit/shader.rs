@@ -16,8 +16,9 @@ pub const ROOT_CBV_SPACE: u32 = 1;
 /// The root SRV `t<SLOT_STRIDES>` in [`ROOT_CBV_SPACE`] of a shader that
 /// reads buffers through descriptors it picks from the view heap at an
 /// index it computes (SM 6.6 dynamic resources): a raw buffer of
-/// [`SLOT_STRIDES_COUNT`] dwords the host keeps, dword `i` the bytes per
-/// element of the buffer view at heap slot `i` (0: none or not a buffer).
+/// [`SLOT_TABLE_DWORDS`] dwords the host keeps, dword `i` the bytes per
+/// element of the buffer view at heap slot `i` (0: none or not a buffer),
+/// then the views' addresses ([`SLOT_ADDRESSES`]).
 /// The console's descriptor holds that stride and its hardware multiplies
 /// the element index by it; the program's code does not say it, and the
 /// used-resource list only names what tables hold. A shader that has this
@@ -26,6 +27,16 @@ pub const ROOT_CBV_SPACE: u32 = 1;
 pub const SLOT_STRIDES: u8 = 255;
 /// Dwords of the [`SLOT_STRIDES`] buffer: heap indices are clamped to it.
 pub const SLOT_STRIDES_COUNT: u32 = 1 << 21;
+/// The dword of the [`SLOT_STRIDES`] buffer where, past the strides, the
+/// title addresses of the buffer views by heap slot begin: two dwords per
+/// slot, the low 32 bits then the bits from 32 up (0: none or not a
+/// buffer). Console code reads the address out of a buffer descriptor it
+/// picks from the heap and uses it as a pointer (the shadow rays' walk of
+/// the ray-tracing structure).
+pub const SLOT_ADDRESSES: u32 = SLOT_STRIDES_COUNT;
+/// Dwords of the whole [`SLOT_STRIDES`] buffer: the strides, then the
+/// addresses ([`SLOT_ADDRESSES`]).
+pub const SLOT_TABLE_DWORDS: u32 = SLOT_ADDRESSES + 2 * SLOT_STRIDES_COUNT;
 
 /// Title memory by address (`resource::MEMORY`): console code reads and
 /// writes through raw 40-bit addresses it takes from root constants,

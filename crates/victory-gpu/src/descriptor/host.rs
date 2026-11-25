@@ -55,8 +55,9 @@ pub(crate) struct HostHeap {
     too_long: std::sync::atomic::AtomicU32,
     /// View heaps: the bytes per element of the buffer view at each title
     /// slot, for shaders that pick a buffer by an index they compute
-    /// (`victory_shader::emit::SLOT_STRIDES`): an upload buffer of
-    /// `SLOT_STRIDES_COUNT` dwords, its GPU address and its mapping.
+    /// (`victory_shader::emit::SLOT_STRIDES`), then its title address
+    /// (`SLOT_ADDRESSES`): an upload buffer of `SLOT_TABLE_DWORDS` dwords,
+    /// its GPU address and its mapping.
     strides: Option<(ID3D12Resource, u64, usize)>,
     /// Title slots holding buffer views. Such a view gets its host slot
     /// (and its memory a host copy) only when something reads it: a draw
@@ -944,7 +945,7 @@ impl HostHeap {
         ));
         let strides = (!sampler)
             .then(|| {
-                let bytes = u64::from(victory_shader::emit::SLOT_STRIDES_COUNT) * 4;
+                let bytes = u64::from(victory_shader::emit::SLOT_TABLE_DWORDS) * 4;
                 let (buffer, data) = host.upload_buffer(bytes)?;
                 // SAFETY: the buffer's whole mapping; a live buffer.
                 let gpu = unsafe {
@@ -1627,6 +1628,16 @@ impl HostHeap {
             // SAFETY: inside the mapping; shaders read it while we write (a
             // dword, either value is one the slot had).
             unsafe { (*data as *mut u32).add(index as usize).write_volatile(stride.unwrap_or(0)) };
+            // The view's title address, past the strides (`SLOT_ADDRESSES`).
+            // (A reader between the two dwords sees half an address for
+            // one dispatch, as with the stride.)
+            let address = view.filter(|_| stride.is_some()).and_then(buffer_range).map_or(0, |r| r.0);
+            let at = (victory_shader::emit::SLOT_ADDRESSES + 2 * index) as usize;
+            // SAFETY: as above, `SLOT_TABLE_DWORDS` dwords.
+            unsafe {
+                (*data as *mut u32).add(at).write_volatile(address as u32);
+                (*data as *mut u32).add(at + 1).write_volatile((address >> 32) as u32);
+            }
         }
         let mut buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
         let was = if stride.is_some() {
