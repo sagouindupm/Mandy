@@ -545,7 +545,7 @@ pub(crate) fn write_own(at: usize, bytes: &[u8]) -> Option<Vec<usize>> {
             return None;
         }
         let offset = offset + (at - base) as u64;
-        let shown = v.pages.get(&(section, offset - offset % K64 as u64))?.clone();
+        let shown = v.pages.get(&(section, offset - offset % K64 as u64))?.to_vec();
         if shown.len() > crate::watch::MANY_VIEWS {
             return None;
         }

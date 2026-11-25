@@ -2754,7 +2754,7 @@ impl Shadow {
         let base = self.start as usize / PAGE;
         {
             let mut copied = self.copied.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(taken) = page.checked_sub(base).and_then(|i| copied.get_mut(i))
+            if let Some(taken) = page.checked_sub(base).and_then(|i| copied.0.get_mut(i))
                 && *taken != 0
                 && *taken >= before
             {
