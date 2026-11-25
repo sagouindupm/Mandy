@@ -2066,7 +2066,7 @@ pub(crate) fn let_go_idle() {
             if idle {
                 // Under the lock: the next use must not find the staging
                 // state of the texture let go (it says "uploaded").
-                crate::texture::unstage(at as This);
+                crate::texture::unstage_later(at as This);
                 made.take()
             } else {
                 None
@@ -2081,7 +2081,7 @@ pub(crate) fn let_go_idle() {
             if first.is_none() {
                 first = Some(at);
             }
-            crate::host::retire(host);
+            crate::host::retire_later(host);
         }
     }
     if went > 0 {

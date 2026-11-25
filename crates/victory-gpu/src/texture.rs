@@ -1286,6 +1286,18 @@ pub(crate) fn unstage(resource: This) {
     }
 }
 
+/// [`unstage`] for the sweep of idle host copies: the staging state is
+/// dropped later, off the thread that submits (`crate::host::retire_later`).
+pub(crate) fn unstage_later(resource: This) {
+    let gone = {
+        let mut map = STAGING.lock().unwrap_or_else(|e| e.into_inner());
+        map.as_mut().and_then(|map| map.remove(&(resource as usize)))
+    };
+    if let Some(gone) = gone {
+        crate::host::retire_later(gone);
+    }
+}
+
 /// Where a staged title texture's memory is: address and bytes.
 pub(crate) fn staged_memory(resource: This) -> Option<(u64, u64)> {
     let map = STAGING.lock().unwrap_or_else(|e| e.into_inner());

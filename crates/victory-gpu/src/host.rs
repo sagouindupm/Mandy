@@ -225,6 +225,20 @@ pub(crate) fn retire<T: 'static>(object: T) {
         .push((started, Retired(Box::new(object))));
 }
 
+/// Drops `object` at the next landing after every submission started by
+/// now, never here: on the thread that buries ([`bury_aside`]) where there
+/// is one. For the sweeps, which let go of hundreds of host textures in one
+/// call on the thread that submits: releasing a reserved texture is two
+/// calls into the kernel (its allocation, its range of the card's address
+/// space), 20 ms a frame of that thread in the opening cutscene.
+pub(crate) fn retire_later<T: 'static>(object: T) {
+    RETIREMENTS[1].fetch_add(1, Ordering::Relaxed);
+    RETIRED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((STARTED.load(Ordering::Acquire), Retired(Box::new(object))));
+}
+
 /// Drops what waited for submissions up to `finished`.
 fn bury(finished: u64) {
     let done: Vec<(u64, Retired)> = {
