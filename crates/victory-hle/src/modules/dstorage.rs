@@ -532,6 +532,7 @@ impl Lanes {
                 busy_workers = format_args!("{:.2}", busy.as_secs_f64() / elapsed.as_secs_f64()),
                 reading_workers = format_args!("{:.2}", reading / elapsed.as_secs_f64()),
                 staging_waits = std::mem::take(&mut self.refused),
+                destination_waits = DESTINATION_WAITS.swap(0, Ordering::Relaxed),
                 bcpack_mb = self.bcpack.0 / 1_000_000,
                 bcpack_workers = format_args!("{:.2}", self.bcpack.1.as_secs_f64() / elapsed.as_secs_f64()),
                 waiting,
@@ -1076,17 +1077,20 @@ fn into_destination(
         return filled;
     }
     let offset = (request.page_offset & 0xffff) as usize;
-    // SAFETY: the title passes a page number per 64 KiB of destination,
-    // which holds at least `len` bytes from `offset`.
-    let pages = unsafe {
-        std::slice::from_raw_parts(
-            request.destination.cast::<usize>(),
-            (offset + len).div_ceil(PAGE),
-        )
+    let count = (offset + len).div_ceil(PAGE);
+    // The page numbers as the title has them now: it may still be writing
+    // them (read each time, not kept).
+    let read_pages = || -> Vec<usize> {
+        (0..count)
+            // SAFETY: the title passes a page number per 64 KiB of
+            // destination, which holds at least `len` bytes from `offset`.
+            .map(|i| unsafe { std::ptr::read_volatile(request.destination.cast::<usize>().add(i)) })
+            .collect()
     };
+    let mut pages = read_pages();
     // Consecutive pages of one allocation (the usual case): written in
     // place through one view.
-    if let Some(mut window) = super::xmem::page_window(pages, offset, len) {
+    if let Some(mut window) = super::xmem::page_window(&pages, offset, len) {
         let filled = fill(window.bytes()).map(drop);
         drop(window);
         // The title maps pages where the card reads them and has them
@@ -1094,17 +1098,48 @@ fn into_destination(
         // learn of the bytes only from this (upstream c75fdba, fork PR
         // #571). After a decode that failed part way too: what it wrote
         // is there.
-        super::xmem::pages_written(pages, offset, len);
+        super::xmem::pages_written(&pages, offset, len);
         return filled;
     }
     let mut data = vec![0; len];
     let n = fill(&mut data)?;
+    // A page number not known yet: the title may fill the array after it
+    // enqueued the request, and a queue submits on its own once half full,
+    // so a worker can come to it first. (Failed at once, 302 requests of a
+    // burst at the opening's loading went unwritten in one run, 44 and 9 in
+    // others; one was known 17 us later.) The numbers are read again for a
+    // while.
+    let waiting = std::time::Instant::now();
+    let mut waited = 0u32;
+    while !super::xmem::pages_known(&pages, offset, n) && waiting.elapsed() < std::time::Duration::from_millis(250) {
+        waited += 1;
+        if waited < 16 {
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        pages = read_pages();
+    }
+    if waited > 0 {
+        DESTINATION_WAITS.fetch_add(1, Ordering::Relaxed);
+        if super::xmem::pages_known(&pages, offset, n) {
+            static SEEN: std::sync::Once = std::sync::Once::new();
+            SEEN.call_once(|| {
+                tracing::info!(
+                    tries = waited,
+                    us = waiting.elapsed().as_micros() as u64,
+                    "dstorage: a destination's page numbers were known only after the request was taken (read again until they were)"
+                );
+            });
+        }
+    }
     // A page the title has just made, or a view the host refuses for a
     // moment, comes right a little later: the write is tried again before
     // the request fails (`VICTORY_DSTORAGE_RETRIES`, 12 tries, about 0.9 s
     // in all; 0: not tried again, as before). Runs 175-178 lost 12 to 446
     // reads a launch here, all in one second of the loading; the one build
-    // that tried again (run 165) lost none of 13.
+    // that tried again (run 165) lost none of 13. The page numbers are read
+    // again before each try.
     static RETRIES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let retries = *RETRIES.get_or_init(|| {
         std::env::var("VICTORY_DSTORAGE_RETRIES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(12)
@@ -1112,12 +1147,13 @@ fn into_destination(
     // Since the start: writes that succeeded on a later try, and writes
     // given up.
     static RETRIED: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
-    let mut written = super::xmem::write_physical(pages, offset, &data[..n]);
+    let mut written = super::xmem::write_physical(&pages, offset, &data[..n]);
     let mut tries = 0u32;
     while !written && tries < retries {
         std::thread::sleep(std::time::Duration::from_millis((2u64 << tries.min(6)).min(128)));
         tries += 1;
-        written = super::xmem::write_physical(pages, offset, &data[..n]);
+        pages = read_pages();
+        written = super::xmem::write_physical(&pages, offset, &data[..n]);
     }
     if written {
         if tries > 0 {
@@ -1132,17 +1168,11 @@ fn into_destination(
             );
         }
         // As above, after the write that succeeded.
-        super::xmem::pages_written(pages, offset, n);
+        super::xmem::pages_written(&pages, offset, n);
         Ok(())
     } else {
+        let known = super::xmem::pages_known(&pages, offset, n);
         let given_up = RETRIED[1].fetch_add(1, Ordering::Relaxed) + 1;
-        tracing::warn!(
-            known = super::xmem::pages_known(pages, offset, len),
-            tries,
-            given_up,
-            on_a_retry = RETRIED[0].load(Ordering::Relaxed),
-            "dstorage: retries used up (VICTORY_DSTORAGE_RETRIES)"
-        );
         // Said aloud: the title never reads a request's result
         // (it only polls for completion), so a destination left unwritten
         // is a model or texture that silently holds whatever its pages
@@ -1151,11 +1181,20 @@ fn into_destination(
             offset,
             len,
             pages = pages.len(),
-            "dstorage: a destination's physical pages could not be written (unknown page or a host failure); its request fails"
+            first = format_args!("{:#x}", pages.first().copied().unwrap_or(0)),
+            why = if known { "the host could not map them" } else { "a page number is unknown" },
+            tries,
+            given_up,
+            on_a_retry = RETRIED[0].load(Ordering::Relaxed),
+            "dstorage: a destination's physical pages could not be written; its request fails (VICTORY_DSTORAGE_RETRIES)"
         );
         Err(E_INVALIDARG)
     }
 }
+
+/// Requests whose destination page numbers were read again because one was
+/// not known when a worker took the request.
+static DESTINATION_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Slots by the 2020 order, which the argument shapes at
 /// the title's call sites match (0x18, 0x20, 0x30 and 0x40 are called).
