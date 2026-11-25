@@ -2946,14 +2946,16 @@ fn half_places_are_the_descriptors_the_program_loads() {
     fixed.push(S_ENDPGM);
     assert_eq!(lowered(&fixed).half_views, [(1, 8), (1, 16)]);
     // The load's offset in s20, from the first lane's thread index
-    // (`v_readfirstlane_b32 s20, v0`): picked at run time.
+    // (`v_readfirstlane_b32 s20, v0`): picked at run time. The pick may land
+    // on the store's place too, so no place of that table is named: the d16
+    // accesses there take the float path, as before half views.
     let mut runtime = vec![s_mov_b32(5, 0x80), vop1(0x02, 20, vgpr(0))];
     runtime.extend_from_slice(&picked(8, 20));
     runtime.extend_from_slice(&at(12, 0x40));
     runtime.extend_from_slice(&mubuf_idxen(LOAD_D16_XYZW, 1, 0, 8));
     runtime.extend_from_slice(&mubuf_idxen(STORE_D16_XYZW, 1, 0, 12));
     runtime.push(S_ENDPGM);
-    assert_eq!(lowered(&runtime).half_views, [(1, 16)]);
+    assert!(lowered(&runtime).half_views.is_empty());
 }
 
 /// A format load of whole dwords (`buffer_load_format_x`, not d16) whose
@@ -3096,8 +3098,20 @@ fn a_format_load_read_as_halves_loads_the_integer() {
         .concat(),
     );
     assert_eq!(branched.half_views, [(1, 0)]);
+    // A d16 load names its place where it is the only access there...
+    const LOAD_FORMAT_D16_X: u32 = 0x80;
+    let d16 = mubuf_idxen(LOAD_FORMAT_D16_X, 1, 0, 8);
+    let d16_alone = lowered(&[&d16[..], &[half]].concat());
+    assert_eq!(d16_alone.half_views, [(1, 0)]);
+    // ...and not beside a whole float read through the same place, which
+    // would see the unsigned twin: v2 = half(d16 v1) + v3.
+    let mut d16_beside = d16.to_vec();
+    d16_beside.extend_from_slice(&mubuf_idxen(LOAD_FORMAT_X, 3, 0, 8));
+    d16_beside.push(half);
+    d16_beside.push(vop2(V_ADD_F32, 2, vgpr(3), 2));
+    assert!(lowered(&d16_beside).half_views.is_empty());
     if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
-        for shader in [&as_halves, &branched] {
+        for shader in [&as_halves, &branched, &d16_alone] {
             let mut dxil = shader.dxil.clone();
             v.validate(&mut dxil).expect("DXIL validation failed");
         }
