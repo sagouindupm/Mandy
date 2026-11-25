@@ -1054,6 +1054,81 @@ fn a_first_lane_read_of_what_every_running_lane_holds_is_the_host_waves_own() {
     );
 }
 
+/// [`words`]' OR inside `if (t < s0)` in a group of two console waves, each storing its own
+/// OR to dword `t >> 6`: wave-wide, the branch is the console wave's alone, so its two host
+/// waves meet each other there and not the group
+/// (`cascadeshadows_rendering:CS_ShadowRenderTiledCascadesAlphaCBPPPC`, groups of 8 x 16).
+#[test]
+fn the_halves_of_a_console_wave_meet_alone_in_a_branch_its_group_does_not_share() {
+    let mut code = vec![
+        0x7E0A_0281, // v_mov_b32 v5, 1
+        0x2C0C_0081, // v_lshrrev_b32 v6, 1, v0
+        0x340E_0B06, // v_lshlrev_b32 v7, v6, v5
+        0x2C12_0086, // v_lshrrev_b32 v9, 6, v0
+        0x3412_1282, // v_lshlrev_b32 v9, 2, v9
+        0x7D88_0000, // v_cmp_gt_u32 vcc, s0, v0
+        0xBE8C_246A, // s_and_saveexec_b64 s[12:13], vcc
+        0xBF88_0000 | 23, // s_cbranch_execz to the restore of EXEC
+    ];
+    code.extend_from_slice(&super::wave::WAVE_OR_V7_TO_S7);
+    code.extend_from_slice(&[
+        0x7E00_0207, // v_mov_b32 v0, s7
+        0x38 << 26 | 0x1C << 18 | 1 << 12,
+        0x80 << 24 | 2 << 16 | 9, // buffer_store_dword v0, v9, s[8:11], 0 offen
+        0xBEFE_040C, // s_mov_b64 exec, s[12:13]
+    ]);
+    let native = native_of(&code, true, 128);
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let branch = closed_by(&p, "s_cbranch_execz");
+    let wide = HashSet::from([branch]);
+    let shader = lower::with_pair_meetings(|| lowered(&native, &p, &wide)).expect("lower");
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        let mut copy = shader.dxil.clone();
+        v.validate(&mut copy).expect("DXIL validation failed");
+    }
+    let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(host) = Host::new(false) else {
+        eprintln!("no SM 6.6 hardware device; not run");
+        return;
+    };
+    let Ok((root, pso)) = host.compute_pipeline(&shader) else {
+        eprintln!("the hardware device does not take this program (waves of 32?); not run");
+        return;
+    };
+    // (thread t gives bit (t >> 1) & 31; a console wave none of whose threads is below s0
+    // stores nothing)
+    for (below, expected) in [
+        (128u32, [u32::MAX, u32::MAX]),
+        (97, [u32::MAX, 0x0001_FFFF]),
+        (70, [u32::MAX, 0x7]),
+        (40, [0x000F_FFFF, 0]),
+        (1, [1, 0]),
+    ] {
+        let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+        for u in &shader.user_data {
+            if let (RootType::Constants, 0, 0) = (u.root, u.slot, u.dword) {
+                ud[u.index as usize] = below;
+            }
+        }
+        for _ in 0..8 {
+            let out = host
+                .dispatch(
+                    &root,
+                    &pso,
+                    &Dispatch {
+                        roots: vec![(0, Root::Constants(ud.clone()))],
+                        views: &[View::RawUav(2)],
+                        samplers: &[],
+                        groups: [1, 1, 1],
+                    },
+                )
+                .unwrap_or_else(|e| panic!("dispatch failed: {e}"));
+            assert_eq!(out[0][..2], expected, "{below} threads in the branch");
+        }
+    }
+    eprintln!("ran on the hardware device: each console wave's own OR");
+}
+
 /// The ray-tracing builder's scans refuse on `v_readfirstlane_b32` under a
 /// per-lane branch: the cross-lane retry ([`super::widen`]) has to take the
 /// branch around it wave-wide so the two host waves meet at the exchange

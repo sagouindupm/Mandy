@@ -226,6 +226,8 @@ pub(crate) struct Module {
     named: Vec<(String, Vec<Md>)>,
     /// See [`Tag`]: by instruction.
     tags: HashMap<u32, Tag>,
+    /// See [`Module::splice`]: (block, body length then, head, rest).
+    splices: Vec<(usize, usize, usize, usize)>,
 }
 
 impl Module {
@@ -395,6 +397,39 @@ impl Module {
     pub fn new_block(&mut self) -> usize {
         self.blocks.push(Block::default());
         self.blocks.len() - 1
+    }
+
+    /// Control flow (a loop) between what `block` holds so far and what is added to it later,
+    /// for callers that go on adding to `block`: returns (`head`, `rest`). `block` goes on to
+    /// `head` here, which the caller fills and leaves for `rest` (and itself); what comes after
+    /// moves to `rest` with `block`'s exit at [`Module::apply_splices`].
+    pub fn splice(&mut self, block: usize) -> (usize, usize) {
+        let (head, rest) = (self.new_block(), self.new_block());
+        self.splices.push((block, self.blocks[block].body.len(), head, rest));
+        (head, rest)
+    }
+
+    /// Carries out the [`Module::splice`]s, the latest point in a block first: each block's
+    /// code after the point and its exit move to `rest`, and the phis that came from the block
+    /// come from `rest` (the only way out of it now).
+    pub fn apply_splices(&mut self) {
+        let mut splices = std::mem::take(&mut self.splices);
+        splices.sort_by_key(|&(b, at, _, _)| std::cmp::Reverse((b, at)));
+        for (b, at, head, rest) in splices {
+            let after = self.blocks[b].body.split_off(at);
+            self.blocks[rest].body = after;
+            self.blocks[rest].term = self.blocks[b].term.replace(Term::Br(head));
+            for blk in 0..self.blocks.len() {
+                for k in 0..self.blocks[blk].phis.len() {
+                    let i = self.blocks[blk].phis[k] as usize;
+                    if let Op::Phi(incoming) = &mut self.insts[i].op {
+                        for (_, from) in incoming.iter_mut().filter(|(_, from)| *from == b) {
+                            *from = rest;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn type_of(&self, v: V) -> Ty {

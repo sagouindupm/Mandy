@@ -536,6 +536,7 @@ impl Shader {
         // and the container parts declare them.
         container::unify_row_modes(&mut self.inputs, true);
         container::unify_row_modes(&mut self.outputs, false);
+        self.m.apply_splices();
         // The clean-up, before anything is declared about the code: a
         // feature whose last use it removed must not be declared (the
         // validator compares the flags with what the code uses).
