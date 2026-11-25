@@ -3411,13 +3411,14 @@ impl Shadow {
         title.clear();
         title.resize(n, 0);
         let mapped = crate::host::read_into((start + at) as *const u8, title);
-        // If a coalesced multi-piece run spans a partly unmapped region, split
-        // it into 64 KiB chunks so mapped pieces still write back cleanly.
-        if !mapped && n > crate::watch::PAGE {
+        // A failed read can span a title page boundary even after trimming
+        // the run to a few bytes. Each mapped page takes its own merge.
+        let first_page = PAGE - (start + at) % PAGE;
+        if !mapped && n > first_page {
             let mut written = 0;
             let mut off = 0;
+            let mut chunk = first_page;
             while off < n {
-                let chunk = (n - off).min(crate::watch::PAGE);
                 written += self.card_merge_relay_locked(
                     card,
                     start,
@@ -3427,6 +3428,7 @@ impl Shadow {
                     title,
                 );
                 off += chunk;
+                chunk = (n - off).min(PAGE);
             }
             return written;
         }
@@ -3456,6 +3458,7 @@ impl Shadow {
         crate::host::shaders_write(start + at, &title[..]);
         crate::watch::writing(start + at, n);
         merge_race(as_read.as_deref(), (self.start, self.len), start + at, &title[..], "card relay");
+        // A failed write is retried by title page in `write_mapped`.
         crate::host::write_mapped((start + at) as *mut u8, title.as_ptr(), n);
         n
     }
@@ -4082,6 +4085,48 @@ mod card_merge_tests {
                 .ok()?;
             buffer
         }
+    }
+
+    #[test]
+    fn a_relay_merge_writes_the_mapped_side_of_a_page_boundary() {
+        use crate::watch::PAGE;
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+        };
+
+        let (Some(buffer), Some(staging)) = (warp_buffer(), warp_buffer()) else {
+            return;
+        };
+        // SAFETY: a fresh reservation, with only its first title page committed.
+        let (base, mapped) = unsafe {
+            let base = VirtualAlloc(std::ptr::null(), 2 * PAGE, MEM_RESERVE, PAGE_NOACCESS);
+            assert!(!base.is_null());
+            let mapped = VirtualAlloc(base, PAGE, MEM_COMMIT, PAGE_READWRITE);
+            (base, mapped)
+        };
+        assert_eq!(mapped, base);
+        let mut held = vec![0; 2 * PAGE];
+        let mut shadow = Shadow::new(buffer, held.as_mut_ptr(), 0, base as u64, (2 * PAGE) as u64);
+        shadow.card = Some(Card {
+            staging,
+            before: Mutex::new(None),
+            dirty: Mutex::default(),
+            sent: Mutex::default(),
+            size: 0,
+        });
+        let mut gpu = held.clone();
+        gpu[PAGE - 1..=PAGE].copy_from_slice(&[17, 23]);
+        let written = shadow.card_merge_relay(0, &gpu, 0, &mut Vec::new());
+        drop(shadow);
+        // SAFETY: the byte is in the committed page, and we own the reservation.
+        let landed = unsafe {
+            let byte = base.cast::<u8>().add(PAGE - 1).read();
+            VirtualFree(base, 0, MEM_RELEASE);
+            byte
+        };
+        assert_eq!(landed, 17);
+        assert_eq!(written, 1);
+        assert_eq!(held, gpu);
     }
 
     /// The mixed landing the fetch inside flights must survive, on a real
