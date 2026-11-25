@@ -8097,9 +8097,9 @@ impl Meter {
             buffer.truncate(n.max(0) as usize);
             self.caption = Some(buffer);
         }
-        let Some(caption) = &self.caption else { return };
-        let text = format!(" | VIctory {fps:.0} fps {ms:.1} ms/frame {draws:.0} draws/frame");
-        let mut text: Vec<u16> = caption.iter().copied().chain(text.encode_utf16()).collect();
+        let Some(_caption) = &self.caption else { return };
+        let text = caption_text(fps, ms, draws);
+        let mut text: Vec<u16> = text.encode_utf16().collect();
         text.push(0);
         // Setting the text waits for the window's thread (a title thread,
         // which may not pump for a while), so a thread of ours does it and
@@ -8116,6 +8116,7 @@ impl Meter {
                         match next {
                             // SAFETY: a window handle and a NUL-terminated text.
                             Some((hwnd, text)) => unsafe {
+                                paint_caption(hwnd);
                                 let _ = SetWindowTextW(HWND(hwnd as *mut _), PCWSTR(text.as_ptr()));
                             },
                             None => std::thread::sleep(std::time::Duration::from_millis(100)),
@@ -8123,6 +8124,57 @@ impl Meter {
                     }
                 });
         });
+    }
+}
+
+/// The window's title: Sagouindupm | VIctory, the console profile, the frame
+/// rate, then the card (name, its memory in use of its budget) and the
+/// shaders translated so far.
+fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
+    static CARD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let card = CARD.get_or_init(|| {
+        host()
+            .and_then(|h| h.adapter.as_ref())
+            // SAFETY: a plain query.
+            .and_then(|a| unsafe { a.GetDesc1() }.ok())
+            .map(|d| {
+                let n = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+                String::from_utf16_lossy(&d.Description[..n])
+                    .replace("NVIDIA GeForce ", "")
+                    .replace("AMD Radeon ", "")
+                    .trim()
+                    .to_owned()
+            })
+            .unwrap_or_default()
+    });
+    let vram = host()
+        .and_then(|h| h.video_memory())
+        .map(|[budget, used, _, _]| format!(" {:.1}/{:.1} Go", used as f64 / 1e9, budget as f64 / 1e9))
+        .unwrap_or_default();
+    let shaders = crate::pipeline::kept()[2];
+    format!(
+        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders"
+    )
+}
+
+/// The title bar in GTA pink-violet with white text (Windows 11; older
+/// systems ignore the attributes). Once per window.
+fn paint_caption(hwnd: usize) {
+    static PAINTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if PAINTED.swap(hwnd, Ordering::Relaxed) == hwnd {
+        return;
+    }
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(hwnd: isize, attribute: u32, value: *const core::ffi::c_void, size: u32) -> i32;
+    }
+    // COLORREF is 0x00BBGGRR.
+    const CAPTION: u32 = 0x0080_2A8E; // #8E2A80
+    const BORDER: u32 = 0x00B4_4BD9; // #D94BB4
+    const TEXT: u32 = 0x00FF_FFFF;
+    for (attribute, colour) in [(35u32, CAPTION), (34, BORDER), (36, TEXT)] {
+        // SAFETY: a window handle and a 4-byte value.
+        unsafe { DwmSetWindowAttribute(hwnd as isize, attribute, (&raw const colour).cast(), 4) };
     }
 }
 
