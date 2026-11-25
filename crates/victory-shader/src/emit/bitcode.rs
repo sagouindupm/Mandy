@@ -333,6 +333,12 @@ impl Module {
         }
     }
 
+    /// Function names declared in this module (test inspection).
+    #[cfg(test)]
+    pub fn func_names(&self) -> Vec<String> {
+        self.funcs.iter().map(|f| f.name.clone()).collect()
+    }
+
     /// A function declaration (or `main` with `body`), found by name.
     pub fn function(&mut self, name: &str, ty: Ty, attr: Option<Attr>, body: bool) -> V {
         if let Some(&i) = self.func_ids.get(name) {

@@ -2319,4 +2319,156 @@ mod barycentric_tests {
             validate(&shader);
         }
     }
+
+    fn lower_ps(words: &[u32]) -> lower::Lowered {
+        let native = NativeProgram {
+            stage: HwStage::Ps,
+            wave64: false,
+            vgprs: 8,
+            layout: vec![],
+            used: vec![],
+            io: StageIo::Ps {
+                inputs: vec![PsInput {
+                    usage: Usage::Generic,
+                    row: 0,
+                    mask: 0b1111,
+                    attr: 0,
+                    flat: false,
+                    fp16: false,
+                    pack2: false,
+                    row2: 0,
+                }],
+                input_addr: PERSP_CENTER,
+                db_shader_control: 0,
+                patches: vec![],
+            },
+            code: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+        };
+        let p = ir::build(&native.patched_code(), false, 8).unwrap();
+        let res = resource::track(&p, &[], HwStage::Ps, None).unwrap();
+        let io = io::raise(&p, &native).unwrap();
+        let st = structure::structure(&p).unwrap();
+        lower::lower(&lower::Parts {
+            native: &native,
+            p: &p,
+            st: &st,
+            io: &io,
+            res: &res,
+            inputs: vec![],
+            outputs: vec![],
+            prims: vec![],
+            mesh_stride: 0,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn pixel_readfirstlane_uses_is_helper_lane_and_compute_does_not() {
+        let [e0, e1] = exp_mrt0(3);
+        let ps_words = [
+            0x7E04_0500, // v_readfirstlane_b32 s2, v0
+            0x7E06_0202, // v_mov_b32 v3, s2
+            e0,
+            e1,
+            S_ENDPGM,
+        ];
+        let shader = pixel(&ps_words, PERSP_CENTER).unwrap();
+        validate(&shader);
+
+        let lowered = lower_ps(&ps_words);
+        assert!(
+            lowered.funcs.iter().any(|n| n == "dx.op.isHelperLane.i1"),
+            "pixel shader must guard v_readfirstlane with isHelperLane: {:?}",
+            lowered.funcs
+        );
+
+        use crate::native::{ComputeIo, ResourceType, RootParam, RootType, UsedResource};
+        let cs_words = [
+            0xBE85_0380, // s_mov_b32 s5, 0
+            0x3D << 26 | 0x02 << 18 | 8 << 6 | 2,
+            125 << 25,   // s_load_dwordx4 s[8:11], s[4:5], 0
+            0x7E04_0500, // v_readfirstlane_b32 s2, v0
+            0x7E02_0202, // v_mov_b32 v1, s2
+            0x38 << 26 | 0x1C << 18,
+            0x80 << 24 | 2 << 16 | 1 << 8, // buffer_store_dword v1, off, s[8:11], 0
+            S_ENDPGM,
+        ];
+        let cs_native = NativeProgram {
+            stage: HwStage::Cs,
+            wave64: false,
+            vgprs: 8,
+            layout: vec![
+                RootParam {
+                    root: RootType::Constants,
+                    table_offset_dwords: 0,
+                    sgprs: 4,
+                    base_register: 0,
+                    user_data: 0,
+                    slot: 0,
+                },
+                RootParam {
+                    root: RootType::Table,
+                    table_offset_dwords: 0,
+                    sgprs: 1,
+                    base_register: 0,
+                    user_data: 4,
+                    slot: 1,
+                },
+            ],
+            used: vec![UsedResource {
+                kind: ResourceType::Uav,
+                root: RootType::Table,
+                table_offset_dwords: 0,
+                lower_bound: 0,
+                stride: 0,
+                dwords: 4,
+                user_data: 4,
+                slot: 1,
+            }],
+            io: StageIo::Cs(ComputeIo {
+                rsrc2: 2 << 1,
+                threads: [32, 1, 1],
+            }),
+            code: cs_words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+        };
+        let p = ir::build(&cs_native.patched_code(), false, 8).unwrap();
+        let st = structure::structure(&p).unwrap();
+        let res = resource::track(&p, &cs_native.layout, HwStage::Cs, Some(&st)).unwrap();
+        let io = io::raise(&p, &cs_native).unwrap();
+        let lowered = lower::lower(&lower::Parts {
+            native: &cs_native,
+            p: &p,
+            st: &st,
+            io: &io,
+            res: &res,
+            inputs: vec![],
+            outputs: vec![],
+            prims: vec![],
+            mesh_stride: 0,
+        })
+        .unwrap();
+        assert!(
+            !lowered.funcs.iter().any(|n| n == "dx.op.isHelperLane.i1"),
+            "compute shader must not emit isHelperLane"
+        );
+    }
+
+    #[test]
+    fn pixel_quad_swizzle_without_discards_uses_quad_read_lane_at() {
+        let [e0, e1] = exp_mrt0(2);
+        let words = [
+            0xD8D4_80E4,
+            0x0300_0000, // ds_swizzle_b32 v3, v0 offset:0x80E4
+            v_add_f32(2, 3, 1),
+            e0,
+            e1,
+            S_ENDPGM,
+        ];
+        let shader = pixel(&words, PERSP_CENTER).unwrap();
+        validate(&shader);
+
+        let lowered = lower_ps(&words);
+        assert!(lowered.funcs.iter().any(|n| n == "dx.op.quadReadLaneAt.i32"));
+        assert!(!lowered.funcs.iter().any(|n| n == "dx.op.waveReadLaneAt.i32"));
+    }
 }
