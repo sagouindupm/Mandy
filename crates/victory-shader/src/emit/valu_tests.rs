@@ -2221,3 +2221,458 @@ fn packed_dot_products_and_clamps_execute_cleanly() {
         },
     );
 }
+
+
+// ---- Instructions that had no lowering, each checked against the RDNA2
+// ISA's definition over edge cases, on the hardware adapter and WARP. ----
+
+
+/// f32 bit patterns at the edges: signed zeros, denormals, the ends of the
+/// normal range, around 0.5 and 1, large values, infinities and NaNs.
+const F32_EDGES: &[u32] = &[
+    0x0000_0000,
+    0x8000_0000,
+    0x0000_0001,
+    0x8000_0001,
+    0x0040_0000,
+    0x007F_FFFF,
+    0x807F_FFFF,
+    0x0080_0000,
+    0x8080_0000,
+    0x0080_0001,
+    0x3E4C_CCCD,
+    0xBE4C_CCCD,
+    0x3EFF_FFFF,
+    0x3F00_0000,
+    0xBF00_0000,
+    0x3F00_0001,
+    0x3F7F_FFFF,
+    0xBF7F_FFFF,
+    0x3F80_0000,
+    0xBF80_0000,
+    0x3F80_0001,
+    0x3FC0_0000,
+    0x4040_0000,
+    0x42C9_0000,
+    0xC2C9_0000,
+    0x4B00_0000,
+    0x4B80_0000,
+    0x477F_E000,
+    0x7F7F_FFFF,
+    0xFF7F_FFFF,
+    0x7F80_0000,
+    0xFF80_0000,
+    0x7FC0_0000,
+    0xFFC0_0000,
+    0x7F80_0001,
+];
+
+/// Deterministic pseudo-random dwords (xorshift), for sweeps past the edges.
+fn dwords(n: usize, mut seed: u32) -> Vec<u32> {
+    (0..n)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        })
+        .collect()
+}
+
+fn is_f32_nan(bits: u32) -> bool {
+    bits & 0x7FFF_FFFF > 0x7F80_0000
+}
+
+/// Runs `body` (its result in v0, the inputs in v1..v4) over `inputs` on
+/// every host. Results match bit for bit; with `float`, a NaN any NaN.
+fn check_op(
+    body: &[u32],
+    inputs: &[[u32; 4]],
+    float: bool,
+    what: &str,
+    want: impl Fn([u32; 4]) -> u32,
+) {
+    check_op_or(body, inputs, float, what, want, |_| None);
+}
+
+/// [`check_op`], also taking what `or` gives: the result on a host that
+/// flushes f32 denormals (the NVIDIA driver does; WARP keeps them).
+fn check_op_or(
+    body: &[u32],
+    inputs: &[[u32; 4]],
+    float: bool,
+    what: &str,
+    want: impl Fn([u32; 4]) -> u32,
+    or: impl Fn([u32; 4]) -> Option<u32>,
+) {
+    let shader = build_valu_cs(body);
+    let same = |got: u32, w: u32| got == w || (float && is_f32_nan(w) && is_f32_nan(got));
+    run_cases(&shader, inputs, |backend, _, inp, got| {
+        let w = want(inp);
+        let flushed = or(inp).is_some_and(|f| same(got, f));
+        assert!(
+            same(got, w) || flushed,
+            "{backend}: {what}({:#010x}, {:#010x}, {:#010x}) = {got:#010x}, want {w:#010x}",
+            inp[0],
+            inp[1],
+            inp[2],
+        );
+    });
+}
+
+/// An f32 denormal as the zero of its sign; anything else as it is.
+fn ftz(bits: u32) -> u32 {
+    if bits & 0x7F80_0000 == 0 {
+        bits & 0x8000_0000
+    } else {
+        bits
+    }
+}
+
+/// RDNA2's `v_ldexp_f32`: x * 2^n, rounded once (f64 holds every such
+/// product exactly, and its conversion to f32 rounds to nearest even).
+fn ldexp_reference(x: u32, n: i32) -> u32 {
+    let x = f32::from_bits(x);
+    if x.is_nan() {
+        return f32::NAN.to_bits();
+    }
+    let n = n.clamp(-512, 512);
+    ((f64::from(x) * 2f64.powi(n)) as f32).to_bits()
+}
+
+#[test]
+fn v_ldexp_f32_rounds_once_and_saturates() {
+    // Exponents at the ends of the normal range, into the denormals, an
+    // overflow from the smallest denormal, and the extremes of an i32.
+    let ns: &[i32] = &[
+        0,
+        1,
+        -1,
+        24,
+        -24,
+        126,
+        -126,
+        128,
+        -128,
+        149,
+        -149,
+        150,
+        -150,
+        254,
+        -254,
+        255,
+        277,
+        278,
+        -277,
+        -278,
+        513,
+        -513,
+        i32::MAX,
+        i32::MIN,
+    ];
+    let mut inputs = Vec::new();
+    for &x in F32_EDGES {
+        for &n in ns {
+            inputs.push([x, n as u32, 0, 0]);
+        }
+    }
+    // Ties at the denormal boundary: 1.5, 1.25 and 1.75 times 2^-149 and nearby.
+    for x in [0x3FC0_0000, 0x3FA0_0000, 0x3FE0_0000, 0xBFC0_0000] {
+        for n in [-149i32, -148, -150, -127, -126] {
+            inputs.push([x, n as u32, 0, 0]);
+        }
+    }
+    for (x, n) in dwords(100, 0x1234_5678)
+        .into_iter()
+        .zip(dwords(100, 0x9E37_79B9))
+    {
+        inputs.push([x, ((n as i32) % 300) as u32, 0, 0]);
+    }
+    // v_ldexp_f32 v0, v1, v2 (VOP3 0x362)
+    // Exact on every host, denormals included: the lowering rounds in integers.
+    check_op(
+        &vop3(0x362, 0, vgpr(1), vgpr(2), 0),
+        &inputs,
+        true,
+        "v_ldexp_f32",
+        |i| ldexp_reference(i[0], i[1] as i32),
+    );
+}
+
+/// The `frexp` of an f32 in C, as RDNA2's `v_frexp_mant_f32` and
+/// `v_frexp_exp_i32_f32` split it: zero, infinity and NaN give themselves
+/// and exponent 0.
+fn frexp_reference(bits: u32) -> (u32, i32) {
+    let e = (bits >> 23 & 0xFF) as i32;
+    let man = bits & 0x7F_FFFF;
+    let sign = bits & 0x8000_0000;
+    match (e, man) {
+        (0, 0) | (255, _) => (bits, 0),
+        (0, m) => {
+            // A denormal: its significand normalised.
+            let s = m.leading_zeros() - 8;
+            let m = m << s;
+            (sign | (m & 0x7F_FFFF) | 0x3F00_0000, 1 - s as i32 - 126)
+        }
+        _ => (sign | man | 0x3F00_0000, e - 126),
+    }
+}
+
+#[test]
+fn v_frexp_mant_and_exp_f32_split_like_frexp() {
+    let mut bits: Vec<u32> = F32_EDGES.to_vec();
+    bits.extend(dwords(150, 0x0BAD_F00D));
+    let inputs: Vec<[u32; 4]> = bits.iter().map(|&b| [b, 0, 0, 0]).collect();
+    // v_frexp_mant_f32 v0, v1 and v_frexp_exp_i32_f32 v0, v1 (VOP1)
+    let mant = |x: u32| frexp_reference(x).0;
+    let exp = |x: u32| frexp_reference(x).1 as u32;
+    // (body, float result, name, reference, source modifier as and/xor)
+    let cases: [(Vec<u32>, bool, &str, fn(u32) -> u32, u32, u32); 4] = [
+        (
+            vec![vop1(0x040, 0, vgpr(1))],
+            true,
+            "v_frexp_mant_f32",
+            mant,
+            u32::MAX,
+            0,
+        ),
+        (
+            vec![vop1(0x03f, 0, vgpr(1))],
+            false,
+            "v_frexp_exp_i32_f32",
+            exp,
+            u32::MAX,
+            0,
+        ),
+        // As VOP3 with |src0| and -src0: the modifiers apply first.
+        (
+            vop3_mod(0x1c0, 0, vgpr(1), 0, 0, 1, 0, 0, false).to_vec(),
+            true,
+            "v_frexp_mant_f32 |x|",
+            mant,
+            0x7FFF_FFFF,
+            0,
+        ),
+        (
+            vop3_mod(0x1bf, 0, vgpr(1), 0, 0, 0, 1, 0, false).to_vec(),
+            false,
+            "v_frexp_exp_i32_f32 -x",
+            exp,
+            u32::MAX,
+            0x8000_0000,
+        ),
+    ];
+    for (body, float, what, r, and, xor) in cases {
+        let x = |i: [u32; 4]| (i[0] & and) ^ xor;
+        // Exact without modifiers (the lowering works in integers); a host
+        // that flushes denormals flushes them in the modifiers' arithmetic.
+        let modified = (and, xor) != (u32::MAX, 0);
+        let flushed = |i| modified.then(|| r(ftz(x(i))));
+        check_op_or(&body, &inputs, float, what, |i| r(x(i)), flushed);
+    }
+}
+
+/// RDNA2's f32 to snorm16 or unorm16: clamped, times 32767 or 65535, the
+/// exact product (f64 holds it) rounded to nearest even; NaN gives 0.
+fn norm16_f32_reference(bits: u32, signed: bool) -> u32 {
+    let x = f32::from_bits(bits);
+    if x.is_nan() {
+        return 0;
+    }
+    let (lo, scale) = if signed {
+        (-1.0, 32767.0)
+    } else {
+        (0.0, 65535.0)
+    };
+    let p = f64::from(x.clamp(lo, 1.0)) * scale;
+    u32::from(p.round_ties_even() as i32 as u16)
+}
+
+#[test]
+fn v_cvt_pknorm_f32_rounds_the_exact_product() {
+    let mut xs: Vec<u32> = F32_EDGES.to_vec();
+    // The f32 nearest each n + 1/2 steps, and its neighbours: where a
+    // product rounded in f32 first would land on the wrong integer.
+    for scale in [32767.0f64, 65535.0] {
+        for n in (0..32767).step_by(997).chain([0, 1, 16383, 32766]) {
+            let x = ((f64::from(n) + 0.5) / scale) as f32;
+            xs.extend([x.to_bits() - 1, x.to_bits(), x.to_bits() + 1]);
+            xs.push((-x).to_bits());
+        }
+    }
+    xs.extend(dwords(50, 0xC0FF_EE11).into_iter().map(|d| d & 0xBF7F_FFFF));
+    let inputs: Vec<[u32; 4]> = (0..xs.len())
+        .map(|i| [xs[i], xs[(i * 7 + 3) % xs.len()], 0, 0])
+        .collect();
+    for (op, signed, what) in [
+        (0x368u16, true, "v_cvt_pknorm_i16_f32"),
+        (0x369, false, "v_cvt_pknorm_u16_f32"),
+    ] {
+        check_op(
+            &vop3(op, 0, vgpr(1), vgpr(2), 0),
+            &inputs,
+            false,
+            what,
+            |i| norm16_f32_reference(i[0], signed) | norm16_f32_reference(i[1], signed) << 16,
+        );
+        // With -src1: the modifier applies before the conversion.
+        let neg = vop3_mod(op, 0, vgpr(1), vgpr(2), 0, 0, 2, 0, false);
+        check_op(&neg, &inputs, false, what, |i| {
+            norm16_f32_reference(i[0], signed)
+                | norm16_f32_reference(i[1] ^ 0x8000_0000, signed) << 16
+        });
+    }
+}
+
+/// Integer edges: around zero and the 8-, 16-, 24- and 32-bit limits.
+const INT_EDGES: &[u32] = &[
+    0,
+    1,
+    0x7F,
+    0x80,
+    0xFF,
+    0x7FFF,
+    0x8000,
+    0xFFFF,
+    0x7F_FFFF,
+    0x80_0000,
+    0x7FFF_FFFF,
+    0x8000_0000,
+    0xFFFF_FFFF,
+    0xDEAD_BEEF,
+];
+
+/// Every pair of integer edges (src2 another one), and a random sweep.
+fn int_inputs() -> Vec<[u32; 4]> {
+    let mut inputs = Vec::new();
+    for (i, &a) in INT_EDGES.iter().enumerate() {
+        for (j, &b) in INT_EDGES.iter().enumerate() {
+            inputs.push([a, b, INT_EDGES[(i + 2 * j) % INT_EDGES.len()], 0]);
+        }
+    }
+    let r = dwords(102, 0x5EED_1234);
+    for k in 0..34 {
+        inputs.push([r[3 * k], r[3 * k + 1], r[3 * k + 2], 0]);
+    }
+    inputs
+}
+
+#[test]
+fn integer_ops_without_a_lowering_match_rdna2() {
+    let inputs = int_inputs();
+    let sat16 = |x: u32| (x as i32).clamp(-32768, 32767) as u32 & 0xFFFF;
+    let bytes = |x: u32| x.to_le_bytes().map(u32::from);
+    let absdiff = |x: u32, y: u32| x.max(y) - x.min(y);
+    let sad8 = |a: u32, b: u32| {
+        let (a, b) = (bytes(a), bytes(b));
+        (0..4).map(|i| absdiff(a[i], b[i])).sum::<u32>()
+    };
+    let sext24 = |x: u32| i64::from((x << 8) as i32 >> 8);
+    type Reference<'a> = &'a dyn Fn(u32, u32, u32) -> u32;
+    let cases: &[(u16, &str, Reference)] = &[
+        (0x36a, "v_cvt_pk_u16_u32", &|a, b, _| {
+            a.min(0xFFFF) | b.min(0xFFFF) << 16
+        }),
+        (0x36b, "v_cvt_pk_i16_i32", &|a, b, _| {
+            sat16(a) | sat16(b) << 16
+        }),
+        (0x10c, "v_mul_hi_u32_u24", &|a, b, _| {
+            ((u64::from(a & 0xFF_FFFF) * u64::from(b & 0xFF_FFFF)) >> 32) as u32
+        }),
+        (0x10a, "v_mul_hi_i32_i24", &|a, b, _| {
+            ((sext24(a) * sext24(b)) >> 32) as u32
+        }),
+        (0x16b, "v_mul_lo_i32", &|a, b, _| a.wrapping_mul(b)),
+        (0x37f, "v_add_nc_i32", &|a, b, _| a.wrapping_add(b)),
+        (0x376, "v_sub_nc_i32", &|a, b, _| a.wrapping_sub(b)),
+        (0x15a, "v_sad_u8", &|a, b, c| sad8(a, b).wrapping_add(c)),
+        (0x15b, "v_sad_hi_u8", &|a, b, c| {
+            (sad8(a, b) << 16).wrapping_add(c)
+        }),
+        (0x15c, "v_sad_u16", &|a, b, c| {
+            let h = |x: u32, i: u32| x >> (16 * i) & 0xFFFF;
+            (absdiff(h(a, 0), h(b, 0)) + absdiff(h(a, 1), h(b, 1))).wrapping_add(c)
+        }),
+        (0x15d, "v_sad_u32", &|a, b, c| absdiff(a, b).wrapping_add(c)),
+        (0x14d, "v_lerp_u8", &|a, b, c| {
+            let (a, b, c) = (bytes(a), bytes(b), bytes(c));
+            (0..4)
+                .map(|i| (a[i] + b[i] + (c[i] & 1)) >> 1 << (8 * i))
+                .sum()
+        }),
+    ];
+    for &(op, what, f) in cases {
+        let body = vop3(op, 0, vgpr(1), vgpr(2), vgpr(3));
+        check_op(&body, &inputs, false, what, |i| f(i[0], i[1], i[2]));
+    }
+}
+
+#[test]
+fn clamped_add_and_sub_saturate() {
+    let inputs = int_inputs();
+    let s = |x: u32| x as i32;
+    type Reference<'a> = &'a dyn Fn(u32, u32) -> u32;
+    let cases: &[(u16, &str, Reference)] = &[
+        (0x37f, "v_add_nc_i32 clamp", &|a, b| {
+            s(a).saturating_add(s(b)) as u32
+        }),
+        (0x376, "v_sub_nc_i32 clamp", &|a, b| {
+            s(a).saturating_sub(s(b)) as u32
+        }),
+        (0x125, "v_add_nc_u32 clamp", &|a, b| a.saturating_add(b)),
+        (0x126, "v_sub_nc_u32 clamp", &|a, b| a.saturating_sub(b)),
+        (0x127, "v_subrev_nc_u32 clamp", &|a, b| b.saturating_sub(a)),
+    ];
+    for &(op, what, f) in cases {
+        let body = vop3_mod(op, 0, vgpr(1), vgpr(2), 0, 0, 0, 0, true);
+        check_op(&body, &inputs, false, what, |i| f(i[0], i[1]));
+    }
+}
+
+#[test]
+fn integer_dot_products_match_rdna2() {
+    let inputs = int_inputs();
+    // Field i of x, `bits` wide, sign-extended when `signed`.
+    let field = |x: u32, bits: u32, i: u32, signed: bool| -> u32 {
+        let up = x << (32 - bits * (i + 1));
+        if signed {
+            ((up as i32) >> (32 - bits)) as u32
+        } else {
+            up >> (32 - bits)
+        }
+    };
+    let dot = |a: u32, b: u32, c: u32, bits: u32, signed: bool| {
+        (0..32 / bits).fold(c, |acc, i| {
+            acc.wrapping_add(field(a, bits, i, signed).wrapping_mul(field(b, bits, i, signed)))
+        })
+    };
+    for (op, what, bits, signed) in [
+        (0x14u16, "v_dot2_i32_i16", 16, true),
+        (0x15, "v_dot2_u32_u16", 16, false),
+        (0x16, "v_dot4_i32_i8", 8, true),
+        (0x17, "v_dot4_u32_u8", 8, false),
+        (0x19, "v_dot8_u32_u4", 4, false),
+    ] {
+        let body = [
+            0xCC00_0000 | (u32::from(op) & 0x7F) << 16 | (1 << 14),
+            (3 << 27) | u32::from(vgpr(1)) | (u32::from(vgpr(2)) << 9) | (u32::from(vgpr(3)) << 18),
+        ];
+        check_op(&body, &inputs, false, what, |i| {
+            dot(i[0], i[1], i[2], bits, signed)
+        });
+    }
+}
+
+#[test]
+fn v_cvt_off_f32_i4_is_sixteenths() {
+    let inputs: Vec<[u32; 4]> = (0..64u32)
+        .map(|x| [x.wrapping_mul(0x1111_1111) ^ x, 0, 0, 0])
+        .collect();
+    check_op(
+        &[vop1(0x00e, 0, vgpr(1))],
+        &inputs,
+        true,
+        "v_cvt_off_f32_i4",
+        |i| (f32::from(((i[0] << 28) as i32 >> 28) as i8) / 16.0).to_bits(),
+    );
+}
