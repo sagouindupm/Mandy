@@ -412,6 +412,57 @@ fn v_permlane16_and_x16_read_the_lanes_their_selectors_pick() {
     }
 }
 
+/// `v_pk_fmac_f16` (VOP2): each half of the destination plus the product
+/// of the sources' halves.
+#[test]
+fn packed_fmac_accumulates_each_half() {
+    let shader = build_valu_cs(&[
+        vop1(0x001, 0, vgpr(3)),   // v_mov_b32 v0, v3
+        vop2(0x3C, 0, vgpr(1), 2), // v_pk_fmac_f16 v0, v1, v2
+    ]);
+    // (2.0, 1.0) * (3.0, 4.0) + (1.0, 0.5) = (7.0, 4.5), low half first
+    run_cases(
+        &shader,
+        &[[0x3C00_4000, 0x4400_4200, 0x3800_3C00, 0]],
+        |backend, _, _, got| {
+            assert_eq!(got, 0x4480_4700, "{backend}");
+        },
+    );
+}
+
+/// `v_pk_fmac_f16` with DPP8 multiplies the `src0` of the lane DPP selects,
+/// not the lane's own.
+#[test]
+fn packed_fmac_with_dpp8_reads_the_selected_lane() {
+    // Lane i reads lane i ^ 1, so lane 0 reads lane 1.
+    let sel = (0..8u32).fold(0, |s, i| s | (i ^ 1) << (3 * i));
+    let shader = build_cs(
+        &[
+            vop1(0x006, 5, vgpr(0)),   // v_cvt_f32_u32 v5, v0 (the lane)
+            vop2(0x2F, 5, vgpr(5), 5), // v_cvt_pkrtz_f16_f32 v5, v5, v5
+            vop1(0x001, 6, vgpr(3)),   // v_mov_b32 v6, v3
+            vop2(0x3C, 6, 0xE9, 2),    // v_pk_fmac_f16 v6, v5, v2 dpp8
+            5 | sel << 8,              // dpp8: src0 v5, lane selects
+            vop1(0x002, 12, vgpr(6)),  // v_readfirstlane_b32 s12, v6
+            vop1(0x001, 0, sgpr(12)),  // v_mov_b32 v0, s12
+        ],
+        8,
+        0,
+    );
+    // Lane 0: (1.0, 1.0) from lane 1 * (3.0, 4.0) + (1.0, 0.5) = (4.0, 4.5).
+    // Its own src0, (0.0, 0.0), would leave (1.0, 0.5).
+    // The cross-lane read declares WaveSize(32), which WARP's pipeline
+    // creation refuses: hardware only.
+    run_cases_on(
+        &shader,
+        &[[0, 0x4400_4200, 0x3800_3C00, 0]],
+        &[("hardware", false)],
+        |backend, _, _, got| {
+            assert_eq!(got, 0x4480_4400, "{backend}");
+        },
+    );
+}
+
 #[test]
 fn v_med3_f32_matches_rdna2_with_nan() {
     // v_med3_f32 v0, v1, v2, v3 (VOP3 opcode 0x157)
