@@ -74,6 +74,8 @@ pub extern "system" fn CreateWindowExW(
     param: *const c_void,
 ) -> HWND {
     let (x, y, width, height) = fit(parent, x, y, width, height);
+    // A top-level window carries our name from its first frame, not the title's.
+    let name = if parent.is_null() { w!("Sagouindupm | VIctory") } else { name };
     // SAFETY: the title's own arguments, forwarded (the size fitted).
     let hwnd = unsafe {
         wm::CreateWindowExW(
@@ -100,6 +102,8 @@ pub extern "system" fn CreateWindowExA(
     param: *const c_void,
 ) -> HWND {
     let (x, y, width, height) = fit(parent, x, y, width, height);
+    // A top-level window carries our name from its first frame, not the title's.
+    let name = if parent.is_null() { windows_sys::core::s!("Sagouindupm | VIctory") } else { name };
     // SAFETY: the title's own arguments, forwarded (the size fitted).
     let hwnd = unsafe {
         wm::CreateWindowExA(
