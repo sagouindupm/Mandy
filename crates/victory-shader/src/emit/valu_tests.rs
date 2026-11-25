@@ -2018,3 +2018,78 @@ fn s_quadmask_folds_each_quad_into_one_bit() {
         );
     });
 }
+
+/// `v_mad_i64_i32` multiplies signed dwords; a 32-bit literal in a signed
+/// 64-bit operand is sign-extended, in an unsigned one zero-extended (RDNA 2
+/// ISA, 6.2.1 "Literal Expansion to 64 bits").
+#[test]
+fn signed_64_bit_operands_sign_extend_their_literal() {
+    const LITERAL: u16 = 255;
+    const MINUS_100: u32 = -100_i32 as u32;
+    let check = |name: &str, body: &[u32], cases: &[([u32; 4], u32)]| {
+        let shader = build_valu_cs(body);
+        let inputs: Vec<[u32; 4]> = cases.iter().map(|c| c.0).collect();
+        run_cases(&shader, &inputs, |backend, i, inp, got| {
+            let want = cases[i].1;
+            assert_eq!(
+                got, want,
+                "{backend}: {name} {inp:x?} = {got:#x}, want {want:#x}"
+            );
+        });
+    };
+    // VOP3b `op v[5:6], vcc_lo, src0, src1, src2`, then `v_mov_b32 v0, v5`
+    // (low dword) or `v0, v6` (high dword).
+    let mad = |op: u16, src2: u16, literal: Option<u32>, high: bool| {
+        let [a, b] = vop3(op, 5, vgpr(1), vgpr(2), src2);
+        let mut body = vec![a | 106 << 8, b];
+        body.extend(literal);
+        body.push(vop1(0x001, 0, vgpr(5 + u8::from(high))));
+        body
+    };
+    let (mad_u64, mad_i64) = (0x176, 0x177);
+    let minus = |n: i32| n as u32;
+
+    // A signed product and a 64-bit register addend in v[3:4].
+    let lo = [
+        ([minus(-3), 7, 0, 0], minus(-21)),
+        ([minus(-2), minus(-5), 1, 0], 11),
+    ];
+    check("v_mad_i64_i32 lo", &mad(mad_i64, vgpr(3), None, false), &lo);
+    let hi = [
+        ([minus(-3), 7, 0, 0], u32::MAX),
+        ([minus(-2), minus(-5), 1, 0], 0),
+        ([0x8000_0000, 0x8000_0000, 0, 0], 0x4000_0000),
+    ];
+    check("v_mad_i64_i32 hi", &mad(mad_i64, vgpr(3), None, true), &hi);
+
+    // A literal addend of -100: 0 * 0 - 100 and 10 * 10 - 100.
+    let signed = mad(mad_i64, LITERAL, Some(MINUS_100), true);
+    check(
+        "v_mad_i64_i32 -100 hi",
+        &signed,
+        &[([0; 4], u32::MAX), ([10, 10, 0, 0], 0)],
+    );
+    let unsigned = mad(mad_u64, LITERAL, Some(MINUS_100), true);
+    check(
+        "v_mad_u64_u32 0xffffff9c hi",
+        &unsigned,
+        &[([0; 4], 0), ([10, 10, 0, 0], 1)],
+    );
+
+    // v_ashrrev_i64 v[5:6], 4, -100; v_mov_b32 v0, v6.
+    let [a, b] = vop3(0x301, 5, 0x84, LITERAL, 0);
+    let ashr = [a, b, MINUS_100, vop1(0x001, 0, vgpr(6))];
+    check("v_ashrrev_i64 hi", &ashr, &[([0; 4], u32::MAX)]);
+
+    // v_cmp_*_i64 s6, v[1:2], -100, then v_cndmask_b32 v0, 0, 1, s6.
+    let compare = |op: u16| {
+        let [a, b] = vop3(op, 6, vgpr(1), LITERAL, 0);
+        let [c, d] = vop3(0x101, 0, 0x80, 0x81, sgpr(6));
+        [a, b, MINUS_100, c, d]
+    };
+    let pair = |n: i64| [n as u32, (n >> 32) as u32, 0, 0];
+    let eq = [(pair(-100), 1), ([MINUS_100, 0, 0, 0], 0), (pair(0), 0)];
+    check("v_cmp_eq_i64", &compare(0x0A2), &eq);
+    let lt = [(pair(-200), 1), (pair(-50), 0), (pair(0), 0)];
+    check("v_cmp_lt_i64", &compare(0x0A1), &lt);
+}

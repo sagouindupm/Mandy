@@ -6926,27 +6926,33 @@ impl<'a> Lower<'a> {
             return self.packed16(inst, op, guard);
         }
         match name {
-            "v_mad_u64_u32" => {
-                // a * b + c, c and the result 64 bits wide; the carry out
-                // of the sum is this lane's bit of the mask it names.
+            "v_mad_u64_u32" | "v_mad_i64_i32" => {
+                // a * b + c, c and the result 64 bits wide (a and b signed
+                // for the i64 form); the carry out of the unsigned sum is
+                // this lane's bit of the mask it names.
+                let signed = name == "v_mad_i64_i32";
                 let (a, b) = (s(self, 0)?, s(self, 1)?);
                 let x = self.src64(inst, 2)?;
                 let i64t = self.s.m.int(64);
                 self.s.flags |= flags::INT64;
-                let a = self.s.m.cast(c, Cast::ZExt, a, i64t);
-                let b = self.s.m.cast(c, Cast::ZExt, b, i64t);
+                let ext = if signed { Cast::SExt } else { Cast::ZExt };
+                let a = self.s.m.cast(c, ext, a, i64t);
+                let b = self.s.m.cast(c, ext, b, i64t);
                 let product = self.s.m.bin(c, Bin::Mul, a, b);
                 let r = self.s.m.bin(c, Bin::Add, product, x);
-                let carry = self.s.m.cmp(c, pred::IULT, r, x);
                 let Some(Operand::Vector { reg, .. }) = v.dst else {
                     return Err("a 64-bit result");
                 };
                 let (lo, hi) = self.split64(r);
                 self.write(inst, Reg::V(reg), lo, guard);
                 self.write(inst, Reg::V(reg + 1), hi, guard);
-                if let Some(Operand::Scalar { code, .. }) = v.carry
+                // The signed form's carry out is not the unsigned one's: a
+                // mask read from it stays missing (below).
+                if !signed
+                    && let Some(Operand::Scalar { code, .. }) = v.carry
                     && let Some(w) = inst.write(Reg::S(code))
                 {
+                    let carry = self.s.m.cmp(c, pred::IULT, r, x);
                     self.lane_bits.insert(w, carry);
                 }
                 for &(_, w) in &inst.writes {
@@ -7802,8 +7808,16 @@ impl<'a> Lower<'a> {
                 let x = crate::resource::inline(k).ok_or("a special operand")?;
                 Ok(self.s.m.int_const(i64t, i64::from(x as i32)))
             }
+            // A signed 64-bit operand sign-extends its 32-bit literal (RDNA 2
+            // ISA, 6.2.1): those of `*_i64` and `v_mad_i64_i32`'s addend.
+            Operand::Literal(x)
+                if inst.name().ends_with("_i64") || inst.name() == "v_mad_i64_i32" =>
+            {
+                Ok(self.s.m.int_const(i64t, i64::from(x as i32)))
+            }
             _ => {
-                // Literals and the null register: zero-extended.
+                // Literals of unsigned and bit operands, and the null
+                // register: zero-extended.
                 let x = self.operand(inst, &op)?;
                 Ok(self.s.m.cast(c, Cast::ZExt, x, i64t))
             }
