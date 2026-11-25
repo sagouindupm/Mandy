@@ -663,15 +663,22 @@ impl Lane {
 }
 
 /// Staging bytes a request holds while it runs: what it buffers between
-/// the file and the destination. Raw reads go straight to their
-/// destination, memory sources need none (as on the console).
+/// the source and the destination. A memory source is borrowed, but
+/// combined zlib and BCPack decoding allocates an intermediate buffer.
 fn staging_bytes(request: &Request) -> u64 {
     let buffered = request.options & (ZLIB | BCPACK | PAGE_DESTINATION) != 0;
-    if buffered && request.options & MEMORY_SOURCE == 0 {
+    let source = if buffered && request.options & MEMORY_SOURCE == 0 {
         u64::from(request.source_size)
     } else {
         0
-    }
+    };
+    let intermediate = if request.options & ZLIB != 0 && request.options & BCPACK != 0 {
+        u64::from(request.intermediate_size)
+    } else {
+        0
+    };
+    // The input stays alive while zlib writes to the intermediate.
+    source + intermediate
 }
 
 /// Ends a queue: what was not started is dropped, and this waits for the
@@ -714,7 +721,7 @@ struct Request {
     source: *const c_void,
     offset: u64,
     source_size: u32,
-    /// Compressed size between two decompression stages; unused here.
+    /// Buffer size for the BCPack stream produced by zlib.
     intermediate_size: u32,
     /// Matched by cancellation; the title leaves it 0.
     tag: u64,
@@ -1499,6 +1506,40 @@ mod tests {
         assert!(l.start().is_none());
         l.finish(&second, Ok(()));
         assert!(l.start().is_some());
+    }
+
+    fn check_combined_decode_staging(source_options: u64, expected_staging: u64) {
+        let mut l = lanes(100);
+        let mut lane = Lane::new(0, 64);
+        let mut request = request(
+            source_options | ZLIB | 4 << 1,
+            std::ptr::null_mut(),
+            64,
+            std::ptr::null(),
+            0,
+            20,
+        );
+        request.intermediate_size = 60;
+        lane.unsubmitted
+            .extend([Command::Read(request), Command::Read(request)]);
+        l.lanes.insert(0, lane);
+        l.submit(0);
+
+        let first = l.start().unwrap();
+        assert!(l.start().is_none(), "the intermediate exceeds remaining space");
+        assert_eq!(first.staging, expected_staging);
+        l.finish(&first, Ok(()));
+        assert_eq!(l.start().unwrap().staging, expected_staging);
+    }
+
+    #[test]
+    fn staging_bounds_combined_memory_decode() {
+        check_combined_decode_staging(MEMORY_SOURCE, 60);
+    }
+
+    #[test]
+    fn staging_bounds_combined_file_decode() {
+        check_combined_decode_staging(0, 80);
     }
 
     #[test]
