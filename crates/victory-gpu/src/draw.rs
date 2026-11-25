@@ -2187,6 +2187,11 @@ impl State {
                 None => host.texture_slot_done(index, write, again),
             }
         }
+        // Host copies made without their most detailed levels get them back
+        // while the card has room and nothing waits for it
+        // (`resource::promote_reduced`).
+        crate::tiles::WAITING_FOR_ROOM.store(refused, Ordering::Relaxed);
+        crate::resource::promote_reduced(room, refused);
     }
 
     /// For the frame listing, after a dropped dispatch's line: its group

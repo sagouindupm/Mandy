@@ -2966,9 +2966,11 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
                 // level is shown from the first level that is the title's
                 // and has memory, if the title's view starts before it (a
                 // level without memory reads zeros: a black texture). The
-                // title's own view mostly starts there already.
-                if let Some(first) = crate::resource::first_shown(resource)
-                    && first > 0
+                // title's own view mostly starts there already. One made
+                // without its most detailed levels keeps its first level and
+                // is clamped above them (`crate::tiles::shape_view`).
+                if let Some(levels) = crate::resource::view_levels(resource)
+                    && levels.first_tiled > 0
                 {
                     // SAFETY: a live resource.
                     let own = unsafe { texture.GetDesc() };
@@ -2986,7 +2988,7 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
                             },
                         },
                     };
-                    crate::tiles::show_from(desc.get_or_insert(whole), first, u32::from(own.MipLevels));
+                    crate::tiles::shape_view(desc.get_or_insert(whole), levels, u32::from(own.MipLevels));
                 }
                 // SAFETY: a live texture and a slot of our heap.
                 unsafe {
