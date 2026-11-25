@@ -2339,6 +2339,11 @@ impl Shadow {
         }
     }
 
+    /// The half-open title memory range this copy holds.
+    pub(crate) fn title_range(&self) -> (u64, u64) {
+        (self.start, self.start + self.len)
+    }
+
     /// `[address, address + len)` cut to the buffer, as offsets in the copy.
     fn inside(&self, address: usize, len: usize) -> (usize, usize) {
         let (start, end) = (self.start as usize, (self.start + self.len) as usize);

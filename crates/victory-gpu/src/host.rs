@@ -2278,9 +2278,30 @@ fn note_beside(noted: &mut std::collections::HashMap<(usize, u32), u64>, fetched
     fetched.len() as u64
 }
 
+/// Groups relay runs whose shadows overlap in title memory. The group runs
+/// in the original merge order, so each merge reads the prior writes.
+fn relay_merge_groups<T>(runs: Vec<T>, range: impl Fn(&T) -> (u64, u64)) -> Vec<Vec<T>> {
+    let mut ordered: Vec<_> = runs.iter().enumerate().map(|(i, run)| (range(run), i)).collect();
+    ordered.sort_unstable_by_key(|&((start, _), _)| start);
+    let mut membership = vec![0; runs.len()];
+    let mut groups = Vec::new();
+    let mut end = 0;
+    for ((start, stop), i) in ordered {
+        if groups.is_empty() || start >= end {
+            groups.push(Vec::new());
+        }
+        end = end.max(stop);
+        membership[i] = groups.len() - 1;
+    }
+    for (run, group) in runs.into_iter().zip(membership) {
+        groups[group].push(run);
+    }
+    groups
+}
+
 #[cfg(test)]
 mod relay_tests {
-    use super::{fetched_beside, flagged_pieces, landable, note_beside};
+    use super::{fetched_beside, flagged_pieces, landable, note_beside, relay_merge_groups};
 
     /// A piece fetched on the copy queue while a later flight was in the
     /// air is fetched again by that flight, and by no flight sent after
@@ -2307,6 +2328,17 @@ mod relay_tests {
         // A fetch with nothing later in the air notes nothing.
         assert_eq!(note_beside(&mut noted, &[(a, p)], 9, 9), 0);
         assert!(noted.is_empty());
+    }
+
+    #[test]
+    fn overlapping_shadows_merge_in_the_same_group() {
+        let (outer, nested, overlap, chain, touching, separate) =
+            ((10, 50), (20, 30), (40, 60), (55, 80), (80, 90), (100, 110));
+        let runs = vec![overlap, separate, outer, nested, chain, touching, outer];
+        assert_eq!(
+            relay_merge_groups(runs, |run| *run),
+            [vec![overlap, outer, nested, chain, outer], vec![touching], vec![separate]]
+        );
     }
 
     /// Two flights and what follows each: nothing of the second lands
@@ -4768,16 +4800,7 @@ impl Host {
             CARD_STATS[6].fetch_add(us, Ordering::Relaxed);
         }
         let written = if wide_merge() && pieces.len() >= 4 {
-            // Partition coalesced runs across workers without splitting a
-            // shadow across threads when possible, avoiding `before` lock
-            // contention between workers.
-            let mut groups: Vec<Vec<(std::sync::Arc<crate::shadow::Shadow>, usize, usize, u64)>> = Vec::new();
-            for item in pieces {
-                match groups.last_mut() {
-                    Some(g) if std::sync::Arc::ptr_eq(&g[0].0, &item.0) => g.push(item),
-                    _ => groups.push(vec![item]),
-                }
-            }
+            let mut groups = relay_merge_groups(pieces, |(shadow, _, _, _)| shadow.title_range());
             let buckets = groups.len().min(8);
             let mut shards: Vec<Vec<(std::sync::Arc<crate::shadow::Shadow>, usize, usize, u64)>> =
                 (0..buckets).map(|_| Vec::new()).collect();
