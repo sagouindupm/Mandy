@@ -6161,7 +6161,14 @@ impl<'a> Lower<'a> {
             _ => None,
         };
         let lo = dst_code.and_then(|c| inst.write(Reg::S(c)));
-        if inst.write(Reg::S(EXEC)).is_some() || self.is_mask(lo) {
+        // (a mask made only of numbers the lowering has, a register that holds a mask on other
+        // paths and data here: its number is the operation's, whatever lanes it may name)
+        let numbers = !inst.reads.is_empty()
+            && inst.reads.iter().all(|r| {
+                !matches!(r.0, Reg::S(c) if c == EXEC || c == EXEC + 1)
+                    && matches!(self.vals.get(&r.1), Some(Val::I32(_) | Val::Bit(_)))
+            });
+        if inst.write(Reg::S(EXEC)).is_some() || self.is_mask(lo) && !numbers {
             return Err(LANE_MASK);
         }
         if matches!(

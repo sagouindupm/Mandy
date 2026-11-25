@@ -486,6 +486,39 @@ fn a_lane_mask_joined_with_a_number_is_read_as_the_number_it_is() {
     eprintln!("ran on the hardware device: the mask's bits, or the number");
 }
 
+/// [`a_lane_mask_joined_with_a_number_is_read_as_the_number_it_is`] with a scalar operation
+/// on the join before it is read: tracked as a mask (it is one on a path), it was refused as "a
+/// lane mask holding lanes elsewhere read as data"; its inputs are numbers the lowering has,
+/// so it is the number the operation makes (`shadowmask:CS_TraceShadowRays_FullAdaptive`,
+/// s27 and s31 at 0x9a38).
+#[test]
+fn a_scalar_operation_on_a_mask_joined_with_a_number_is_a_number() {
+    let words = [
+        0x7D88_0000, // v_cmp_gt_u32 vcc_lo, s0, v0
+        0xBE94_036A, // s_mov_b32 s20, vcc_lo
+        0xBF06_8001, // s_cmp_eq_u32 s1, 0
+        0xBF85_0001, // s_cbranch_scc1 over the next
+        0xBE94_0385, // s_mov_b32 s20, 5
+        0x8715_8714, // s_and_b32 s21, s20, 7
+        0x7E00_0215, // v_mov_b32 v0, s21
+        0x38 << 26 | 0x1C << 18,
+        0x80 << 24 | 2 << 16, // buffer_store_dword v0, off, s[8:11], 0
+    ];
+    let native = native_of(&words, false, 32);
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let shader = lowered(&native, &p, &HashSet::new()).expect("lower");
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        let mut copy = shader.dxil.clone();
+        v.validate(&mut copy).expect("DXIL validation failed");
+    }
+    let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    for (below, other, expected) in [(32u32, 0u32, 7u32), (2, 0, 3), (0, 0, 0), (10, 1, 5)] {
+        let Some(got) = on_the_card(&shader, [below, other]) else { return };
+        assert_eq!(got, expected, "{below} lanes in the mask, s1 = {other}");
+    }
+    eprintln!("ran on the hardware device: the operation's number");
+}
+
 /// A 32-lane console wave. `if (t < s0) { ... SCC = (s1 == 7) }` and a branch on SCC after
 /// the join: the skip brings the SCC of `s_and_saveexec` ("some lane is left") along
 /// (`rtdirectionalshadows:CS_RTShadowTrace32HQ_TiledFarOnly`, 0x360-0x39c). On the console
