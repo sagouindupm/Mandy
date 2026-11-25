@@ -204,6 +204,9 @@ struct Lower<'a> {
     data_phis: Vec<(V, usize, usize)>,
     read_phis: HashSet<Value>,
     params: HashMap<Value, (usize, u32)>,
+    /// The SGPR with the POPS collision wave id of a primitive-ordered pixel
+    /// shader ([`pops_wave_sgpr`]): it reads 0, no earlier overlapping wave.
+    pops_sgpr: Option<u8>,
     user_data: Option<V>,
     user_reads: BTreeMap<u32, UserData>,
     samplers: Vec<[u32; 4]>,
@@ -1298,7 +1301,59 @@ pub(super) fn with_first_half_pairs<R>(translate: impl FnOnce() -> R) -> R {
     result
 }
 
-pub(super) fn host_max_wave() -> u32 {
+/// Whether the host GPU has rasterizer-ordered views (`ROVsSupported`); see [`set_host_rovs`].
+static HOST_ROVS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The host GPU's `ROVsSupported`: with it, pixel programs with a primitive-ordered section
+/// (console POPS) are translated with their UAVs rasterizer ordered; without it they are refused.
+pub fn set_host_rovs(on: bool) {
+    HOST_ROVS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// What [`set_host_rovs`] set.
+pub fn host_rovs() -> bool {
+    HOST_ROVS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `src_pops_exiting_wave_id`: the scalar source with the id of the last wave that left the
+/// primitive-ordered section.
+const POPS_EXITING_WAVE_ID: u8 = 239;
+/// `s_sendmsg` id of `MSG_ORDERED_PS_DONE`.
+const ORDERED_PS_DONE: u16 = 7;
+
+/// A program with a primitive-ordered section (console POPS): it waits for the waves of
+/// earlier primitives over the same pixels (`src_pops_exiting_wave_id`) or says it left the
+/// section (`MSG_ORDERED_PS_DONE`, `s_endpgm_ordered_ps_done`).
+fn pops(p: &Program) -> bool {
+    p.blocks.iter().flat_map(|b| &b.insts).any(|i| match &i.fields {
+        Fields::Sopp { imm } if i.name() == "s_sendmsg" => imm & 0xF == ORDERED_PS_DONE,
+        Fields::Sopp { .. } => i.name() == "s_endpgm_ordered_ps_done",
+        Fields::Sop { src, .. } => src.contains(&Operand::Const(POPS_EXITING_WAVE_ID)),
+        Fields::Valu(v) => v.src.contains(&Operand::Const(POPS_EXITING_WAVE_ID)),
+        _ => false,
+    })
+}
+
+/// The SGPR with a primitive-ordered pixel shader's POPS collision wave id: the hardware puts
+/// the primitive mask after the user SGPRs and the collision wave id after it (GFX10
+/// `LOAD_COLLISION_WAVEID`). The program reads it only for its fields (`s_bfe_u32`, and
+/// `s_lshr_b32` for bit 31, "an earlier wave overlaps"); anything else and it is no such SGPR,
+/// which then stays a hardware input the lowering refuses.
+// shortcut: the user SGPRs are taken to end with the last root parameter's; a title that
+// reserves more would have its collision id one further on, refused as above.
+fn pops_wave_sgpr(x: &Parts) -> Option<u8> {
+    let end = x.native.layout.iter().map(|r| u32::from(r.user_data) + r.sgprs).max().unwrap_or(0);
+    let n = u8::try_from(end + 1).ok()?;
+    let v = x.p.inputs.iter().find(|i| i.0 == Reg::S(n))?.1;
+    let readers = x.p.blocks.iter().flat_map(|b| &b.insts).filter(|i| i.reads.iter().any(|r| r.1 == v));
+    readers
+        .clone()
+        .all(|i| matches!(i.name(), "s_bfe_u32" | "s_lshr_b32"))
+        .then_some(n)
+        .filter(|_| readers.count() > 0)
+}
+
+pub fn host_max_wave() -> u32 {
     #[cfg(test)]
     if let Some(lanes) = TEST_HOST_WAVE.get() {
         return lanes;
@@ -1517,6 +1572,8 @@ impl<'a> Lower<'a> {
             }
         }
         let mut s = Shader::new(x.native.stage == HwStage::Ps);
+        s.rov = s.pixel && pops(p);
+        let pops_sgpr = if s.rov { pops_wave_sgpr(x) } else { None };
         s.inputs = x.inputs.clone();
         s.outputs = x.outputs.clone();
         let insts = || p.blocks.iter().flat_map(|b| &b.insts);
@@ -1776,6 +1833,7 @@ impl<'a> Lower<'a> {
             read_phis: HashSet::new(),
             stale: HashSet::new(),
             params: x.res.params.iter().map(|&(v, p, d)| (v, (p, d))).collect(),
+            pops_sgpr,
             user_data: None,
             user_reads: BTreeMap::new(),
             samplers: Vec::new(),
@@ -2494,6 +2552,9 @@ impl<'a> Lower<'a> {
             }
         }
         self.cur = self.s.entry;
+        if self.s.rov && !host_rovs() {
+            return Err(unsupported(0, "a primitive-ordered pixel section on a host without rasterizer-ordered views"));
+        }
         self.find_sections();
         self.inputs()?;
         if let Some(mesh) = self.s.mesh {
@@ -2588,6 +2649,9 @@ impl<'a> Lower<'a> {
         for &(reg, v) in &self.x.p.inputs {
             let val = match reg {
                 Reg::S(_) if self.params.contains_key(&v) => continue, // loaded on first use
+                // No earlier overlapping wave: the ordered section's wait falls through, and the
+                // host's rasterizer-ordered views keep the order instead.
+                Reg::S(n) if self.pops_sgpr == Some(n) => Val::I32(self.s.m.i32(0)),
                 // Most programs only interpolate with them: loaded on first
                 // use as a value (`get`).
                 Reg::V(_) if matches!(io_inputs.get(&v), Some(Input::Barycentric { .. })) => {
@@ -3593,6 +3657,8 @@ impl<'a> Lower<'a> {
                 let v = inst.read(Reg::S(code)).ok_or("an unread operand")?;
                 self.i32_of(v)
             }
+            // The last wave that left the ordered section: as for `pops_sgpr`, none to wait for.
+            Operand::Const(POPS_EXITING_WAVE_ID) if self.s.rov => Ok(self.s.m.i32(0)),
             Operand::Vector { reg, .. } => {
                 let v = inst.read(Reg::V(reg)).ok_or("an unread operand")?;
                 self.i32_of(v)
@@ -7093,6 +7159,9 @@ impl<'a> Lower<'a> {
                     // (11) or writes (11 with the UAV bit). Indexed
                     // accesses reach here as raw ones at index times the
                     // entry's stride (`buffer`).
+                    (RootType::Descriptor, Some(ResourceType::Uav), 11 | 0x100b) if self.s.rov => {
+                        Err("a root UAV in a primitive-ordered pixel shader")
+                    }
                     (RootType::Descriptor, Some(ResourceType::Uav), 11 | 0x100b) => {
                         Ok(self.s.root_uav_handle(rp.slot))
                     }

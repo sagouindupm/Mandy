@@ -246,6 +246,11 @@ pub fn run(
     if let Some(n) = std::env::var("VICTORY_HOST_MAX_WAVE").ok().and_then(|v| v.parse().ok()) {
         victory_shader::emit::set_host_max_wave(n);
     }
+    // `VICTORY_HOST_ROVS=1`: translate as for a host with rasterizer-ordered views (the
+    // console's primitive-ordered pixel sections are refused without them).
+    if std::env::var_os("VICTORY_HOST_ROVS").is_some_and(|v| v == "1") {
+        victory_shader::emit::set_host_rovs(true);
+    }
     let dll = validate.then(Validator::default_path).flatten();
     if validate {
         Validator::load(dll.as_deref()).map_err(anyhow::Error::msg)?;

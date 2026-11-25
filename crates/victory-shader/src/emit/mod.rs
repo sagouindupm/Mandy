@@ -110,7 +110,7 @@ use crate::{ShaderError, io, ir, resource, structure};
 
 pub use bitcode::census;
 pub use sampler::StaticSampler;
-pub use lower::set_host_max_wave;
+pub use lower::{host_max_wave, host_rovs, set_host_max_wave, set_host_rovs};
 pub use rect::rect_list_gs;
 pub use shader::{
     MEMORY_FAULTS, MEMORY_PAGES, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_ADDRESSES, SLOT_FAULTS,
@@ -1052,6 +1052,109 @@ mod tests {
         let c = Container::parse(&container).unwrap();
         let out = emit(&c, &native, &p, &st, &io, &res).unwrap();
         assert!(out.root_srvs.contains(&SLOT_STRIDES), "{:?}", out.root_srvs);
+        #[cfg(windows)]
+        if let Some(path) = super::validator::Validator::default_path() {
+            let mut v = super::validator::Validator::load(Some(&path)).unwrap();
+            v.validate(&mut out.dxil.clone()).unwrap();
+        }
+    }
+
+    /// A pixel shader with a primitive-ordered section (console POPS), as the
+    /// title's character cut-out shaders have it: bit 31 of the collision wave
+    /// id after the primitive mask says an earlier wave overlaps, the program
+    /// then waits for `src_pops_exiting_wave_id`, reads and writes its UAV and
+    /// leaves the section (`MSG_ORDERED_PS_DONE`). The collision SGPR was "a
+    /// hardware SGPR input". On a host with rasterizer-ordered views the wait
+    /// falls through (no earlier wave) and the UAV is a ROV, which keeps the
+    /// order; on one without, the program is refused.
+    #[test]
+    fn a_primitive_ordered_section_uses_rasterizer_ordered_views() {
+        use crate::native::RootParam;
+        use crate::{ResourceType, RootType, UsedResource};
+        let words = [
+            0x9003_9F02u32, // s_lshr_b32 s3, s2, 31 (s2: the collision wave id)
+            0xBF06_8003,    // s_cmp_eq_u32 s3, 0
+            0xBF85_0003,    // s_cbranch_scc1 -> s_mov_b32 s1, 0
+            0xBF8E_0001,    // s_sleep 1
+            0xBF06_80EF,    // s_cmp_eq_u32 src_pops_exiting_wave_id, 0
+            0xBF84_FFFD,    // s_cbranch_scc0 -> s_sleep
+            0xBE81_0380,    // s_mov_b32 s1, 0
+            0xF40C_0100,
+            0xFA00_0000, // s_load_dwordx8 s[4:11], s[0:1], null
+            0x7E04_0280, // v_mov_b32 v2, 0
+            0x7E06_0280, // v_mov_b32 v3, 0
+            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+            0xF000_3F88,
+            0x0001_0402, // image_load v[4:7], v[2:3], s[4:11] dmask:0xf dim:2D unorm glc dlc
+            0xBF8C_3F70, // s_waitcnt vmcnt(0)
+            0xF020_3F08,
+            0x0001_0402, // image_store v[4:7], v[2:3], s[4:11] dmask:0xf dim:2D unorm glc
+            0xBF90_0007, // s_sendmsg MSG_ORDERED_PS_DONE
+            0xF800_180F,
+            0x0706_0504, // exp mrt0, v4, v5, v6, v7 done vm
+            0xBF81_0000,
+        ];
+        let native = NativeProgram {
+            stage: HwStage::Ps,
+            wave64: false,
+            vgprs: 8,
+            layout: vec![RootParam {
+                root: RootType::Table,
+                table_offset_dwords: 0,
+                sgprs: 1,
+                base_register: 0,
+                user_data: 0,
+                slot: 0,
+            }],
+            used: vec![UsedResource {
+                kind: ResourceType::Uav,
+                root: RootType::Table,
+                table_offset_dwords: 0,
+                lower_bound: 0,
+                stride: 0,
+                dwords: 8,
+                user_data: 0,
+                slot: 0,
+            }],
+            io: StageIo::Ps {
+                inputs: vec![],
+                input_addr: 0,
+                db_shader_control: 0,
+                patches: vec![],
+            },
+            code: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+        };
+        let output = SigElement {
+            name: "SV_Target".into(),
+            index: 0,
+            kind: 16,
+            comp: 9,
+            interp: 0,
+            row: Some(0),
+            col: 0,
+            cols: 4,
+            usage: 15,
+            half: false,
+        };
+        let osg1 = container::signature(&[output], false);
+        let bytes = crate::dxbc::build(&[(FourCC::OSG1, &osg1)]);
+        let c = Container::parse(&bytes).unwrap();
+        let p = ir::build(&native.patched_code(), native.wave64, native.vgprs).unwrap();
+        let st = structure::structure(&p).unwrap();
+        let res = resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
+        let io = io::raise(&p, &native).unwrap();
+        // (the process's setting: no other test has a primitive-ordered section)
+        set_host_rovs(false);
+        let refused = emit(&c, &native, &p, &st, &io, &res).map(drop).unwrap_err();
+        assert!(refused.to_string().contains("rasterizer-ordered"), "{refused}");
+        set_host_rovs(true);
+        let out = emit(&c, &native, &p, &st, &io, &res);
+        set_host_rovs(false);
+        let out = out.unwrap();
+        let host = Container::parse(&out.dxil).unwrap();
+        let sfi0 = host.part(FourCC::SFI0).unwrap().data;
+        let features = u64::from_le_bytes(sfi0.try_into().unwrap());
+        assert_ne!(features & 0x1000, 0, "SFI0 {features:#x}: no ROVs");
         #[cfg(windows)]
         if let Some(path) = super::validator::Validator::default_path() {
             let mut v = super::validator::Validator::load(Some(&path)).unwrap();

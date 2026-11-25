@@ -95,6 +95,7 @@ pub(crate) mod flags {
     pub const DOUBLES: u64 = 1 << 2;
     pub const STENCIL_REF: u64 = 1 << 11;
     pub const TYPED_UAV_LOADS: u64 = 1 << 13;
+    pub const ROVS: u64 = 1 << 18;
     pub const WAVE_OPS: u64 = 1 << 19;
     pub const BARYCENTRICS: u64 = 1 << 22;
     pub const INT64: u64 = 1 << 20;
@@ -176,6 +177,9 @@ pub(crate) struct Shader {
     pub flags: u64,
     /// Heap handles made with a non-uniform index.
     pub nonuniform_handles: u32,
+    /// A pixel shader with a primitive-ordered section (console POPS): its
+    /// heap UAVs are rasterizer-ordered views.
+    pub rov: bool,
     /// A compute shader with this thread-group size.
     pub threads: Option<[u32; 3]>,
     /// The wave size a compute shader requires (`WaveSize`).
@@ -232,6 +236,7 @@ impl Shader {
             root_uavs: Vec::new(),
             flags: 0,
             nonuniform_handles: 0,
+            rov: false,
             threads: None,
             wave_size: None,
             lds_dwords: 0,
@@ -459,7 +464,14 @@ impl Shader {
             218,
             &[index, s, n],
         );
-        self.annotate(block, h, props.0, props.1)
+        // A UAV in a primitive-ordered pixel shader: rasterizer ordered (`IsROV`).
+        let props0 = if self.rov && props.0 & 0x1000 != 0 {
+            self.flags |= flags::ROVS;
+            props.0 | 0x2000
+        } else {
+            props.0
+        };
+        self.annotate(block, h, props0, props.1)
     }
 
     /// The finished container.
@@ -809,6 +821,9 @@ impl Shader {
         }
         if self.flags & flags::TYPED_UAV_LOADS != 0 {
             features |= 0x800;
+        }
+        if self.flags & flags::ROVS != 0 {
+            features |= 0x1000;
         }
         if self.flags & flags::WAVE_OPS != 0 {
             features |= 0x4000;
