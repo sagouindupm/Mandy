@@ -20,6 +20,11 @@ use crate::native::{HwStage, NativeProgram, ResourceType, RootType, StageIo, Usa
 use crate::resource::{Address, CODE, MEMORY, Resources, Role, Site, Source};
 use crate::structure::{Atom, Bool, LaneExit, Structured};
 
+/// Packed dot-product lowering (`v_dot*`), a child module so it shares the
+/// emitter's state without growing this file.
+#[path = "dot.rs"]
+mod dot;
+
 /// The ray-tracing node test (`image_bvh_intersect_ray`), a child module so
 /// it shares the emitter's state.
 #[path = "intersect.rs"]
@@ -6924,6 +6929,9 @@ impl<'a> Lower<'a> {
         }
         if let Some(op) = name.strip_prefix("v_pk_") {
             return self.packed16(inst, op, guard);
+        }
+        if name.starts_with("v_dot") {
+            return self.dot_product(inst, name, guard);
         }
         match name {
             "v_mad_u64_u32" | "v_mad_i64_i32" => {
