@@ -1931,3 +1931,90 @@ fn ps_sample_coverage_input_reads_coverage_mask() {
     }
     assert!(ran > 0, "neither hardware nor WARP SM 6.6 device available");
 }
+
+/// SOP1 `op sdst, src0`.
+const fn sop1(op: u8, sdst: u8, src0: u8) -> u32 {
+    0xBE80_0000 | (sdst as u32) << 16 | (op as u32) << 8 | src0 as u32
+}
+
+/// Bit `i` of the result is whether any of bits `4i..4i+3` of `pixels` is set.
+fn quad_mask_reference(pixels: u64) -> u64 {
+    (0..16).fold(0, |m, i| m | u64::from(pixels >> (4 * i) & 0xF != 0) << i)
+}
+
+#[test]
+fn s_quadmask_folds_each_quad_into_one_bit() {
+    // s_quadmask_b32 s6, s0 (SOP1 0x2c); v_mov_b32 v0, s6
+    let b32 = build_valu_cs(&[sop1(0x2C, 6, 0), vop1(0x001, 0, sgpr(6))]);
+    // s_quadmask_b64 s[6:7], s[0:1] (SOP1 0x2d); v_mov_b32 v0, s6 (or s7)
+    let b64_lo = build_valu_cs(&[sop1(0x2D, 6, 0), vop1(0x001, 0, sgpr(6))]);
+    let b64_hi = build_valu_cs(&[sop1(0x2D, 6, 0), vop1(0x001, 0, sgpr(7))]);
+    // SCC is whether the result is nonzero: s_cselect_b32 s12, 1, 0; v_mov_b32 v0, s12
+    let b32_scc = build_valu_cs(&[
+        sop1(0x2C, 6, 0),
+        sop2(0x0A, 12, 0x81, 0x80),
+        vop1(0x001, 0, sgpr(12)),
+    ]);
+    let b64_scc = build_valu_cs(&[
+        sop1(0x2D, 6, 0),
+        sop2(0x0A, 12, 0x81, 0x80),
+        vop1(0x001, 0, sgpr(12)),
+    ]);
+
+    let inputs: Vec<[u32; 4]> = [
+        (0, 0),
+        (0x0000_0001, 0),
+        (0x8000_0000, 0),
+        (0x1248_0F00, 0),
+        (0xF0F0_0F0F, 0x0000_0000),
+        (0x0000_0000, 0x0000_0001),
+        (0x0000_0000, 0x8000_0000),
+        (0xFFFF_FFFF, 0xFFFF_FFFF),
+        (0x0102_0408, 0x8040_2010),
+        (0x1000_0001, 0x0000_F000),
+    ]
+    .iter()
+    .map(|&(lo, hi)| [lo, hi, 0, 0])
+    .collect();
+    let wide = |inp: [u32; 4]| quad_mask_reference(u64::from(inp[0]) | u64::from(inp[1]) << 32);
+
+    run_cases(&b32, &inputs, |backend, _, inp, got| {
+        let want = quad_mask_reference(u64::from(inp[0])) as u32;
+        assert_eq!(
+            got, want,
+            "{backend}: s_quadmask_b32({:#010x}) = {got:#x}, want {want:#x}",
+            inp[0],
+        );
+    });
+    run_cases(&b32_scc, &inputs, |backend, _, inp, got| {
+        let want = u32::from(inp[0] != 0);
+        assert_eq!(
+            got, want,
+            "{backend}: SCC of s_quadmask_b32({:#010x})",
+            inp[0],
+        );
+    });
+    run_cases(&b64_lo, &inputs, |backend, _, inp, got| {
+        let want = wide(inp) as u32;
+        assert_eq!(
+            got, want,
+            "{backend}: s_quadmask_b64({:#010x}_{:#010x}) = {got:#x}, want {want:#x}",
+            inp[1], inp[0],
+        );
+    });
+    run_cases(&b64_hi, &inputs, |backend, _, inp, got| {
+        assert_eq!(
+            got, 0,
+            "{backend}: high dword of s_quadmask_b64({:#010x}_{:#010x})",
+            inp[1], inp[0],
+        );
+    });
+    run_cases(&b64_scc, &inputs, |backend, _, inp, got| {
+        let want = u32::from(inp[0] | inp[1] != 0);
+        assert_eq!(
+            got, want,
+            "{backend}: SCC of s_quadmask_b64({:#010x}_{:#010x})",
+            inp[1], inp[0],
+        );
+    });
+}
