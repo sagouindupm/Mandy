@@ -7791,7 +7791,12 @@ impl<'a> Lower<'a> {
                     return Err("a mixed-precision result");
                 };
                 let old = match inst.read(Reg::V(reg)) {
-                    Some(o) => self.i32_of(o)?,
+                    Some(o) => match self.i32_of(o) {
+                        // A dead `v_interp_p1ll_f16` destination may be reused here. Its
+                        // placeholder is not a value this instruction needs to preserve.
+                        Err("the first half of an interpolation") => self.s.m.i32(0),
+                        old => old?,
+                    },
                     None => self.s.m.i32(0),
                 };
                 let h = self

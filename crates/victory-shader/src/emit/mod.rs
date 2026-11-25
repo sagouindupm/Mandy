@@ -1819,4 +1819,62 @@ mod barycentric_tests {
         let words = [0xC812_0000, e0, e1, S_ENDPGM];
         assert!(pixel(&words, PERSP_CENTER).is_err());
     }
+
+    /// A mixed-precision write can reuse a dead interpolation destination without
+    /// propagating its unevaluated first half into the colour export.
+    #[test]
+    fn mixed_f16_writes_ignore_dead_interpolation_placeholder() {
+        for [op, mode] in [[0xCC21_0002, 0x0201_E4F2], [0xCC22_0002, 0x0201_E4F2]] {
+            let [e0, e1] = exp_mrt0(2);
+            let words = [
+                0xD742_0002,
+                0x0002_0000, // v_interp_p1ll_f16 v2, v0, attr0.x
+                0xD75A_0004,
+                0x040A_0200, // v_interp_p2_f16 v4, v1, attr0.x, v2
+                op,
+                mode, // v_fma_mixlo_f16 / v_fma_mixhi_f16 v2, 1.0, 1.0, 0
+                0x7E04_1702, // v_cvt_f32_f16 v2, v2
+                e0,
+                e1,
+                S_ENDPGM,
+            ];
+            let native = NativeProgram {
+                stage: HwStage::Ps,
+                wave64: false,
+                vgprs: 8,
+                layout: vec![],
+                used: vec![],
+                io: StageIo::Ps {
+                    inputs: vec![PsInput {
+                        usage: Usage::Generic,
+                        row: 0,
+                        mask: 0b1111,
+                        attr: 0,
+                        flat: false,
+                        fp16: true,
+                        pack2: false,
+                        row2: 0,
+                    }],
+                    input_addr: PERSP_CENTER,
+                    db_shader_control: 0,
+                    patches: vec![],
+                },
+                code: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+            };
+            let mut input = element("TEXCOORD", 0, 0);
+            input.half = true;
+            let mut target = element("SV_Target", 16, 0);
+            target.usage = 15;
+            let isg1 = container::signature(&[input], true);
+            let osg1 = container::signature(&[target], false);
+            let bytes = crate::dxbc::build(&[(FourCC::ISG1, &isg1), (FourCC::OSG1, &osg1)]);
+            let container = Container::parse(&bytes).unwrap();
+            let p = ir::build(&native.patched_code(), native.wave64, native.vgprs).unwrap();
+            let resources = resource::track(&p, &native.layout, native.stage, None).unwrap();
+            let io = io::raise(&p, &native).unwrap();
+            let structure = structure::structure(&p).unwrap();
+            let shader = emit(&container, &native, &p, &structure, &io, &resources).unwrap();
+            validate(&shader);
+        }
+    }
 }
