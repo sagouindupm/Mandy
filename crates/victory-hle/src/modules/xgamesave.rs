@@ -638,6 +638,19 @@ fn remove_container(provider: *const Provider, name: *const c_char) -> HRESULT {
     }
 }
 
+fn initialize_at(saves: &Path, config: *const c_char, out: *mut *mut Provider) -> HRESULT {
+    if out.is_null() {
+        return E_INVALIDARG;
+    }
+    match open_at(saves, config) {
+        Ok(provider) => put(out, provider),
+        Err(hr) => {
+            put(out, std::ptr::null_mut());
+            hr
+        }
+    }
+}
+
 extern "system" fn initialize(
     _: This,
     _user: *const c_void,
@@ -645,13 +658,7 @@ extern "system" fn initialize(
     _sync_on_demand: bool,
     out: *mut *mut Provider,
 ) -> HRESULT {
-    if out.is_null() {
-        return E_INVALIDARG;
-    }
-    match open_at(&runtime::title().saves(), config) {
-        Ok(provider) => put(out, provider),
-        Err(hr) => hr,
-    }
+    initialize_at(&runtime::title().saves(), config, out)
 }
 extern "system" fn initialize_async(
     _: This,
@@ -1463,6 +1470,12 @@ mod tests {
         assert_eq!(open_at(Path::new(""), c"scid".as_ptr()).err(), Some(NO_ACCESS));
 
         let saves = tempfile::tempdir().unwrap();
+        let blocked = saves.path().join("blocked");
+        std::fs::write(&blocked, b"file").unwrap();
+        let mut stale = std::ptr::dangling_mut::<Provider>();
+        assert_eq!(initialize_at(&blocked, c"scid".as_ptr(), &mut stale), NO_ACCESS);
+        assert!(stale.is_null());
+
         let provider = open_at(saves.path(), c"scid".as_ptr()).unwrap();
         let create = method::<Create>(&OBJECT, 0x80);
         let begin_update = method::<Update_>(&OBJECT, 0xb8);
