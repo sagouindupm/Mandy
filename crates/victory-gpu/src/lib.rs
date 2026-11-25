@@ -60,6 +60,8 @@ mod shadow;
 mod tiles;
 pub mod signature;
 #[cfg(windows)]
+mod ambient;
+#[cfg(windows)]
 mod texture;
 #[cfg(windows)]
 mod watch;

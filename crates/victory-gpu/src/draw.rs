@@ -2149,6 +2149,7 @@ impl State {
         // SAFETY: an open list with everything set.
         unsafe { list.list.Dispatch(x, y, z) };
         DISPATCHED.fetch_add(1, Ordering::Relaxed);
+        self.ambient(list, p);
     }
 
     /// What a draw or dispatch runs, for the device-removed report
@@ -2505,6 +2506,41 @@ impl State {
         } else {
             &self.graphics
         }
+    }
+
+    /// After a compute dispatch of `p`: fills unresolved diffuse probe light with
+    /// an ambient floor when `VICTORY_AMBIENT` is enabled, resetting cached host
+    /// bindings so the next draw or dispatch rebinds the title's state.
+    fn ambient(&mut self, list: &HostList, p: &HostPipeline) -> bool {
+        let Some(stage) = p.stages.first().filter(|s| s.shader.resolves_light) else {
+            return false;
+        };
+        let view = |kind: ResourceType, (slot, offset): (u8, u32)| {
+            let u = stage.translated().used.iter().find(|u| {
+                u.kind == kind
+                    && u.root == RootType::Table
+                    && (u.slot, u.table_offset_dwords) == (slot, offset)
+            })?;
+            let Some(Root::Table(table)) = self.roots_ref(true).get(usize::from(u.slot)) else {
+                return None;
+            };
+            crate::descriptor::view(table + u64::from(u.table_offset_dwords) * 4)
+        };
+        let light = match view(ResourceType::Uav, crate::ambient::LIGHT) {
+            Some(View::Unordered(r, ..)) => r,
+            _ => 0,
+        };
+        if light == 0 {
+            once!("no ambient light: other tables");
+            return false;
+        }
+        let raised = crate::ambient::raise(list, light as This);
+        if raised {
+            self.host_heaps = [0; 2];
+            self.host_roots = [0; 2];
+            self.host_pipeline = 0;
+        }
+        raised
     }
 
     fn table_entry(&self, list: &HostList, u: &UsedResource, compute: bool) {
@@ -3185,6 +3221,7 @@ impl State {
         // back (`crate::indirect`).
         if kind == DISPATCH {
             DISPATCHED.fetch_add(1, Ordering::Relaxed);
+            self.ambient(list, p);
         } else {
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
