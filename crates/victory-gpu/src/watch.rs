@@ -775,6 +775,43 @@ fn open_here(g: &mut Guards, start: usize, end: usize) -> bool {
 /// kernel (which does not fault into our handler): opens its guarded blocks.
 /// The runtime calls it (as `kernel_will_write`) before the title's kernel
 /// reads into its own memory.
+/// After the layer wrote `[at, at + len)` of title memory through the
+/// kernel: the dirty bits the kernel holds for those pages are the layer's
+/// own writes, and a refresh that took them for the title's copies the same
+/// bytes up again every frame. Asks the watch to clear them and drops the
+/// answer (nothing is written into title memory between the write and this
+/// asking by design: both are the layer's).
+pub(crate) fn forgot(at: usize, len: usize) {
+    use windows_sys::Win32::System::Memory::GetWriteWatch;
+    const RESET: u32 = 1;
+    if len == 0 {
+        return;
+    }
+    let mut buf = [0usize; 512];
+    let first = at / KERNEL_PAGE * KERNEL_PAGE;
+    let end = at.saturating_add(len);
+    let mut page = first;
+    while page < end {
+        let pages = (end - page).div_ceil(KERNEL_PAGE).min(buf.len());
+        let span = pages * KERNEL_PAGE;
+        let mut count = pages;
+        let mut granularity = 0u32;
+        // SAFETY: `count` entries in the buffer, a whole number of kernel
+        // pages of our own process's memory.
+        let _ = unsafe {
+            GetWriteWatch(
+                RESET,
+                page as *const _,
+                span,
+                buf.as_mut_ptr().cast(),
+                &mut count,
+                &mut granularity,
+            )
+        };
+        page += span;
+    }
+}
+
 pub fn writing(at: usize, len: usize) {
     // The length is the title's (`fread`'s size times count, saturated).
     open(&mut guards(), at, at.saturating_add(len));

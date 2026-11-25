@@ -500,6 +500,19 @@ fn tabled_out() -> bool {
     *ON.get_or_init(|| std::env::var_os("VICTORY_TABLED_TEXTURES").is_none_or(|v| v != "1"))
 }
 
+/// `VICTORY_TABLED_SKIP_FRAMES=<n>`: a slot is left to its draws only if a
+/// draw read it through a table within the last `n` frames (0: such slots
+/// are mirrored again, as with `VICTORY_HEAP_SYNC_TABLES=1`). Unset: the
+/// window is [`TABLED_FRAMES`] and the read bit is not asked for.
+fn skip_frames() -> Option<u64> {
+    static N: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("VICTORY_TABLED_SKIP_FRAMES")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    })
+}
+
 /// What the queue of textures picked by index knows of a title slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Waiting {
@@ -1472,10 +1485,23 @@ impl HostHeap {
     /// Whether title slot `index` was a table's within the last
     /// [`TABLED_FRAMES`] frames before `frame` (never, if such slots are
     /// to be queued as any other).
+    ///
+    /// `VICTORY_TABLED_SKIP_FRAMES=<n>` asks the stricter question the
+    /// mirror pass needs: a slot may be left to its draws only if a draw
+    /// read it **through a table** within the last `n` frames, because only
+    /// then did that draw make its own view of it. Without the read bit the
+    /// window of [`TABLED_FRAMES`] (240) also lets a slot the title stopped
+    /// using through a table be written directly while the mirror skips it,
+    /// and a draw then reads a record no pass made.
     fn tabled_lately(&self, index: u32, frame: u64) -> bool {
-        let stamp = self.tabled_stamp(index) & !TABLED_READ;
+        let stamp = self.tabled_stamp(index);
         let now = (frame as u32).wrapping_add(1) & !TABLED_READ;
-        tabled_out() && stamp != 0 && u64::from(now.wrapping_sub(stamp)) <= TABLED_FRAMES
+        if let Some(frames) = skip_frames() {
+            return stamp & TABLED_READ != 0
+                && u64::from(now.wrapping_sub(stamp & !TABLED_READ)) <= frames;
+        }
+        tabled_out() && stamp & !TABLED_READ != 0
+            && u64::from(now.wrapping_sub(stamp & !TABLED_READ)) <= TABLED_FRAMES
     }
 
     /// What `tabled` holds for title slot `index`; 0: never a table's.
