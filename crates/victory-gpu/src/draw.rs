@@ -67,7 +67,7 @@ thread_local! {
     /// stage's shader can store to buffers (`Translated::stores`).
     static STORES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// While `State::early_textures` runs the texture pass: the
-    /// milliseconds and the bytes that run may take, in place of the
+    /// microseconds and the bytes that run may take, in place of the
     /// pass's own per frame.
     static PASS_BUDGET: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
 }
@@ -93,6 +93,26 @@ fn early_budgets() -> (u64, u64) {
         };
         (ms("VICTORY_EARLY_TEXTURES_MS", 12), ms("VICTORY_BAKE_TEXTURES_MS", 1500))
     })
+}
+
+/// Keep sub-millisecond bake work in the accumulated frame budget.
+fn bake_elapsed_us(elapsed: std::time::Duration) -> u64 {
+    elapsed.as_micros().min(u64::MAX as u128) as u64
+}
+
+#[cfg(test)]
+mod bake_budget_tests {
+    use super::bake_elapsed_us;
+    use std::time::Duration;
+
+    #[test]
+    fn sub_millisecond_passes_consume_budget() {
+        let spent: u64 = (0..2_000)
+            .map(|_| bake_elapsed_us(Duration::from_micros(800)))
+            .sum();
+        assert_eq!(spent, 1_600_000);
+        assert_eq!(1_500_000u64.saturating_sub(spent), 0);
+    }
 }
 
 /// The pixel shaders of the title's decoration bake (the title:
@@ -1588,20 +1608,20 @@ impl State {
         let bake = bake_ms > 0
             && p.stages.iter().any(|s| BAKE_PIXEL_SHADERS.contains(&s.shader.hash.as_str()));
         static FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
-        // The milliseconds this frame's bake draws have taken so far: a
+        // The microseconds this frame's bake draws have taken so far: a
         // frame has several, and together they get `bake_ms`.
-        static BAKED_MS: AtomicU64 = AtomicU64::new(0);
+        static BAKED_US: AtomicU64 = AtomicU64::new(0);
         let frame = crate::frame::current();
         let first = FRAME.swap(frame, Ordering::Relaxed) != frame;
         if first {
-            BAKED_MS.store(0, Ordering::Relaxed);
+            BAKED_US.store(0, Ordering::Relaxed);
         }
-        let left = bake_ms.saturating_sub(BAKED_MS.load(Ordering::Relaxed));
+        let left = bake_ms.saturating_mul(1_000).saturating_sub(BAKED_US.load(Ordering::Relaxed));
         let budget = if bake && left > 0 {
             // What a bake may read must be there now: up to 2 GiB.
             (left, 2 << 30)
         } else if first && early_ms > 0 {
-            (early_ms, 64 << 20)
+            (early_ms.saturating_mul(1_000), 64 << 20)
         } else {
             return;
         };
@@ -1635,7 +1655,7 @@ impl State {
         self.heap_textures(list, heap, host);
         PASS_BUDGET.set(None);
         if bake {
-            BAKED_MS.fetch_add(began.elapsed().as_millis() as u64, Ordering::Relaxed);
+            BAKED_US.fetch_add(bake_elapsed_us(began.elapsed()), Ordering::Relaxed);
         }
     }
 
@@ -1833,8 +1853,8 @@ impl State {
         // own: its bytes on top of what the frame has spent so far.
         // (Not `most`: that is the longest wait between looks, used below.)
         let (span, bytes_at_most) = match PASS_BUDGET.get() {
-            Some((ms, bytes)) => {
-                (std::time::Duration::from_millis(ms), SPENT.load(Ordering::Relaxed).saturating_add(bytes))
+            Some((us, bytes)) => {
+                (std::time::Duration::from_micros(us), SPENT.load(Ordering::Relaxed).saturating_add(bytes))
             }
             None => (span, per_frame),
         };
