@@ -118,14 +118,15 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         }
         draw_counts = uint2(count, instances);
     } else if (active && kind == 2) {
-        uint3 g = min(src_args.Load3(src_at), uint3(65535u, 65535u, 65535u));
+        uint3 want = src_args.Load3(src_at);
+        uint3 g = min(want, uint3(65535u, 65535u, 65535u));
         // x * y fits 32 bits; the whole count may not.
         if (g.z != 0 && g.x * g.y > GROUPS / g.z) {
             g = uint3(0, 0, 0);
         }
         // Split (bit 2): the groups past 65,535 in x, up to 65,535 more, run
         // as a second record (below), charged with the first.
-        uint rest = ((has_count & 4u) != 0 && g.x == 65535u) ? min(asked.x - 65535u, 65535u) : 0u;
+        uint rest = ((has_count & 4u) != 0 && g.x == 65535u) ? min(want.x - 65535u, 65535u) : 0u;
         if (rest != 0 && g.y * g.z != 0 && g.x + rest > GROUPS / (g.y * g.z)) {
             g = uint3(0, 0, 0);
             rest = 0;
@@ -356,7 +357,7 @@ pub(crate) fn bound(
 ) -> Option<ID3D12Resource> {
     let bytes = validate_layout(spec, src.1, count.map(|(_, off)| off))?;
     let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
-    clamp_into(list, c, &dst, budget, src, count, spec, false).then_some(dst)
+    clamp_into(list, c, &dst, budget, src, count, spec, (false, false)).then_some(dst)
 }
 
 /// [`bound`] for dispatch records (`kind` 2) whose groups past 65,535 in x
@@ -374,7 +375,7 @@ pub(crate) fn bound_split(
     let bytes = validate_layout(spec, src.1, count.map(|(_, off)| off))?;
     let both = bytes.checked_mul(2).filter(|&b| b <= u64::from(u32::MAX))?;
     let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(both)?);
-    record_clamp_with(c, &list.list, &dst, budget, src, count, spec, (false, spec.0 == 2)).then_some(dst)
+    clamp_into(list, c, &dst, budget, src, count, spec, (false, spec.0 == 2)).then_some(dst)
 }
 
 /// [`bound`] for a window of records clamped ahead of the draws that will
@@ -394,10 +395,10 @@ pub(crate) fn bound_ahead(
 ) -> Option<ID3D12Resource> {
     let bytes = validate_layout(spec, src.1, None)?;
     let (c, budget, dst) = (clamp()?, list.budget()?, list.indirect_scratch(bytes)?);
-    clamp_into(list, c, &dst, budget, src, None, spec, true).then_some(dst)
+    clamp_into(list, c, &dst, budget, src, None, spec, (true, false)).then_some(dst)
 }
 
-/// [`record_clamp_as`] into `list`'s scratch buffer `dst`, from the state
+/// [`record_clamp_with`] into `list`'s scratch buffer `dst`, from the state
 /// the list left it in; afterwards the list knows it is readable as
 /// indirect arguments.
 #[allow(clippy::too_many_arguments)]
@@ -409,10 +410,10 @@ fn clamp_into(
     src: (&ID3D12Resource, u64),
     count: Option<(&ID3D12Resource, u64)>,
     spec: (u32, u32, u32),
-    ahead: bool,
+    mode: (bool, bool),
 ) -> bool {
     let before = list.indirect_state(dst);
-    let recorded = record_clamp_as(c, &list.list, (dst, before), budget, src, count, spec, ahead);
+    let recorded = record_clamp_with(c, &list.list, (dst, before), budget, src, count, spec, mode);
     if recorded {
         list.indirect_readable(dst);
     }
@@ -435,7 +436,7 @@ fn record_clamp_as(
     spec: (u32, u32, u32),
     ahead: bool,
 ) -> bool {
-    record_clamp_with(c, l, dst, budget, src, count, spec, (ahead, false))
+    record_clamp_with(c, l, (dst, before), budget, src, count, spec, (ahead, false))
 }
 
 /// [`record_clamp_as`]; `split`: dispatch records' groups past 65,535 in x
@@ -444,7 +445,7 @@ fn record_clamp_as(
 fn record_clamp_with(
     c: &Clamp,
     l: &ID3D12GraphicsCommandList,
-    dst: &ID3D12Resource,
+    (dst, before): (&ID3D12Resource, D3D12_RESOURCE_STATES),
     budget: u64,
     (src, src_offset): (&ID3D12Resource, u64),
     count: Option<(&ID3D12Resource, u64)>,
@@ -1524,7 +1525,7 @@ void main(uint3 g : SV_GroupID) {
         assert!(record_clamp_with(
             &warp.clamp,
             &warp.list,
-            &dst_buf,
+            (&dst_buf, D3D12_RESOURCE_STATE_COMMON),
             budget_gpu,
             (&src_buf, 0),
             None,
@@ -1545,7 +1546,6 @@ void main(uint3 g : SV_GroupID) {
                 l.ExecuteIndirect(&sig, 1, &dst_buf, u64::from(STRIDE), None, 0);
             }
         }
-        done_on(&warp.list, &dst_buf);
         warp.submit_and_wait();
         // SAFETY: the GPU is done; mapped host memory.
         unsafe {
