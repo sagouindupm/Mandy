@@ -2667,7 +2667,11 @@ impl State {
             once!("no ambient light: other tables");
             return false;
         }
-        let raised = crate::ambient::raise(list, light as This);
+        let depth = match view(ResourceType::Srv, crate::ambient::DEPTH) {
+            Some(View::Shader(r, _)) => Some(r as This),
+            _ => None,
+        };
+        let raised = crate::ambient::raise(list, light as This, depth);
         if raised {
             self.host_heaps = [0; 2];
             self.host_roots = [0; 2];
