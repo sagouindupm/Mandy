@@ -1129,6 +1129,105 @@ fn the_halves_of_a_console_wave_meet_alone_in_a_branch_its_group_does_not_share(
     eprintln!("ran on the hardware device: each console wave's own OR");
 }
 
+/// The allocation idiom on an LDS counter in a group of two console waves whose LDS is the
+/// host's whole 32 KB: thread 0 zeroes `lds[0]`; past the barrier, each wave's threads below
+/// s0 reserve slots there (the first lane's `ds_add_rtn_u32` of the count) and store t + 1 to
+/// theirs (`vfx_triangleClip:CS_CollectTriangles`). Each host wave reserves on its own; the
+/// thread relabelling borrows `lds[0]` before the title's code, as there is no dword left.
+#[test]
+fn an_lds_reservation_in_a_full_lds_is_made_by_each_host_wave() {
+    let code = [
+        0x7D84_0080, // v_cmp_eq_u32 vcc, 0, v0
+        0xBE8C_246A, // s_and_saveexec_b64 s[12:13], vcc
+        0x7E02_0280, // v_mov_b32 v1, 0
+        0xD834_0000,
+        0x0000_0101, // ds_write_b32 v1, v1
+        0xBEFE_040C, // s_mov_b64 exec, s[12:13]
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xBF8A_0000, // s_barrier
+        0x7D88_0000, // v_cmp_gt_u32 vcc, s0, v0
+        0xBE8C_246A, // s_and_saveexec_b64 s[12:13], vcc
+        0xBF88_0018, // s_cbranch_execz to the restore of EXEC
+        0xBE90_147E, // s_ff1_i32_b64 s16, exec
+        0xD765_0002,
+        0x0001_00C1, // v_mbcnt_lo_u32_b32 v2, -1, 0
+        0xD766_0004,
+        0x0002_04C1, // v_mbcnt_hi_u32_b32 v4, -1, v2
+        0xD765_0003,
+        0x0001_007E, // v_mbcnt_lo_u32_b32 v3, exec_lo, 0
+        0xD766_0002,
+        0x0002_067F, // v_mbcnt_hi_u32_b32 v2, exec_hi, v3
+        0xBE8E_047E, // s_mov_b64 s[14:15], exec
+        0x7D24_0810, // v_cmpx_eq_i32 exec, s16, v4
+        0xBE94_100E, // s_bcnt1_i32_b64 s20, s[14:15]
+        0x7E06_0280, // v_mov_b32 v3, 0
+        0x7E08_0214, // v_mov_b32 v4, s20
+        0xD880_0000,
+        0x0300_0403, // ds_add_rtn_u32 v3, v3, v4
+        0xBEFE_040E, // s_mov_b64 exec, s[14:15]
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0x7E26_0503, // v_readfirstlane_b32 s19, v3
+        0x4A04_0413, // v_add_nc_u32 v2, s19, v2
+        0x3404_0482, // v_lshlrev_b32 v2, 2, v2
+        0x4A00_0081, // v_add_nc_u32 v0, 1, v0
+        0x38 << 26 | 0x1C << 18 | 1 << 12,
+        0x80 << 24 | 2 << 16 | 2, // buffer_store_dword v0, v2, s[8:11], 0 offen
+        0xBEFE_040C, // s_mov_b64 exec, s[12:13]
+    ];
+    let mut native = native_of(&code, true, 128);
+    // (5 user SGPRs, 32 KB of LDS)
+    native.io = StageIo::Cs(ComputeIo { rsrc2: 5 << 1 | 64 << 15, threads: [128, 1, 1] });
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let st = structure::structure(&p).expect("structure");
+    let io = io::raise(&p, &native).expect("io");
+    let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("res");
+    let empty_bytes = crate::dxbc::build(&[]);
+    let empty = crate::Container::parse(&empty_bytes).unwrap();
+    let was = lower::TEST_HOST_WAVE.replace(Some(32));
+    let r = super::emit_sized(&empty, &native, &p, &st, &io, &res);
+    lower::TEST_HOST_WAVE.set(was);
+    let (shader, wave) = r.expect("emit on a 32-lane host");
+    assert_eq!(wave, Some(32));
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        v.validate(&mut shader.dxil.clone()).expect("DXIL validation failed");
+    }
+    let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(host) = Host::new(false) else {
+        eprintln!("no SM 6.6 hardware device; not run");
+        return;
+    };
+    let Ok((root, pso)) = host.compute_pipeline(&shader) else {
+        eprintln!("the hardware device does not take this program (waves of 32?); not run");
+        return;
+    };
+    for below in [128u32, 100, 64, 37, 1] {
+        let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+        for u in &shader.user_data {
+            if let (RootType::Constants, 0, 0) = (u.root, u.slot, u.dword) {
+                ud[u.index as usize] = below;
+            }
+        }
+        let out = host
+            .dispatch(
+                &root,
+                &pso,
+                &Dispatch {
+                    roots: vec![(0, Root::Constants(ud))],
+                    views: &[View::RawUav(128)],
+                    samplers: &[],
+                    groups: [1, 1, 1],
+                },
+            )
+            .unwrap_or_else(|e| panic!("dispatch failed: {e}"));
+        // the slots 0..s0, each taken once (in some order), and nothing past them
+        let mut got = out[0][..below as usize].to_vec();
+        got.sort_unstable();
+        assert_eq!(got, (1..=below).collect::<Vec<_>>(), "{below} threads reserving");
+        assert!(out[0][below as usize..128].iter().all(|&x| x == 0), "{below} threads reserving");
+    }
+    eprintln!("ran on the hardware device: every slot taken once");
+}
+
 /// The ray-tracing builder's scans refuse on `v_readfirstlane_b32` under a
 /// per-lane branch: the cross-lane retry ([`super::widen`]) has to take the
 /// branch around it wave-wide so the two host waves meet at the exchange
