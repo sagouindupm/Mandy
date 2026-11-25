@@ -617,6 +617,42 @@ static DELETE: u8 = 0;
 static READ: u8 = 0;
 static SUBMIT: u8 = 0;
 
+fn open_at(saves: &Path, config: *const c_char) -> Result<*mut Provider, HRESULT> {
+    if saves.parent().is_none_or(|p| p.as_os_str().is_empty()) {
+        return Err(NO_ACCESS);
+    }
+    Provider::open(saves, text(config).as_deref()).map(give)
+}
+
+fn remaining_quota(provider: *const Provider) -> Result<i64, HRESULT> {
+    get(provider)
+        .ok_or(E_INVALIDARG)
+        .map(|p| p.remaining() as i64)
+}
+
+fn remove_container(provider: *const Provider, name: *const c_char) -> HRESULT {
+    match (get(provider), text(name)) {
+        (Some(p), Some(name)) if valid_container(&name) => delete(&p.root, &name),
+        (Some(_), Some(_)) => INVALID_CONTAINER_NAME,
+        _ => E_INVALIDARG,
+    }
+}
+
+extern "system" fn initialize(
+    _: This,
+    _user: *const c_void,
+    config: *const c_char,
+    _sync_on_demand: bool,
+    out: *mut *mut Provider,
+) -> HRESULT {
+    if out.is_null() {
+        return E_INVALIDARG;
+    }
+    match open_at(&runtime::title().saves(), config) {
+        Ok(provider) => put(out, provider),
+        Err(hr) => hr,
+    }
+}
 extern "system" fn initialize_async(
     _: This,
     _user: *const c_void,
@@ -624,12 +660,7 @@ extern "system" fn initialize_async(
     _sync_on_demand: bool,
     block: *mut AsyncBlock,
 ) -> HRESULT {
-    let saves = runtime::title().saves();
-    let result = if saves.parent().is_none_or(|p| p.as_os_str().is_empty()) {
-        Err(NO_ACCESS)
-    } else {
-        Provider::open(&saves, text(config).as_deref()).map(|p| xasync::bytes(give(p)))
-    };
+    let result = open_at(&runtime::title().saves(), config).map(xasync::bytes);
     xasync::finished_with(block, (&raw const INIT).cast(), result)
 }
 extern "system" fn initialize_result(
@@ -643,31 +674,41 @@ extern "system" fn close_provider(_: This, provider: *mut Provider) {
     take(provider);
 }
 
+extern "system" fn quota(_: This, provider: *const Provider, out: *mut i64) -> HRESULT {
+    if out.is_null() {
+        return E_INVALIDARG;
+    }
+    match remaining_quota(provider) {
+        Ok(bytes) => put(out, bytes),
+        Err(hr) => hr,
+    }
+}
 extern "system" fn quota_async(
     _: This,
     provider: *const Provider,
     block: *mut AsyncBlock,
 ) -> HRESULT {
-    let result = get(provider)
-        .ok_or(E_INVALIDARG)
-        .map(|p| xasync::bytes(p.remaining() as i64));
+    let result = remaining_quota(provider).map(xasync::bytes);
     xasync::finished_with(block, (&raw const QUOTA_CALL).cast(), result)
 }
 extern "system" fn quota_result(_: This, block: *mut AsyncBlock, out: *mut i64) -> HRESULT {
     xasync::result(block, (&raw const QUOTA_CALL).cast(), out)
 }
 
+extern "system" fn delete_container(
+    _: This,
+    provider: *const Provider,
+    name: *const c_char,
+) -> HRESULT {
+    remove_container(provider, name)
+}
 extern "system" fn delete_async(
     _: This,
     provider: *const Provider,
     name: *const c_char,
     block: *mut AsyncBlock,
 ) -> HRESULT {
-    let hr = match (get(provider), text(name)) {
-        (Some(p), Some(name)) if valid_container(&name) => delete(&p.root, &name),
-        (Some(_), Some(_)) => INVALID_CONTAINER_NAME,
-        _ => E_INVALIDARG,
-    };
+    let hr = remove_container(provider, name);
     xasync::finished(block, (&raw const DELETE).cast(), hr)
 }
 extern "system" fn delete_result(_: This, block: *mut AsyncBlock) -> HRESULT {
@@ -695,15 +736,26 @@ extern "system" fn container_info(
 }
 
 extern "system" fn enumerate_containers(
+    this: This,
+    provider: *const Provider,
+    context: *mut c_void,
+    callback: Option<ContainerCallback>,
+) -> HRESULT {
+    enumerate_containers_by_name(this, provider, std::ptr::null(), context, callback)
+}
+
+extern "system" fn enumerate_containers_by_name(
     _: This,
     provider: *const Provider,
+    prefix: *const c_char,
     context: *mut c_void,
     callback: Option<ContainerCallback>,
 ) -> HRESULT {
     let (Some(p), Some(callback)) = (get(provider), callback) else {
         return E_INVALIDARG;
     };
-    report(&p.root, |_| true, context, callback);
+    let prefix = text(prefix).unwrap_or_default();
+    report(&p.root, |n| n.starts_with(&prefix), context, callback);
     S_OK
 }
 
@@ -724,6 +776,15 @@ extern "system" fn create_container(
 }
 extern "system" fn close_container(_: This, container: *mut Container) {
     take(container);
+}
+
+extern "system" fn enumerate_all_blobs(
+    this: This,
+    container: *const Container,
+    context: *mut c_void,
+    callback: Option<BlobCallback>,
+) -> HRESULT {
+    enumerate_blobs(this, container, std::ptr::null(), context, callback)
 }
 
 extern "system" fn enumerate_blobs(
@@ -893,6 +954,10 @@ extern "system" fn delete_blob(_: This, update: *mut Update, name: *const c_char
     }
 }
 
+extern "system" fn submit(_: This, update: *const Update) -> HRESULT {
+    get(update).map_or(E_INVALIDARG, Update::submit)
+}
+
 extern "system" fn submit_async(_: This, update: *const Update, block: *mut AsyncBlock) -> HRESULT {
     let hr = get(update).map_or(E_INVALIDARG, Update::submit);
     xasync::finished(block, (&raw const SUBMIT).cast(), hr)
@@ -906,33 +971,33 @@ static VTABLE: Methods<30> = Methods([
     missing::<0> as *const (),
     add_ref as *const (),
     add_ref as *const (),
-    missing::<3> as *const (),         // 0x18 initialize (blocking)
-    initialize_async as *const (),     // 0x20
-    initialize_result as *const (),    // 0x28
-    close_provider as *const (),       // 0x30
-    missing::<7> as *const (),         // 0x38 remaining quota (blocking)
-    quota_async as *const (),          // 0x40
-    quota_result as *const (),         // 0x48
-    missing::<10> as *const (),        // 0x50 delete (blocking)
-    delete_async as *const (),         // 0x58
-    delete_result as *const (),        // 0x60
-    container_info as *const (),       // 0x68
-    enumerate_containers as *const (), // 0x70
-    missing::<15> as *const (),        // 0x78 by name prefix
-    create_container as *const (),     // 0x80
-    close_container as *const (),      // 0x88
-    missing::<18> as *const (),        // 0x90 all blob info
-    enumerate_blobs as *const (),      // 0x98 by name prefix
-    read_blobs as *const (),           // 0xa0
-    read_async as *const (),           // 0xa8
-    read_result as *const (),          // 0xb0
-    create_update as *const (),        // 0xb8
-    close_update as *const (),         // 0xc0
-    write_blob as *const (),           // 0xc8
-    delete_blob as *const (),          // 0xd0
-    missing::<27> as *const (),        // 0xd8 submit (blocking)
-    submit_async as *const (),         // 0xe0
-    submit_result as *const (),        // 0xe8
+    initialize as *const (),                   // 0x18
+    initialize_async as *const (),             // 0x20
+    initialize_result as *const (),            // 0x28
+    close_provider as *const (),               // 0x30
+    quota as *const (),                        // 0x38
+    quota_async as *const (),                  // 0x40
+    quota_result as *const (),                 // 0x48
+    delete_container as *const (),             // 0x50
+    delete_async as *const (),                 // 0x58
+    delete_result as *const (),                // 0x60
+    container_info as *const (),               // 0x68
+    enumerate_containers as *const (),         // 0x70
+    enumerate_containers_by_name as *const (), // 0x78
+    create_container as *const (),             // 0x80
+    close_container as *const (),              // 0x88
+    enumerate_all_blobs as *const (),          // 0x90
+    enumerate_blobs as *const (),              // 0x98 by name prefix
+    read_blobs as *const (),                   // 0xa0
+    read_async as *const (),                   // 0xa8
+    read_result as *const (),                  // 0xb0
+    create_update as *const (),                // 0xb8
+    close_update as *const (),                 // 0xc0
+    write_blob as *const (),                   // 0xc8
+    delete_blob as *const (),                  // 0xd0
+    submit as *const (),                       // 0xd8
+    submit_async as *const (),                 // 0xe0
+    submit_result as *const (),                // 0xe8
 ]);
 
 #[cfg(test)]
@@ -1350,6 +1415,201 @@ mod tests {
         );
         assert!(found.is_empty());
         close_container(this, container);
+        close_provider(this, provider);
+    }
+
+    #[test]
+    fn blocking_and_prefix_methods_work() {
+        let this: This = &OBJECT;
+        type Init = extern "system" fn(
+            This,
+            *const c_void,
+            *const c_char,
+            bool,
+            *mut *mut Provider,
+        ) -> HRESULT;
+        type Quota = extern "system" fn(This, *const Provider, *mut i64) -> HRESULT;
+        type DeleteContainer = extern "system" fn(This, *const Provider, *const c_char) -> HRESULT;
+        type ByName = extern "system" fn(
+            This,
+            *const Provider,
+            *const c_char,
+            *mut c_void,
+            Option<ContainerCallback>,
+        ) -> HRESULT;
+        type AllBlobs = extern "system" fn(
+            This,
+            *const Container,
+            *mut c_void,
+            Option<BlobCallback>,
+        ) -> HRESULT;
+        type Create = extern "system" fn(
+            This,
+            *const Provider,
+            *const c_char,
+            *mut *mut Container,
+        ) -> HRESULT;
+        type Update_ =
+            extern "system" fn(This, *const Container, *const c_char, *mut *mut Update) -> HRESULT;
+        type Write =
+            extern "system" fn(This, *mut Update, *const c_char, *const u8, usize) -> HRESULT;
+        type Submit = extern "system" fn(This, *const Update) -> HRESULT;
+
+        let init = method::<Init>(&OBJECT, 0x18);
+        assert_eq!(
+            init(this, std::ptr::null(), c"scid".as_ptr(), false, std::ptr::null_mut()),
+            E_INVALIDARG
+        );
+        assert_eq!(open_at(Path::new(""), c"scid".as_ptr()).err(), Some(NO_ACCESS));
+
+        let saves = tempfile::tempdir().unwrap();
+        let provider = open_at(saves.path(), c"scid".as_ptr()).unwrap();
+        let create = method::<Create>(&OBJECT, 0x80);
+        let begin_update = method::<Update_>(&OBJECT, 0xb8);
+        let write = method::<Write>(&OBJECT, 0xc8);
+        let submit_now = method::<Submit>(&OBJECT, 0xd8);
+        assert_eq!(submit_now(this, std::ptr::null()), E_INVALIDARG);
+
+        for (cname, disp, blobs) in [
+            (
+                c"Slot_1",
+                c"First",
+                [
+                    (c"world".as_ptr(), b"hello".as_slice()),
+                    (c"player.dat".as_ptr(), b"xy".as_slice()),
+                ]
+                .as_slice(),
+            ),
+            (
+                c"Slot_2",
+                c"Second",
+                [(c"hdr".as_ptr(), b"z".as_slice())].as_slice(),
+            ),
+            (
+                c"Profile/Main",
+                c"Profile",
+                [(c"p".as_ptr(), b"q".as_slice())].as_slice(),
+            ),
+        ] {
+            let mut container = std::ptr::null_mut();
+            assert_eq!(create(this, provider, cname.as_ptr(), &mut container), S_OK);
+            let mut update = std::ptr::null_mut();
+            assert_eq!(
+                begin_update(this, container, disp.as_ptr(), &mut update),
+                S_OK
+            );
+            for &(bname, data) in blobs {
+                assert_eq!(write(this, update, bname, data.as_ptr(), data.len()), S_OK);
+            }
+            assert_eq!(submit_now(this, update), S_OK);
+            close_update(this, update);
+            close_container(this, container);
+        }
+
+        extern "system" fn seen_container(
+            info: *const ContainerInfo,
+            context: *mut c_void,
+        ) -> bool {
+            // SAFETY: valid during the callback; the context is the test's vector.
+            let (info, out) = unsafe { (&*info, &mut *context.cast::<Vec<String>>()) };
+            out.push(text(info.name).unwrap());
+            true
+        }
+        let by_name = method::<ByName>(&OBJECT, 0x78);
+        let mut names: Vec<String> = Vec::new();
+        assert_eq!(
+            by_name(
+                this,
+                std::ptr::null(),
+                c"Slot_".as_ptr(),
+                (&raw mut names).cast(),
+                Some(seen_container)
+            ),
+            E_INVALIDARG
+        );
+        assert_eq!(
+            by_name(this, provider, c"Slot_".as_ptr(), (&raw mut names).cast(), None),
+            E_INVALIDARG
+        );
+        for (prefix, expected) in [
+            (c"Slot_".as_ptr(), ["Slot_1", "Slot_2"].as_slice()),
+            (c"Nope".as_ptr(), [].as_slice()),
+            (c"".as_ptr(), ["Profile/Main", "Slot_1", "Slot_2"].as_slice()),
+            (std::ptr::null(), ["Profile/Main", "Slot_1", "Slot_2"].as_slice()),
+        ] {
+            names.clear();
+            assert_eq!(
+                by_name(this, provider, prefix, (&raw mut names).cast(), Some(seen_container)),
+                S_OK
+            );
+            assert_eq!(names, expected);
+        }
+
+        extern "system" fn seen_blob(info: *const BlobInfo, context: *mut c_void) -> bool {
+            // SAFETY: valid during the callback; the context is the test's vector.
+            let (info, out) = unsafe { (&*info, &mut *context.cast::<Vec<(String, u32)>>()) };
+            out.push((text(info.name).unwrap(), info.size));
+            true
+        }
+        let all_blobs = method::<AllBlobs>(&OBJECT, 0x90);
+        let mut container = std::ptr::null_mut();
+        assert_eq!(create(this, provider, c"Slot_1".as_ptr(), &mut container), S_OK);
+        let mut blobs: Vec<(String, u32)> = Vec::new();
+        assert_eq!(
+            all_blobs(
+                this,
+                std::ptr::null(),
+                (&raw mut blobs).cast(),
+                Some(seen_blob)
+            ),
+            E_INVALIDARG
+        );
+        assert_eq!(
+            all_blobs(this, container, (&raw mut blobs).cast(), None),
+            E_INVALIDARG
+        );
+        assert_eq!(
+            all_blobs(this, container, (&raw mut blobs).cast(), Some(seen_blob)),
+            S_OK
+        );
+        assert_eq!(blobs, [("player.dat".into(), 2), ("world".into(), 5)]);
+        close_container(this, container);
+
+        let quota_now = method::<Quota>(&OBJECT, 0x38);
+        let mut left_before = 0i64;
+        assert_eq!(quota_now(this, std::ptr::null(), &mut left_before), E_INVALIDARG);
+        assert_eq!(quota_now(this, provider, std::ptr::null_mut()), E_INVALIDARG);
+        assert_eq!(quota_now(this, provider, &mut left_before), S_OK);
+        assert!(left_before as u64 <= QUOTA - 9);
+
+        let del_now = method::<DeleteContainer>(&OBJECT, 0x50);
+        assert_eq!(
+            del_now(this, std::ptr::null(), c"Slot_1".as_ptr()),
+            E_INVALIDARG
+        );
+        assert_eq!(del_now(this, provider, std::ptr::null()), E_INVALIDARG);
+        assert_eq!(
+            del_now(this, provider, c"bad name".as_ptr()),
+            INVALID_CONTAINER_NAME
+        );
+        assert_eq!(del_now(this, provider, c"Slot_1".as_ptr()), S_OK);
+
+        names.clear();
+        assert_eq!(
+            by_name(
+                this,
+                provider,
+                c"Slot_".as_ptr(),
+                (&raw mut names).cast(),
+                Some(seen_container)
+            ),
+            S_OK
+        );
+        assert_eq!(names, ["Slot_2"]);
+
+        let mut left_after = 0i64;
+        assert_eq!(quota_now(this, provider, &mut left_after), S_OK);
+        assert!(left_after >= left_before);
         close_provider(this, provider);
     }
 }
