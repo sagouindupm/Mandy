@@ -792,18 +792,16 @@ struct Guards {
     /// Blocks we made read-only.
     protected: RangeSet,
     /// Blocks that need no work on the next check: protected blocks not
-    /// written since a copy took them, plus unmapped placeholder/free holes
+    /// written since a copy took them, plus unmapped placeholder holes
     /// ([`Self::holes`]) that cannot become mapped without
     /// [`title_memory_remapped`].
     clean: RangeSet,
-    /// Reserved view blocks (`MEM_MAPPED` + `MEM_RESERVE`) copied as zeros.
-    /// Ordinary commits need no runtime mapping notification, so these are
-    /// re-checked on each asking rather than added to `clean`.
+    /// Uncommitted blocks copied as zeros that can gain pages without a
+    /// mapping notification. Each asking checks them again.
     absent: RangeSet,
-    /// Unmapped placeholder or free holes between views copied as zeros.
-    /// They cannot be committed in place without `xmem` mapping a view and
-    /// calling [`title_memory_remapped`], so they are also placed in `clean`
-    /// and skipped in O(log intervals) with no `VirtualQuery` syscalls.
+    /// Placeholder holes between views copied as zeros. The runtime calls
+    /// [`title_memory_remapped`] when it maps a view there, so these blocks
+    /// are also placed in `clean`.
     holes: RangeSet,
     /// Blocks whose physical page was guarded together with its other views
     /// (those views' blocks are in it too): a write to one opens them all.
@@ -1069,17 +1067,15 @@ fn protect_here(g: &mut Guards, from: usize, to: usize) {
         let n = unsafe { VirtualQuery((block * BLOCK) as *const _, &mut info, size_of_val(&info)) };
         if n != 0 {
             let until = ((info.BaseAddress as usize).saturating_add(info.RegionSize) / BLOCK).min(to);
-            if matches!(info.State, MEM_RESERVE | MEM_FREE) {
-                if block < until {
-                    if info.State == MEM_FREE || info.Type != MEM_MAPPED {
-                        g.holes.insert_range(block, until);
-                        g.clean.insert_range(block, until);
-                    } else {
-                        g.absent.insert_range(block, until);
-                    }
-                    block = until;
-                    continue;
+            if matches!(info.State, MEM_RESERVE | MEM_FREE) && block < until {
+                if info.State == MEM_RESERVE && info.Type != MEM_MAPPED && in_placeholder(block * BLOCK) {
+                    g.holes.insert_range(block, until);
+                    g.clean.insert_range(block, until);
+                } else {
+                    g.absent.insert_range(block, until);
                 }
+                block = until;
+                continue;
             } else if info.State == MEM_COMMIT && block < until && set(block, until) {
                 note(g, block, until);
                 block = until;
@@ -1090,6 +1086,23 @@ fn protect_here(g: &mut Guards, from: usize, to: usize) {
             note(g, block, block + 1);
         }
         block += 1;
+    }
+}
+
+/// Whether `at` lies inside a placeholder reservation.
+fn in_placeholder(at: usize) -> bool {
+    use windows_sys::Win32::System::Memory::{
+        MemoryRegionInfo, QueryVirtualMemoryInformation, WIN32_MEMORY_REGION_INFORMATION,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    const PLACEHOLDER_RESERVATION: u32 = 1 << 8;
+    let mut info = WIN32_MEMORY_REGION_INFORMATION::default();
+    // SAFETY: our process and an output buffer of the expected type and size.
+    unsafe {
+        QueryVirtualMemoryInformation(
+            GetCurrentProcess(), at as _, MemoryRegionInfo, (&raw mut info).cast(),
+            size_of_val(&info), std::ptr::null_mut(),
+        ) != 0 && info.Anonymous.Flags & PLACEHOLDER_RESERVATION != 0
     }
 }
 
@@ -1399,6 +1412,34 @@ pub fn title_memory_remapped(at: usize, len: usize) {
     }
 }
 
+/// Commits title memory while the guards are locked. A commit can change
+/// the protection of pages already present, so those guards are opened first.
+pub fn commit_title_memory(
+    at: usize,
+    len: usize,
+    commit: impl FnOnce() -> *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    let mut g = guards();
+    if at != 0 {
+        open(&mut g, at, at.saturating_add(len));
+    }
+    let committed = commit();
+    if !committed.is_null() && len != 0 {
+        let at = if at == 0 { committed as usize } else { at };
+        title_memory_committed(&mut g, at / BLOCK, at.saturating_add(len).div_ceil(BLOCK));
+    }
+    committed
+}
+
+/// Clears cached guard results for the committed blocks.
+fn title_memory_committed(g: &mut Guards, lo: usize, hi: usize) {
+    if g.overlaps_any(lo, hi) {
+        g.holes.remove_range(lo, hi);
+        g.clean.remove_range(lo, hi);
+        GUARD_GEN.fetch_add(1, Ordering::Release);
+    }
+}
+
 /// Registers the handler that takes writes to guarded blocks, once, ahead
 /// of the crash reporter's.
 fn install() {
@@ -1608,6 +1649,67 @@ mod tests {
             unsafe { (at as *mut u8).write_volatile(1) };
         }
         assert_eq!(refresh(), [early / PAGE, late / PAGE]);
+    }
+
+    #[test]
+    fn a_private_reservation_beside_a_view_is_checked_after_commit() {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Memory::{
+            CreateFileMappingW, MEM_PRESERVE_PLACEHOLDER, MEM_REPLACE_PLACEHOLDER,
+            MEM_RESERVE_PLACEHOLDER, MapViewOfFile3, PAGE_NOACCESS, UnmapViewOfFile, VirtualAlloc2,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        // SAFETY: two fresh adjacent placeholders. The first takes a view
+        // and the second becomes an ordinary private reservation.
+        unsafe {
+            let process = GetCurrentProcess();
+            let p = VirtualAlloc2(
+                process, std::ptr::null(), 2 * BLOCK, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+                PAGE_NOACCESS, std::ptr::null_mut(), 0,
+            ) as usize;
+            assert_ne!(p, 0);
+            let private = (p + BLOCK) as *mut std::ffi::c_void;
+            assert_ne!(VirtualFree(p as _, BLOCK, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), 0);
+            let section = CreateFileMappingW(
+                INVALID_HANDLE_VALUE, std::ptr::null(), PAGE_READWRITE, 0, BLOCK as u32, std::ptr::null(),
+            );
+            assert!(!section.is_null());
+            let view = MapViewOfFile3(
+                section, process, p as _, 0, BLOCK, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE,
+                std::ptr::null_mut(), 0,
+            );
+            CloseHandle(section);
+            assert_eq!(view.Value as usize, p);
+            assert_eq!(
+                VirtualAlloc2(
+                    process, private, BLOCK, MEM_RESERVE | MEM_REPLACE_PLACEHOLDER,
+                    PAGE_NOACCESS, std::ptr::null_mut(), 0,
+                ),
+                private
+            );
+            let ask = || guard(p, p + 2 * BLOCK).unwrap();
+            let first = ask();
+            let before = ask();
+            assert_eq!(VirtualAlloc(private, BLOCK, MEM_COMMIT, PAGE_READWRITE), private);
+            private.cast::<u8>().write_volatile(42);
+            let after = ask();
+            assert_eq!(
+                commit_title_memory(private as usize, BLOCK, || {
+                    VirtualAlloc(private, BLOCK, MEM_COMMIT, PAGE_READWRITE)
+                }),
+                private
+            );
+            private.cast::<u8>().write_volatile(43);
+            let after_recommit = ask();
+            title_memory_remapped(p, 2 * BLOCK);
+            UnmapViewOfFile(view);
+            VirtualFree(private, 0, MEM_RELEASE);
+            assert_eq!(first, [p / PAGE, private as usize / PAGE]);
+            assert!(before.is_empty());
+            assert_eq!(after, [private as usize / PAGE]);
+            assert_eq!(after_recommit, after);
+        }
     }
 
     /// A range of view memory whose first block is not mapped is a view

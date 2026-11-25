@@ -140,7 +140,7 @@ pub extern "system" fn XMemVirtualAlloc(
     }
     // SAFETY: the title's own arguments, cleaned of console bits; the
     // parameter points at `requirements`, which outlives the call.
-    let at = unsafe {
+    let mut alloc = || unsafe {
         VirtualAlloc2(
             GetCurrentProcess(),
             base,
@@ -154,6 +154,11 @@ pub extern "system" fn XMemVirtualAlloc(
             },
             constrained.into(),
         )
+    };
+    let at = if kind & MEM_COMMIT != 0 {
+        victory_gpu::commit_title_memory(base as usize, size, alloc)
+    } else {
+        alloc()
     };
     if base.is_null() {
         tracing::debug!(
