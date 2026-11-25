@@ -524,7 +524,12 @@ impl Update {
         }
         let display = self.display.as_deref();
         let display = display.or(current.as_ref().map(|v| v.display.as_str()));
-        let number = current.as_ref().map_or(1, |v| v.highest + 1);
+        // A stray `v18446744073709551615` is the highest number: nothing is above it, so the
+        // update is refused before anything is written or removed. `+ 1` wrapped to `v0`,
+        // which is not read, and then removed the committed version (#2497).
+        let Some(number) = current.as_ref().map_or(Some(1), |v| v.highest.checked_add(1)) else {
+            return NO_ACCESS;
+        };
         if let Err(e) = commit(&self.dir, number, &self.name, display.unwrap_or(""), &blobs) {
             return io_error(&self.dir, &e);
         }
@@ -1812,6 +1817,21 @@ mod tests {
             // Read again: the new version stays the container.
             assert_eq!(state(root), after, "{what}: second read");
         }
+    }
+
+    /// A stray folder with the highest version number leaves no number for an
+    /// update: it is refused, and the committed save stays readable (#2497).
+    #[test]
+    fn no_version_above_the_highest_number_is_refused_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(update(root, "one", &[("a", Some("old a")), ("b", Some("old b"))]), S_OK);
+        let slot = container_dir(root, "Slot");
+        std::fs::create_dir(slot.join(format!("v{}", u64::MAX))).unwrap();
+        assert_eq!(update(root, "two", &[("a", Some("new a"))]), NO_ACCESS);
+        assert_eq!(state(root), old_state());
+        assert!(slot.join("v1").is_dir());
+        assert!(!slot.join("v0").exists());
     }
 
     /// With no readable version at all, reads and updates fail and nothing
