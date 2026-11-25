@@ -480,14 +480,14 @@ pub(crate) fn let_go() -> [u64; 2] {
     [LET_GO[0].load(Relaxed), LET_GO[1].load(Relaxed)]
 }
 
-/// Lets go of the staging buffers no list recorded a use of for `IDLE_MS`
-/// and `IDLE_FRAMES` frames and no list holds: a staging buffer is system memory the size of its
+/// Lets go of staging buffers no list holds or has used in `idle_ms`
+/// milliseconds and four frames. A staging buffer is system memory the size of its
 /// texture, kept so that an unchanged texture is not uploaded again, and
 /// those of textures no longer sampled were kept for the run (2,246 of
 /// them, 2.1 GB, at the end of run 24). The next list that samples such a
 /// texture makes a staging buffer anew, detiles and uploads once more.
 /// Called before a submission starts, by the thread that submits.
-pub(crate) fn let_go_idle() {
+pub(crate) fn let_go_idle(idle_ms: u64) {
     use std::sync::atomic::Ordering::Relaxed;
     const IDLE_FRAMES: u64 = 4;
     let mut map = STAGING.lock().unwrap_or_else(|e| e.into_inner());
@@ -497,7 +497,6 @@ pub(crate) fn let_go_idle() {
     if map.is_empty() {
         return;
     }
-    let idle_ms = crate::host::ram_idle_ms(crate::host::available_physical_ram());
     // A list that recorded an upload or a check holds the staging until it
     // is reset: one only the table holds is named by no list, recorded or
     // running.

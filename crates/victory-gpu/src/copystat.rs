@@ -473,18 +473,6 @@ fn process_memory() -> (u64, u64) {
     (c.WorkingSetSize as u64, c.PagefileUsage as u64)
 }
 
-/// The PC's memory in bytes: physical memory free, and what is left to
-/// commit.
-fn system_memory() -> (u64, u64) {
-    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-    // SAFETY: plain data the call fills in.
-    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
-    m.dwLength = size_of::<MEMORYSTATUSEX>() as u32;
-    // SAFETY: a sized structure.
-    unsafe { GlobalMemoryStatusEx(&mut m) };
-    (m.ullAvailPhys, m.ullAvailPageFile)
-}
-
 /// Whether the address space is walked for the memory map line
 /// ([`log_memory_map`]). On by default (this module is in diagnostics
 /// builds only); `VICTORY_MEMORY_MAP=0` leaves the walk out.
@@ -684,7 +672,7 @@ fn log_memory() {
     use std::sync::atomic::Ordering::Relaxed;
     let mb = |v: u64| v as f64 / (1 << 20) as f64;
     let (working, private) = process_memory();
-    let (free, left) = system_memory();
+    let (free, left) = crate::host::available_memory().unwrap_or_default();
     let copies = crate::shadow::memory();
     let staged = crate::texture::memory();
     let textures = [0, 1].map(|i| crate::resource::HOST_TEXTURES[i].load(Relaxed));

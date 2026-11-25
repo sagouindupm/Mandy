@@ -106,15 +106,15 @@ pub(crate) fn long_ago(moment: u64, ms: u64, frames: u64) -> bool {
     (now >> 32).saturating_sub(moment >> 32) >= frames && tenths * 100 >= ms
 }
 
-/// Available physical RAM on the host in bytes, from `GlobalMemoryStatusEx`.
-pub(crate) fn available_physical_ram() -> Option<u64> {
+/// Available physical RAM and how many more bytes this process can commit.
+pub(crate) fn available_memory() -> Option<(u64, u64)> {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     // SAFETY: plain data the call fills in.
     let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
     m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
     // SAFETY: a sized structure.
     let ok = unsafe { GlobalMemoryStatusEx(&mut m) } != 0;
-    ok.then_some(m.ullAvailPhys)
+    ok.then_some((m.ullAvailPhys, m.ullAvailPageFile))
 }
 
 /// Effective idle timeout (in milliseconds) for VRAM-backed host textures,
@@ -140,15 +140,14 @@ pub(crate) fn vram_idle_ms(video_memory: Option<[u64; 4]>) -> u64 {
     }
 }
 
-/// Effective idle timeout (in milliseconds) for system-RAM caches (staging
-/// buffers, loose shadows, and the mapped pipeline library), scaled down
-/// when free physical RAM is low. Never returns less than 2,000 ms.
-pub(crate) fn ram_idle_ms(avail_phys: Option<u64>) -> u64 {
+/// Scale a cache's idle timeout down with available memory. The minimum
+/// timeout is 2,000 ms.
+pub(crate) fn ram_idle_ms(available: Option<u64>) -> u64 {
     const GIB: u64 = 1024 * 1024 * 1024;
     const NORMAL_MS: u64 = 10_000;
     const MODERATE_MS: u64 = 5_000;
     const HIGH_MS: u64 = 2_000;
-    let Some(avail) = avail_phys else {
+    let Some(avail) = available else {
         return NORMAL_MS;
     };
     if avail < 2 * GIB {
@@ -158,6 +157,11 @@ pub(crate) fn ram_idle_ms(avail_phys: Option<u64>) -> u64 {
     } else {
         NORMAL_MS
     }
+}
+
+/// Staging and shadow buffers need both physical RAM and room to commit.
+fn committed_cache_idle_ms(available: Option<(u64, u64)>) -> u64 {
+    ram_idle_ms(available.map(|(physical, commit)| physical.min(commit)))
 }
 
 /// How many references are held on a host object (its COM count): ours
@@ -199,8 +203,9 @@ fn sweep() {
         return;
     }
     crate::pipeline::trim_library();
-    crate::shadow::let_go_idle();
-    crate::texture::let_go_idle();
+    let idle_ms = committed_cache_idle_ms(available_memory());
+    crate::shadow::let_go_idle(idle_ms);
+    crate::texture::let_go_idle(idle_ms);
     crate::resource::let_go_idle();
 }
 
@@ -7606,5 +7611,16 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
         assert_eq!(ram_idle_ms(Some(0)), 2_000);
         // Missing falls back to normal
         assert_eq!(ram_idle_ms(None), 10_000);
+    }
+
+    #[test]
+    fn committed_caches_expire_sooner_when_commit_is_low() {
+        use super::committed_cache_idle_ms;
+        let gib = 1 << 30;
+        assert_eq!(committed_cache_idle_ms(Some((8 * gib, 400 << 20))), 2_000);
+        assert_eq!(committed_cache_idle_ms(Some((8 * gib, 2 * gib))), 5_000);
+        assert_eq!(committed_cache_idle_ms(Some((gib, 8 * gib))), 2_000);
+        assert_eq!(committed_cache_idle_ms(Some((8 * gib, 4 * gib))), 10_000);
+        assert_eq!(committed_cache_idle_ms(None), 10_000);
     }
 }
