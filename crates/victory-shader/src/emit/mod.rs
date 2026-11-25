@@ -209,6 +209,7 @@ pub fn translation_fingerprint() -> Vec<u8> {
         out.push(0);
     }
     out.extend_from_slice(&lower::host_max_wave().to_le_bytes());
+    out.push(u8::from(lower::host_rovs()));
     out.extend_from_slice(&shader::view_heap_limit().to_le_bytes());
     out.extend_from_slice(&loop_limit().to_le_bytes());
     out.push(group_sync());

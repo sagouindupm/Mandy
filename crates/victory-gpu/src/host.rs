@@ -636,6 +636,15 @@ fn create() -> windows::core::Result<Host> {
             tracing::info!(min = o1.WaveLaneCountMin, max = o1.WaveLaneCountMax, "host wave lanes");
             victory_shader::emit::set_host_max_wave(o1.WaveLaneCountMax);
         }
+        // rasterizer-ordered views: the console's primitive-ordered pixel sections run on them
+        let mut o0 = D3D12_FEATURE_DATA_D3D12_OPTIONS::default();
+        if device
+            .CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, (&raw mut o0).cast(), size_of_val(&o0) as u32)
+            .is_ok()
+        {
+            tracing::info!(rovs = o0.ROVsSupported.as_bool(), "host rasterizer-ordered views");
+            victory_shader::emit::set_host_rovs(o0.ROVsSupported.as_bool());
+        }
         let messages = debug
             .then(|| device.cast::<ID3D12InfoQueue>().ok())
             .flatten();
