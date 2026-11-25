@@ -2818,17 +2818,24 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
                     _ => None,
                 };
             };
-            // The first such views of depth textures are logged as the
-            // title describes them (format, dimension, then mip, slices and
-            // plane): they say which planes shaders write, and as what.
+            // Views of depth textures are logged once each, as the title
+            // describes them (format, dimension, then mip, first slice,
+            // slices and plane): they say which planes shaders write, and
+            // as what. The last four words of the title's record lie past a
+            // texture view's part of it and hold whatever the title's stack
+            // did (0x7ffe...): not printed. The same views are made again
+            // every frame, so logging each made the log a few lines a frame.
             if crate::resource::depth_and_unordered(resource) {
-                static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 512 {
-                    tracing::info!(
-                        ?resource,
-                        view = ?desc,
-                        "unordered access view of a depth texture"
-                    );
+                type Seen = std::collections::HashSet<(usize, Option<[u32; 6]>)>;
+                static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
+                let words = desc.as_ref().map(|d| [d[0], d[1], d[2], d[3], d[4], d[5]]);
+                let new = {
+                    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+                    let seen = seen.get_or_insert_with(Seen::new);
+                    seen.len() < 256 && seen.insert((resource as usize, words))
+                };
+                if new {
+                    tracing::info!(?resource, view = ?words, "unordered access view of a depth texture (first time for this view)");
                 }
             }
             let mut desc = desc.as_ref().map(uav_desc);
