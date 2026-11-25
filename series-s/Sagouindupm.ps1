@@ -82,14 +82,9 @@ function Initialize-Shaders($s) {
     }
     Set-GameEnv
     $env:VICTORY_HOST_WAVE = '32'; $env:VICTORY_HOST_ROVS = '1'; $env:VICTORY_VIEW_LIMIT = '999999'
-    $list = Join-Path $Logs 'shaders_liste.txt'; $hashes = Join-Path $Home_ 'shaders.txt'
-    Write-Host "`n1/2 Recensement des shaders (quelques minutes)..." -ForegroundColor Magenta
-    & $Exe translate $s.shaders_dir --list *> $list
-    $all = Select-String -Path $list -Pattern '#([0-9a-f]{16})' -AllMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-    $all | Set-Content -Encoding ascii $hashes
-    Write-Host "   $($all.Count) shaders trouvés."
-    Write-Host '2/2 Traduction à l''avance (20 à 40 minutes, le PC sera très occupé)...' -ForegroundColor Magenta
-    & $Exe translate $s.shaders_dir --warm $hashes *> (Join-Path $Logs 'shaders_traduction.txt')
+    Write-Host "`nTraduction de tous les shaders à l'avance (20 à 40 minutes, le PC sera très occupé)..." -ForegroundColor Magenta
+    Write-Host "Vous pouvez l'arrêter (Ctrl+C) et la reprendre plus tard : ce qui est fait reste en cache."
+    & $Exe translate $s.shaders_dir --warm all --jobs ([Math]::Max(2, [Environment]::ProcessorCount - 2)) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt') | Where-Object { $_ -match 'warm-up' }
     if ($LASTEXITCODE -eq 0) { $s.shaders_ready = $true; Save-Settings $s; Write-Host 'Shaders prêts !' -ForegroundColor Green }
     else { Write-Host "La traduction s'est arrêtée (code $LASTEXITCODE), voir $Logs." -ForegroundColor Red }
 }
