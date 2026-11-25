@@ -681,6 +681,14 @@ fn emit_program(
             _ => 0,
         };
     }
+    if native.stage == HwStage::Ms
+        && let (Some(psv), Some(osg)) = (c.part(FourCC::PSV0), c.part(FourCC::OSG1))
+        && let Some(modes) = container::mesh_output_modes(psv.data, osg.data, &outputs)
+    {
+        for (output, mode) in outputs.iter_mut().zip(modes) {
+            output.interp = mode;
+        }
+    }
     // With a conservative depth output (SV_DepthLessEqual, GreaterEqual) DXIL
     // wants the position centroid (or per sample), as DXC declares it then.
     if pixel && outputs.iter().any(|e| matches!(e.kind, 18 | 19)) {

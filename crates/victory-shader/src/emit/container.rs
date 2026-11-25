@@ -107,6 +107,109 @@ impl SigElement {
     }
 }
 
+/// Read the mesh shader's declared interpolation instead of deriving it from the value type.
+/// The vertex outputs follow the input records in PSV0. OSG1 can list the same elements
+/// in a different order, so apply the modes only after matching the two descriptions.
+pub(super) fn mesh_output_modes(psv: &[u8], osg: &[u8], outputs: &[SigElement]) -> Option<Vec<u8>> {
+    use crate::dxbc::u32_at;
+
+    fn word(bytes: &[u8]) -> Option<usize> {
+        Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize)
+    }
+
+    fn table(bytes: &[u8], stride: usize) -> Option<(&[u8], &[u8])> {
+        bytes
+            .get(4..)?
+            .split_at_checked(word(bytes)?.checked_mul(stride)?)
+    }
+
+    let (info, mut tables) = table(psv, 1)?;
+    if info.len() < 36 || info[24] != 13 {
+        return None;
+    }
+    let [inputs, vertices, primitives] = [info[28], info[29], info[30]].map(usize::from);
+    if vertices == 0 {
+        return None;
+    }
+    let resources = word(tables)?;
+    tables = tables.get(4..)?;
+    if resources != 0 {
+        let stride = word(tables)?;
+        if stride < 16 {
+            return None;
+        }
+        tables = tables.get(4..)?.get(resources.checked_mul(stride)?..)?;
+    }
+    let (names, tables) = table(tables, 1)?;
+    if names.len() % 4 != 0 {
+        return None;
+    }
+    let (indices, tables) = table(tables, 4)?;
+    let stride = word(tables)?;
+    if stride < 16 {
+        return None;
+    }
+    let records = tables
+        .get(4..)?
+        .get(..(inputs + vertices + primitives).checked_mul(stride)?)?;
+    let vertices = &records[inputs * stride..(inputs + vertices) * stride];
+    let osg_rows = osg.get(u32_at(osg, 4).ok()? as usize..)?;
+    let mut modes: Vec<_> = outputs.iter().map(|e| e.interp).collect();
+    for (i, output) in outputs.iter().enumerate() {
+        let Some(row) = output.row.filter(|_| output.kind == 0 && output.comp == 9) else {
+            continue;
+        };
+        let raw = osg_rows.get(i * 32..i * 32 + 32)?;
+        let mask = raw[24];
+        if mask == 0 || mask & 0xf0 != 0 || mask != output.mask() {
+            return None;
+        }
+        let raw_comp = u32_at(raw, 16).ok()?;
+        let mut matched = None;
+        for record in vertices.chunks_exact(stride) {
+            let cols = record[10];
+            if record[11] != 0
+                || u32::from(record[12]) != raw_comp
+                || cols & 0x40 == 0
+                || u32::from(record[9]) != row
+                || cols & 0x3f != output.cols | (output.col << 4)
+            {
+                continue;
+            }
+            // A multirow element has one index for each row. This path only
+            // uses one-row elements with an exact OSG1 counterpart.
+            if record[8] != 1 || cols & 0x80 != 0 || record[14] & 0x30 != 0 {
+                return None;
+            }
+            let index = word(&record[4..])?.checked_mul(4)?;
+            let name = names.get(word(record)?..)?;
+            let name = name.get(..name.iter().position(|b| *b == 0)?)?;
+            if u32_at(indices.get(index..)?, 0).ok()? != output.index
+                || name != output.name.as_bytes()
+            {
+                continue;
+            }
+            let mode = record[13];
+            if !(1..=7).contains(&mode) || matched.replace(mode).is_some() {
+                return None;
+            }
+        }
+        modes[i] = matched?;
+    }
+    // The host requires one defined mode for every member of a packed row.
+    for (i, output) in outputs.iter().enumerate() {
+        if modes[i] != output.interp
+            && outputs
+                .iter()
+                .zip(&modes)
+                .any(|(other, &mode)| other.row == output.row && mode != 0 && mode != modes[i])
+        {
+            return None;
+        }
+    }
+    Some(modes)
+}
+
 /// `ISG1`/`OSG1`: 32-byte rows, then the names.
 pub(crate) fn signature(elements: &[SigElement], input: bool) -> Vec<u8> {
     let mut out = Vec::new();
@@ -522,6 +625,64 @@ mod tests {
             (16, 0),
             "semantic indices in element order"
         );
+    }
+
+    #[test]
+    fn mesh_vertex_modes_follow_psv_semantics() {
+        let element = |index, col, cols, comp, interp| SigElement {
+            name: "TEXCOORD".into(),
+            index,
+            kind: 0,
+            comp,
+            interp,
+            row: Some(9),
+            col,
+            cols,
+            usage: (1 << cols) - 1,
+            half: false,
+        };
+        let integer = element(8, 0, 3, 5, 1);
+        let flat_float = element(11, 3, 1, 9, 1);
+        let guest_outputs = [flat_float.clone(), integer.clone()];
+        let guest_psv = psv(&Psv {
+            stage: 13,
+            flag: false,
+            inputs: &[],
+            outputs: &guest_outputs,
+            prims: &[],
+            mesh: None,
+            geometry: None,
+            bindings: &[Binding {
+                kind: 2,
+                space: 0,
+                register: 0,
+                dxil_kind: 13,
+            }],
+            threads: [32, 1, 1],
+            wave_size: None,
+        });
+        let mut outputs = [
+            integer,
+            SigElement {
+                interp: 2,
+                ..flat_float
+            },
+        ];
+        let osg = signature(&outputs, false);
+        assert_eq!(
+            mesh_output_modes(&guest_psv, &osg, &outputs),
+            Some(vec![1, 1])
+        );
+        assert_eq!(
+            mesh_output_modes(&guest_psv[..guest_psv.len() - 1], &osg, &outputs),
+            None
+        );
+
+        outputs[1].index = 12;
+        assert_eq!(mesh_output_modes(&guest_psv, &osg, &outputs), None);
+        outputs[1].index = 11;
+        outputs[0].interp = 2;
+        assert_eq!(mesh_output_modes(&guest_psv, &osg, &outputs), None);
     }
 
     #[test]
