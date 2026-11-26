@@ -3,7 +3,9 @@
 # - Prépare les shaders à l'avance si un dossier de shaders extraits est indiqué ;
 #   sinon, tant qu'ils ne sont pas prêts, le jeu attend un shader au lieu d'afficher du noir.
 # - Sauvegarde les parties en un clic.
-$ErrorActionPreference = 'Stop'
+# Pas 'Stop' : sous Windows PowerShell 5.1, chaque ligne que le jeu écrit sur sa sortie d'erreur
+# devient une erreur, et le lanceur s'arrêtait à la première ligne du journal.
+$ErrorActionPreference = 'Continue'
 $Root   = Split-Path -Parent $PSScriptRoot
 $Exe    = Join-Path $Root 'target\release\victory.exe'
 $Home_  = Join-Path $env:LOCALAPPDATA 'Sagouindupm'
@@ -54,6 +56,15 @@ function Set-GameEnv {
     if ($sdk) { $env:PATH = "$($sdk.DirectoryName);$env:PATH" }
     $env:VICTORY_CONFIG = $Toml
     foreach ($k in $SeriesS.Keys) { Set-Item "env:$k" $SeriesS[$k] }
+    # DLSS (cartes NVIDIA RTX) si les DLL de Streamline sont dans le dossier streamline\ du dépôt :
+    # le jeu calcule en 960x540 et DLSS remet en 1080p (environ -20 % par image, image plus nette).
+    $sl = Join-Path $Root 'streamline'
+    if (Test-Path (Join-Path $sl 'sl.interposer.dll')) {
+        $env:VICTORY_DLSS_DIR = $sl; $env:VICTORY_DLSS_MODE = 'performance'
+        Write-Host 'DLSS activé (mode performance).' -ForegroundColor Green
+    } else {
+        Write-Host 'DLSS absent (voir README : dossier streamline\). Sans lui, compter ~20 % de moins.' -ForegroundColor DarkYellow
+    }
 }
 
 function Start-Game($s) {
@@ -67,8 +78,9 @@ function Start-Game($s) {
     }
     $log = Join-Path $Logs ("partie_{0:yyyy-MM-dd_HHmm}.log" -f (Get-Date))
     Write-Host "`nLancement... (journal : $log)" -ForegroundColor Magenta
-    Write-Host 'Clic dans la fenêtre = capturer la souris, Échap = la libérer, G = commandes à pied / véhicule.'
-    & $Exe run $s.game_exe --console series-s --execute --unimplemented zero *> $log
+    Write-Host 'Clic dans la fenêtre = capturer la souris, Alt ou Échap = la libérer, G = commandes à pied / véhicule.'
+    # Par cmd : PowerShell 5.1 ne transforme pas les lignes du journal en erreurs.
+    & cmd.exe /c "`"$Exe`" run `"$($s.game_exe)`" --console series-s --execute --unimplemented zero > `"$log`" 2>&1" 
     $s.parties++; Save-Settings $s
     Write-Host "`nPartie terminée (code $LASTEXITCODE)."
 }

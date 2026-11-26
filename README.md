@@ -20,7 +20,7 @@ Mesuré sur la machine de référence : **RTX 3050 8 Go, i5-12400F, 32 Go de RAM
 | | |
 |---|---|
 | Progression | Prologue terminé, chapitre I jusqu'à la mission en bateau |
-| Images par seconde | **4 à 5 fps** dans le monde (médiane 206-248 ms par image ; 474 ms la veille) |
+| Images par seconde | **4 à 5 fps** dans le monde avec DLSS performance (médiane 206-248 ms par image ; 474 ms la veille) ; sans DLSS, compter ~20 % de moins |
 | VRAM | ~5 Go sur 8 |
 | Eau | Turquoise, les bateaux et le joueur flottent |
 | Problèmes connus | Eau peu profonde blanche par endroits, visages noirs par moments, rectangles fantômes sur l'eau, textures qui arrivent en retard |
@@ -44,6 +44,16 @@ Tant que les shaders ne sont pas préparés, le lanceur demande au moteur d'atte
 (jusqu'à 3 s) au lieu de sauter le dessin : quelques ralentissements, pas d'écran noir.
 Pour les connaisseurs, `series-s\launch_series_s.bat` lance directement avec les mêmes réglages
 (DLSS en option, voir le fichier).
+
+**DLSS (cartes NVIDIA RTX), fortement conseillé** : nos chiffres sont mesurés avec DLSS en mode
+performance (le jeu calcule en 960x540, DLSS remet en 1080p : environ -20 % par image et une image plus
+nette). Téléchargez le SDK Streamline de NVIDIA (https://github.com/NVIDIAGameWorks/Streamline, page
+*Releases*), et copiez les 4 fichiers de `bin\x64` (`sl.interposer.dll`, `sl.common.dll`,
+`sl.dlss.dll`, `nvngx_dlss.dll`) dans un dossier **`streamline\`** à la racine du dépôt. Les lanceurs
+l'activent tout seuls quand ils les trouvent.
+
+**Préparez les shaders** (menu du lanceur) avant de mesurer : sinon le jeu attend chaque nouveau shader
+(pics de plusieurs secondes les premières minutes).
 
 **Cartes NVIDIA** : réglez la **taille du cache de shaders sur « Illimitée »** (Panneau de configuration
 NVIDIA → Gérer les paramètres 3D). Avec la limite par défaut de 4 Go, le cache se remplit et le jeu
@@ -92,6 +102,19 @@ liste « À essayer » de [docs/essais.md](docs/essais.md).
 
 Personne ne pousse directement sur `main` : tout passe par une pull request, relue et fusionnée par le
 mainteneur.
+
+## Contributeurs
+
+Merci à celles et ceux qui testent, mesurent et corrigent :
+
+| Qui | Contribution |
+|---|---|
+| [@sagouindupm](https://github.com/sagouindupm) | mainteneur |
+| [@Xiaoxi2021](https://github.com/Xiaoxi2021) | premières mesures sur RTX 5070 12 Go + Ryzen 7 9700X (#9) : DLSS manquant chez les testeurs |
+| [@lucid29a](https://github.com/lucid29a) | mesures sur RTX 4070 Laptop + i9-13900H (#10) : lanceur PowerShell qui s'arrêtait, shaders non préparés |
+
+Vous testez ou corrigez quelque chose ? Ajoutez-vous à ce tableau dans votre pull request
+(voir [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Licence
 
