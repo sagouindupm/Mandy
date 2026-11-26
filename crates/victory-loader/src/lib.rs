@@ -22,7 +22,7 @@
 //!    on, pass every thread start and end on to the attached images.
 
 #[cfg(windows)]
-mod console_insn;
+mod code_room;
 mod crash;
 // LOCAL (victory-perf, via our wt5): VICTORY_RENDER_SCALE / VICTORY_OWN_UPSCALER / VICTORY_NO_WATCHDOG title patches.
 #[cfg(windows)]

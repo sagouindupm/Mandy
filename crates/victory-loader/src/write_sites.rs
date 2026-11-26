@@ -86,9 +86,9 @@ fn write_or_not(out: &mut Vec<u8>, stub: usize, code: &[u8], at: usize, len: usi
     out.extend([0xe3, u8::try_from(1 + len + 5).ok()?]); // jrcxz (jecxz) past the write
     out.push(0x59); // pop rcx
     out.extend(&code[..len]);
-    out.extend(crate::console_insn::jump(stub + out.len(), at + len)?);
+    out.extend(crate::code_room::jmp_rel32(stub + out.len(), at + len)?);
     out.push(0x59);
-    out.extend(crate::console_insn::jump(stub + out.len(), at + len)?);
+    out.extend(crate::code_room::jmp_rel32(stub + out.len(), at + len)?);
     Some(())
 }
 
@@ -205,7 +205,7 @@ fn or_stub(code: &[u8], at: usize, stub: usize) -> Option<(usize, Vec<u8>)> {
     out.extend([0x0c, constant]); // or al, constant: the flags
     let back = |out: &mut Vec<u8>| {
         let from = stub + out.len();
-        out.extend(crate::console_insn::jump(from, at + len)?);
+        out.extend(crate::code_room::jmp_rel32(from, at + len)?);
         Some(())
     };
     let mut write = vec![0x59, 0x58]; // pop rcx, pop rax
@@ -243,7 +243,7 @@ pub unsafe fn apply(name: &str, base: usize, size: usize, list: &str) -> usize {
         }
         let at = base + offset;
         if room.is_none() {
-            room = crate::console_insn::near(at).map(|place| (place, 0));
+            room = crate::code_room::alloc_near(at).map(|place| (place, 0));
         }
         let Some((place, used)) = room.as_mut() else {
             return done;
@@ -255,10 +255,10 @@ pub unsafe fn apply(name: &str, base: usize, size: usize, list: &str) -> usize {
             tracing::warn!(image, offset = format_args!("{offset:#x}"), "not a write of the kind that can be looked at first");
             continue;
         };
-        let Some(jump) = crate::console_insn::jump(at, to) else {
+        let Some(jump) = crate::code_room::jmp_rel32(at, to) else {
             continue;
         };
-        if *used + body.len() > crate::console_insn::STUBS_LEN {
+        if *used + body.len() > crate::code_room::LEN {
             return done;
         }
         let mut old = 0;

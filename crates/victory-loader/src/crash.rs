@@ -24,7 +24,7 @@ use windows_sys::Win32::System::LibraryLoader::{
     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
     GetModuleFileNameW, GetModuleHandleExW,
 };
-use windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits;
+use windows_sys::Win32::System::Threading::{GetCurrentProcessorNumber, GetCurrentThreadStackLimits};
 
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 /// Frames listed per report.
@@ -141,7 +141,9 @@ const FATAL: [i32; 6] = [
 /// around them works with mwaitx as a yield; `rdpru` (`0f 01 fd`) reads
 /// MPERF (`ecx` 0) or APERF (1), cycles at the nominal and the actual
 /// frequency, and gets the time-stamp counter for both: a core that never
-/// changes frequency.
+/// changes frequency. Beside them `clwb` (Intel before Ice Lake), `rdpid`
+/// (Intel before Ice Lake), SSE4a's `extrq`/`insertq` and a `clzero` with an
+/// address-size prefix (the line at `eax`).
 unsafe fn emulate_amd_only(info: *mut EXCEPTION_POINTERS) -> bool {
     // SAFETY: the system passes valid exception pointers; the faulting
     // instruction's bytes are readable, as the CPU just fetched them.
@@ -185,6 +187,18 @@ unsafe fn emulate_amd_only(info: *mut EXCEPTION_POINTERS) -> bool {
                 }
                 if let Some(len) = clwb_len(&bytes[..n]) {
                     // A write-back hint: the PC's memory is coherent, so it has nothing to do.
+                    context.Rip += len as u64;
+                    return true;
+                }
+                if bytes[..n].starts_with(&[0x67, 0x0f, 0x01, 0xfc]) {
+                    // clzero with a 32-bit address: the line at eax, zero-extended.
+                    ((context.Rax & 0xffff_ffc0) as *mut u8).write_bytes(0, 64);
+                    context.Rip += 4;
+                    return true;
+                }
+                if let Some((register, len)) = rdpid(&bytes[..n]) {
+                    // rdpid: TSC_AUX, which Windows sets to the processor number.
+                    *gpr(context, register) = u64::from(GetCurrentProcessorNumber());
                     context.Rip += len as u64;
                     return true;
                 }
@@ -387,6 +401,23 @@ fn compare_registers(code: &[u8]) -> Option<(u8, u8)> {
     (modrm >> 6 == 3).then_some((modrm & 7 | (rex & 1) << 3, (modrm >> 3) & 7 | (rex & 4) << 1))
 }
 
+/// `rdpid r64` (`f3 [rex] 0f c7 /7`, a register operand), which Intel CPUs
+/// before Ice Lake lack: the register and the instruction's length.
+fn rdpid(code: &[u8]) -> Option<(u8, usize)> {
+    let (rex, at) = match *code.get(1)? {
+        r @ 0x40..=0x4f => (r, 2),
+        _ => (0, 1),
+    };
+    if *code.first()? != 0xf3 || code.get(at..at + 2)? != [0x0f, 0xc7] {
+        return None;
+    }
+    let modrm = *code.get(at + 2)?;
+    if modrm >> 6 != 3 || (modrm >> 3) & 7 != 7 {
+        return None;
+    }
+    Some((modrm & 7 | (rex & 1) << 3, at + 3))
+}
+
 /// The general register numbered `n` as instructions encode it.
 fn gpr(context: &mut CONTEXT, n: u8) -> &mut u64 {
     match n & 15 {
@@ -468,14 +499,6 @@ unsafe fn sse4a(code: *const u8, xmm: &mut [M128A; 16]) -> Option<usize> {
 
 unsafe extern "system" fn handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     // an instruction of the console's CPU this one lacks: emulated, the title goes on
-    // SAFETY: the system passes valid exception pointers.
-    if unsafe { (*(*info).ExceptionRecord).ExceptionCode } == EXCEPTION_ILLEGAL_INSTRUCTION {
-        // SAFETY: the faulting thread's context, for the exception being dispatched.
-        let r = unsafe { crate::console_insn::emulate(&mut *(*info).ContextRecord) };
-        if r != 0 {
-            return r;
-        }
-    }
     // SAFETY: the system passes valid exception pointers.
     if unsafe { emulate_amd_only(info) } {
         return -1; // EXCEPTION_CONTINUE_EXECUTION
@@ -1399,6 +1422,54 @@ mod tests {
             Some(6)
         );
         assert_eq!(low(&xmm, 0), 0xdead_beef_cafe_f00d);
+    }
+
+    #[test]
+    fn rdpid_is_read() {
+        assert_eq!(rdpid(&[0xf3, 0x0f, 0xc7, 0xf8]), Some((0, 4)));
+        assert_eq!(rdpid(&[0xf3, 0x41, 0x0f, 0xc7, 0xf9]), Some((9, 5)));
+        // rdrand (/6) is not rdpid, nor a memory operand, nor a cut-off one
+        assert_eq!(rdpid(&[0xf3, 0x0f, 0xc7, 0xf0]), None);
+        assert_eq!(rdpid(&[0xf3, 0x0f, 0xc7, 0x38]), None);
+        assert_eq!(rdpid(&[0xf3, 0x0f, 0xc7]), None);
+    }
+
+    #[test]
+    fn emulated_rdpid_names_the_processor() {
+        // SAFETY: an all-zero context is valid.
+        let mut context: CONTEXT = unsafe { std::mem::zeroed() };
+        context.R9 = !0;
+        // rdpid r9
+        assert!(emulate_in(&[0xf3, 0x41, 0x0f, 0xc7, 0xf9], 0, &mut context));
+        assert_eq!(context.Rip, 5);
+        // (the number inside the processor's group, of at most 64)
+        assert!(context.R9 < 64, "{}", context.R9);
+    }
+
+    #[test]
+    fn emulated_clzero_with_a_32_bit_address_zeroes_the_line_at_eax() {
+        use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree};
+        // A page below 4 GiB, so that eax names it.
+        let page = (1..0x1000)
+            .map(|i: usize| i << 20)
+            // SAFETY: asks for free memory at that address, or fails.
+            .map(|at| unsafe { VirtualAlloc(at as *const _, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE) } as usize)
+            .find(|&got| got != 0)
+            .expect("a page below 4 GiB");
+        // SAFETY: the page is ours, read-write.
+        unsafe { (page as *mut u8).write_bytes(0xff, 0x1000) };
+        // SAFETY: an all-zero context is valid.
+        let mut context: CONTEXT = unsafe { std::mem::zeroed() };
+        // High bits that a 32-bit address leaves out.
+        context.Rax = 0xdead_0000_0000_0000 | (page as u64 + 0x45);
+        assert!(emulate_in(&[0x67, 0x0f, 0x01, 0xfc], 0, &mut context));
+        assert_eq!(context.Rip, 4);
+        // SAFETY: as above.
+        let bytes = unsafe { std::slice::from_raw_parts(page as *const u8, 0x1000) };
+        assert!(bytes[0x40..0x80].iter().all(|&b| b == 0));
+        assert!(bytes[..0x40].iter().chain(&bytes[0x80..]).all(|&b| b == 0xff));
+        // SAFETY: the page was allocated above and is not used after this.
+        unsafe { VirtualFree(page as *mut _, 0, MEM_RELEASE) };
     }
 
     #[test]
