@@ -115,9 +115,9 @@ pub use lower::{host_max_wave, host_rovs, set_host_max_wave, set_host_rovs};
 pub use per_program::{deep_skips_allowed, for_program, wave64_retried};
 pub use rect::rect_list_gs;
 pub use shader::{
-    LAUNCH_SPACE, MEMORY_FAULTS, MEMORY_PAGES, MESH_PAYLOAD_BYTES, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_FAULTS, SLOT_MEMORY, SLOT_STRIDES,
-    SLOT_STRIDES_COUNT, USER_DATA_SPACE, USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS,
-    set_view_heap_limit, view_heap_limit,
+    LAUNCH_SPACE, MEMORY_FAULTS, MEMORY_PAGES, MESH_PAYLOAD_BYTES, ROOT_CBV_SPACE, SAMPLER_SPACE, SLOT_ADDRESSES, SLOT_FAULTS,
+    SLOT_HEAP_USED, SLOT_MEMORY, SLOT_STRIDES, SLOT_STRIDES_COUNT, SLOT_TABLE_DWORDS, USER_DATA_SPACE, USER_GROUP_BASE,
+    USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS, heap_usage_marks, set_view_heap_limit, view_heap_limit,
 };
 
 /// The loop limit without an override: 2^20.
