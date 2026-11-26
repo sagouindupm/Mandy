@@ -10,6 +10,13 @@
 #[cfg(windows)]
 use crate::{HleExport, HleModule};
 
+/// The render scale the title is set to for DLSS's `VICTORY_DLSS_MODE`
+/// (`victory_gpu::ffx::dlss_render_scale`); `None` leaves its own.
+#[cfg(windows)]
+pub fn dlss_render_scale() -> Option<f32> {
+    victory_gpu::ffx::dlss_render_scale()
+}
+
 /// With `VICTORY_FFX_DIR`: the five FidelityFX calls of both DLLs, served by
 /// AMD's PC upscaler instead of the console DLLs.
 #[cfg(windows)]
