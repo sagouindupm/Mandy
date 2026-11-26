@@ -385,6 +385,8 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
         #[cfg(not(windows))]
         let words = |_: usize| None::<Vec<u64>>;
         let description = words(desc as usize);
+        #[cfg(windows)]
+        dump_unknown(SLOT, calls, desc as usize, description.as_deref());
         let first = description
             .as_ref()
             .and_then(|w| words(w[0] as usize));
@@ -397,6 +399,39 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
         );
     }
     E_NOTIMPL
+}
+
+/// `VICTORY_DUMP_UNKNOWN_PIPELINES=<folder>` (diagnostics): the first
+/// descriptions [`unknown_pipeline`] logs are written there, 512 bytes of
+/// each, and every `(address, size)` pair in them (a word above 4 GiB then
+/// one under 256 KiB) as a file of its own, to work out their layout.
+/// Title data: keep it out of the repository.
+#[cfg(windows)]
+fn dump_unknown(slot: usize, calls: u32, desc: usize, words: Option<&[u64]>) {
+    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    let Some(dir) = DIR.get_or_init(|| std::env::var_os("VICTORY_DUMP_UNKNOWN_PIPELINES").map(Into::into)) else {
+        return;
+    };
+    let (Some(words), true) = (words, desc != 0) else {
+        return;
+    };
+    let read = |at: usize, n: usize| -> Option<Vec<u8>> {
+        let mut b = vec![0u8; n];
+        crate::host::read_into(at as *const u8, &mut b).then_some(b)
+    };
+    let _ = std::fs::create_dir_all(dir);
+    let name = format!("{slot:x}_{calls}");
+    if let Some(b) = read(desc, 512) {
+        let _ = std::fs::write(dir.join(format!("{name}_desc.bin")), b);
+    }
+    for i in 1..words.len().saturating_sub(1) {
+        let (at, size) = (words[i], words[i + 1]);
+        if at > 0xffff_ffff && size > 0 && size < 0x40000 {
+            if let Some(b) = read(at as usize, size as usize) {
+                let _ = std::fs::write(dir.join(format!("{name}_w{i}_{at:x}_{size:x}.bin")), b);
+            }
+        }
+    }
 }
 
 /// IUnknown 3, object methods 4, device methods 76 (0x18-0x290), then the
