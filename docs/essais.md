@@ -63,6 +63,12 @@ accélérée : à profiler).
 - Le fil de soumission hache et recopie des textures (`blake3` ~5 ms, copies gardées ~4 ms,
   `Staging::refresh` ~4 ms), peut-être inchangées.
 
+### Implémenté, résultat en jeu à mesurer
+
+| Essai | Changement | Vérification | Résultat de performance |
+|---|---|---|---|
+| #13, création des ressources hors du verrou `made` | `HostHeap::mirror` libère le verrou de comptabilité pendant la résolution/création D3D12; un verrou distinct protège les mutations des emplacements statiques. Le chemin de réfection des vues et la libération d'un emplacement prennent le même verrou. | `cargo test -p victory-gpu --lib` : 218 réussis, 6 ignorés; `cargo build --release -p victory` réussi; clippy workspace réussi. | **À mesurer** avec A1/B1/A2/B2 et une sauvegarde restaurée. Aucun gain de FPS n'est encore revendiqué. |
+
 ## Gardé
 
 | Essai | Origine | Résultat | Où |
@@ -107,7 +113,7 @@ Prenez une ligne, ouvrez une *issue* « [en cours] … » pour que personne ne f
 |---|---|---|---|---|
 | 1 | Passe du tas : comprendre où partent ses 100-150 ms | ni le verrou ni les fils n'ont aidé ; profiler d'abord | build diagnostics + `VICTORY_PROFILE=1` ; avatarmanz 44629de (`shows_none` : 32 000 emplacements vides sur 41 000 sautés) | M |
 | 3 | **Attente « title memory read »** (~40-50 ms par image) | une copie de buffer vers une zone que les shaders en vol écrivent attend la carte | `host.rs blocked_by` : faire passer la copie dans la file des vols au lieu d'attendre | M-L |
-| 3b | Créer les ressources hors du verrou du tas | ~10 ms d'attente + 5 ms de création | `HostHeap::mirror` : réserver la clé, créer hors verrou, publier ; réutiliser les copies de textures | M |
+| 3b | ~~Créer les ressources hors du verrou du tas~~ (implémenté en #13; mesure en jeu encore requise) | ~10 ms d'attente + 5 ms de création observés avant le changement | `HostHeap::mirror` : libérer le verrou de comptabilité pendant la création, puis publier; comparer A1/B1/A2/B2 | M |
 | 3c | `texback::Target::new` sans attendre `MAPPING` | ~10 ms sur les fils d'enregistrement | lire sans le verrou si possible, ou relâcher le verrou entre les lots de `copy_page_mappings` | S-M |
 | 3d | Ne pas hacher/recopier les textures non écrites | ~5-10 ms sur le fil de soumission | regarder la surveillance d'écriture avant `blake3` | S-M |
 | 4 | Recopie vers le jeu (~60 ms) | sur le chemin critique | profil (`VICTORY_PROFILE=1`, PDB à côté de l'exe) ; comparaisons sur la carte | M |
