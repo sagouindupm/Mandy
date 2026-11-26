@@ -34,6 +34,8 @@ set "VICTORY_COPY_PLAIN=1"
 set "VICTORY_FAST_CORES=1"
 rem L'eau : les bateaux et le joueur flottent
 set "VICTORY_TEXTURE_BACK=1"
+rem Memoire non surveillee recopiee une image sur deux (-17 %% par image)
+set "VICTORY_UNWATCHED_FRAMES=2"
 
 "%VICTORY_EXE%" run "%GAME_EXE%" --console series-s --execute --unimplemented zero
 pause
