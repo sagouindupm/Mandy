@@ -2476,8 +2476,11 @@ mod readback_run_tests {
 /// 64 KiB piece; the compare hashes the whole piece for each and stores
 /// the hash, so the second of them may find it stored already and not
 /// flag it.
-fn flagged_pieces(flags: &[(usize, u32, bool)]) -> std::collections::HashSet<(usize, u32)> {
-    flags.iter().filter(|f| f.2).map(|f| (f.0, f.1)).collect()
+fn flagged_pieces(
+    flags: impl IntoIterator<Item = (usize, u32, bool)>,
+    mut force: impl FnMut(usize, u32) -> bool,
+) -> std::collections::HashSet<(usize, u32)> {
+    flags.into_iter().filter(|&(copy, piece, flag)| flag || force(copy, piece)).map(|(copy, piece, _)| (copy, piece)).collect()
 }
 
 /// Whether pieces fetched on a copy queue beside later flights are fetched
@@ -2634,12 +2637,42 @@ mod relay_tests {
         // Copy a: piece 3 under two ranges, flagged under the first only;
         // piece 4 not flagged; copy b: piece 3 not flagged, piece 9 flagged.
         let flags = [(a, 3, true), (a, 4, false), (a, 3, false), (b, 3, false), (b, 9, true)];
-        let fetch = flagged_pieces(&flags);
+        let fetch = flagged_pieces(flags, |_, _| false);
         assert!(fetch.contains(&(a, 3)));
         assert!(!fetch.contains(&(a, 4)));
         assert!(!fetch.contains(&(b, 3)));
         assert!(fetch.contains(&(b, 9)));
         assert_eq!(fetch.len(), 2);
+    }
+
+    /// Match the old two-pass selection, including duplicate forced flags
+    /// (the refetch statistic counts occurrences, not unique pieces).
+    #[test]
+    fn streamed_piece_selection_matches_two_pass_selection() {
+        let keys = [(1, 0), (1, 1), (1, 0), (2, 0), (2, 1), (2, 0)];
+        for mask in 0..(1 << keys.len()) {
+            for forced in 0..16 {
+                let flags = keys.iter().enumerate().map(|(i, &(a, p))| (a, p, mask & (1 << i) != 0));
+                let needs = |a: usize, p: u32| forced & (1 << ((a - 1) * 2 + p as usize)) != 0;
+                let mut old: Vec<_> = flags.clone().collect();
+                let mut old_count = 0;
+                for f in old.iter_mut().filter(|f| !f.2) {
+                    if needs(f.0, f.1) {
+                        f.2 = true;
+                        old_count += 1;
+                    }
+                }
+                let expected: std::collections::HashSet<_> = old.iter().filter(|f| f.2).map(|f| (f.0, f.1)).collect();
+                let mut count = 0;
+                let actual = flagged_pieces(flags, |a, p| {
+                    let needed = needs(a, p);
+                    count += usize::from(needed);
+                    needed
+                });
+                assert_eq!(actual, expected);
+                assert_eq!(count, old_count);
+            }
+        }
     }
 }
 
@@ -4989,26 +5022,22 @@ impl Host {
             let differs = unsafe { std::slice::from_raw_parts(differs as *const u32, dwords) };
             let mut seen = std::collections::HashSet::new();
             for &(number, plan) in plans {
-                let mut flags: Vec<(usize, u32, bool)> = plan
-                    .ranges
-                    .iter()
-                    .flat_map(|r| {
-                        (0..r.span.pieces).map(move |p| {
-                            let flagged = !r.compared || differs.get((r.at + p) as usize).is_none_or(|&d| d != 0);
-                            (std::sync::Arc::as_ptr(&r.shadow) as usize, r.span.first + p, flagged)
-                        })
+                let flags = plan.ranges.iter().flat_map(|r| {
+                    (0..r.span.pieces).map(move |p| {
+                        let flagged = !r.compared || differs.get((r.at + p) as usize).is_none_or(|&d| d != 0);
+                        (std::sync::Arc::as_ptr(&r.shadow) as usize, r.span.first + p, flagged)
                     })
-                    .collect();
+                });
                 // A piece an earlier fetch brought down while this flight
                 // may have been writing it: fetched, flagged or not.
-                for flag in flags.iter_mut().filter(|f| !f.2) {
-                    if fetched_beside(noted.get(&(flag.0, flag.1)).copied(), number) {
-                        flag.2 = true;
-                        again += 1;
-                    }
+                let fetched = flagged_pieces(flags, |copy, piece| {
+                    let needed = fetched_beside(noted.get(&(copy, piece)).copied(), number);
+                    again += u64::from(needed);
+                    needed
+                });
+                if beside {
+                    numbers.extend(fetched.iter().copied());
                 }
-                let fetched = flagged_pieces(&flags);
-                numbers.extend(fetched.iter().copied());
                 for r in &plan.ranges {
                     let copy = std::sync::Arc::as_ptr(&r.shadow) as usize;
                     for p in 0..r.span.pieces {
@@ -5296,7 +5325,6 @@ impl Host {
                 }
                 // Pieces (copy, number) the compare flagged, with their ticket.
                 let mut tickets: std::collections::HashMap<(usize, u32), u32> = std::collections::HashMap::new();
-                let mut flags: Vec<(usize, u32, bool)> = Vec::new();
                 for r in &plan.ranges {
                     let copy = Arc::as_ptr(&r.shadow) as usize;
                     for p in 0..r.span.pieces {
@@ -5314,26 +5342,22 @@ impl Host {
                             }
                             tickets.insert((copy, r.span.first + p), entry);
                         }
-                        flags.push((copy, r.span.first + p, flag != 0));
                     }
                 }
-                let fetched = flagged_pieces(&flags);
+                // Ticket keys are exactly the union of flagged pieces.
                 let mut seen = std::collections::HashSet::new();
                 for r in &plan.ranges {
                     let copy = Arc::as_ptr(&r.shadow) as usize;
                     for p in 0..r.span.pieces {
                         let piece = r.span.first + p;
-                        if !fetched.contains(&(copy, piece)) {
+                        let Some(&k) = tickets.get(&(copy, piece)) else {
                             continue;
-                        }
+                        };
                         let (lo, hi) = r.shadow.card_piece(&r.span, p);
                         if lo >= hi || !seen.insert((copy, lo, hi)) {
                             continue;
                         }
                         let from = inflight_piece_from(&r.span, p);
-                        let Some(&k) = tickets.get(&(copy, piece)) else {
-                            return false;
-                        };
                         if lo < from || (hi - from) as u64 > INFLIGHT_SLOT {
                             return false;
                         }
