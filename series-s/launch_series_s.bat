@@ -7,6 +7,10 @@ set "VICTORY_EXE=%~dp0..\target\release\victory.exe"
 set "VICTORY_CONFIG=%~dp0..\victory.toml"
 rem Optionnel : DLSS (Streamline) si vous avez ses DLL
 rem set "VICTORY_DLSS_DIR=C:\chemin\vers\streamline\bin"
+rem Avec DLSS, mode Performance : le jeu calcule en 960x540 et la carte NVIDIA remet en 1080p
+rem (RTX 3050 : 292 ms par image au lieu de 351, image plus nette). Change en memoire l'echelle
+rem de rendu du jeu (2/3 vers 1/2) apres avoir verifie son code ; le fichier du jeu n'est pas touche.
+rem set "VICTORY_DLSS_MODE=performance"
 
 rem Memoire de la carte : place pour les textures sur 8 Go
 set "VICTORY_CARD_ROOM_FOR_TARGETS_MB=1536"
