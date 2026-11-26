@@ -139,6 +139,7 @@ pub fn run(
     victory_hle::runtime::use_console_timers();
     #[cfg(feature = "diagnostics")]
     diagnostics(&image, &cfg);
+    ffx_scale(&image);
     let late = LateDlls {
         host: resolver.host.clone(),
         title_dir: title_dir.to_owned(),
@@ -167,7 +168,6 @@ fn diagnostics(image: &victory_loader::LoadedImage, cfg: &victory_core::Config) 
     victory_hle::modules::audio::capture::start();
     watch(image.base(), image.info().size_of_image as usize);
     upscaler_override(image);
-    ffx_scale(image);
     // Debugging aid: `VICTORY_CRASH_SAVE=<rva>:<len>,...` (hex) writes those
     // title ranges to `crash-<rva>.bin` in the cache dir on a crash.
     let size = image.info().size_of_image as usize;
@@ -244,19 +244,29 @@ fn upscaler_override(image: &victory_loader::LoadedImage) {
     eprintln!("VIctory: upscaler picker at title+{rva:#x} returns {kind} ({calls} direct calls)");
 }
 
-/// Debugging aid: `VICTORY_FFX_SCALE=<scale>[,<hex rva>]` sets the render
-/// scale of the title's FidelityFX path (0.5: 1080p for a 4K output, 0.6667:
-/// 1440p). The rva is the method that picks the scale (1.0.2.1: 28EF680, the
+/// `VICTORY_FFX_SCALE=<scale>[,<hex rva>]` sets the render scale of the
+/// title's FidelityFX path (0.5: 1080p for a 4K output, 0.6667: 1440p).
+/// The rva is the method that picks the scale (1.0.2.1: 28EF680, the
 /// default); it takes 2/3 on Series S and 1.0 on Series X, so Series X with
 /// FidelityFX forced on renders at full 4K, which overflows its memory plan.
 /// Both of its scale loads (`vmovss xmm0, [rip+d]`) are pointed at our
 /// constant, kept in the padding after the method; with other code there,
 /// nothing is patched.
-#[cfg(all(windows, feature = "diagnostics"))]
+///
+/// Without it, DLSS's `VICTORY_DLSS_MODE` (balanced, performance, ultra)
+/// sets the scale of its mode at the default rva: the title takes its render
+/// size from this method and from no FidelityFX query, so that is the only
+/// way to have it render smaller (`victory_hle::modules::ffx::dlss_render_scale`).
+/// Neither set (and DLSS's default, quality): nothing is patched.
+#[cfg(windows)]
 fn ffx_scale(image: &victory_loader::LoadedImage) {
     use windows_sys::Win32::System::Memory::{PAGE_EXECUTE_READWRITE, VirtualProtect};
-    let Ok(spec) = std::env::var("VICTORY_FFX_SCALE") else {
-        return;
+    let spec = match std::env::var("VICTORY_FFX_SCALE") {
+        Ok(spec) => spec,
+        Err(_) => match victory_hle::modules::ffx::dlss_render_scale() {
+            Some(scale) => scale.to_string(),
+            None => return,
+        },
     };
     let (scale, rva) = spec.split_once(',').unwrap_or((&spec, "28EF680"));
     let scale = scale
@@ -278,7 +288,10 @@ fn ffx_scale(image: &victory_loader::LoadedImage) {
     // SAFETY: the method's first bytes and its padding, inside the mapped
     // image (checked above); no title code runs yet.
     let patched = unsafe {
-        VirtualProtect(at.cast(), FFX_SCALE_SPAN, PAGE_EXECUTE_READWRITE, &mut old);
+        if VirtualProtect(at.cast(), FFX_SCALE_SPAN, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+            eprintln!("VIctory: FidelityFX scale not patched: title+{rva:#x} cannot be made writable");
+            return;
+        }
         let patched = patch_ffx_scale(std::slice::from_raw_parts_mut(at, FFX_SCALE_SPAN), scale);
         VirtualProtect(at.cast(), FFX_SCALE_SPAN, old, &mut old);
         patched
@@ -293,13 +306,13 @@ fn ffx_scale(image: &victory_loader::LoadedImage) {
 }
 
 /// The bytes of the scale method `patch_ffx_scale` reads and writes.
-#[cfg(all(windows, feature = "diagnostics"))]
+#[cfg(windows)]
 const FFX_SCALE_SPAN: usize = 0x68;
 
 /// Points both scale loads of the method `code` starts with
 /// (`vmovss xmm0, [rip+d]` at +0x28 and +0x32) at `scale`, written into the
 /// method's padding at +0x64. False, with nothing written, for other code.
-#[cfg(all(windows, feature = "diagnostics"))]
+#[cfg(windows)]
 fn patch_ffx_scale(code: &mut [u8], scale: f32) -> bool {
     const LOADS: [usize; 2] = [0x28, 0x32];
     const SLOT: usize = 0x64;
@@ -480,7 +493,7 @@ impl LoaderLock {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    #[cfg(feature = "diagnostics")]
+    #[cfg(windows)]
     #[test]
     fn ffx_scale_points_both_loads_at_the_constant() {
         // Synthetic code: the two loads, filler, and int3 padding.

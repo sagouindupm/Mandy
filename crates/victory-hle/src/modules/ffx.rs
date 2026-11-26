@@ -143,6 +143,17 @@ pub fn pc_upscaler() -> bool {
     false
 }
 
+/// The render scale the title is set to for DLSS's `VICTORY_DLSS_MODE`
+/// (`victory_gpu::ffx::dlss_render_scale`); `None` leaves its own.
+pub fn dlss_render_scale() -> Option<f32> {
+    #[cfg(windows)]
+    {
+        victory_gpu::ffx::dlss_render_scale()
+    }
+    #[cfg(not(windows))]
+    None
+}
+
 /// With `VICTORY_FFX_DIR`: the five FidelityFX calls of both DLLs, served by
 /// AMD's PC upscaler instead of the console DLLs.
 #[cfg(windows)]

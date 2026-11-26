@@ -149,6 +149,18 @@ pub fn enabled() -> bool {
     std::env::var_os("VICTORY_FFX_DIR").is_some() || dlss::enabled()
 }
 
+/// The render scale `VICTORY_DLSS_MODE` asks the title for, with DLSS on
+/// (`VICTORY_DLSS_DIR`) in the Series S mode, the one whose upscale goes
+/// through FidelityFX; `None` for the title's own (quality, the default).
+/// The title takes its scale from its own code and not from a FidelityFX
+/// query (`dlss`), so it is set there, by the runner.
+pub fn dlss_render_scale() -> Option<f32> {
+    if !dlss::enabled() || crate::console::current() != crate::console::Console::SeriesS {
+        return None;
+    }
+    dlss::requested().render_scale()
+}
+
 /// AMD's loader, loaded on first use. The upscaler it picks is loaded by
 /// full path first, so the loader finds it without a change to the DLL
 /// search path.
