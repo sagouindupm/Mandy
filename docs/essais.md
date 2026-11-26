@@ -33,6 +33,19 @@ Conséquence ici : le cache était plein depuis le 26/11 à 05h25. Les essais ma
 ci-dessous comparaient un exe compilé après cette heure à l'ancien exe en cache : leur verdict ne
 vaut rien tant qu'ils ne sont pas refaits. Les essais de **variables** (même exe) restent valables.
 
+**Deux autres pièges (26/11 au soir)** :
+- **Traducteur modifié = tout est froid.** La clé du cache de shaders contient le traducteur et les listes
+  `VICTORY_WAVE_WIDE_ONLY`, `FIRSTLANE_OWN_ONLY`, `HEAP_USAGE`, `NAN_SCRUB` : un changement de l'un d'eux
+  retraduit tout, et les ~3 500 pipelines de démarrage ont un nouveau code que le pilote recompile
+  (~400 par lancement). Les passages froids n'atteignent pas le bateau à temps : les touches tombent au
+  mauvais moment et la partie finit ailleurs (plage, à pied). À faire avant de mesurer :
+  `victory translate <shaders> --warm <liste des hash vus en jeu>` (même environnement que le passage,
+  plus `VICTORY_HOST_WAVE=32 VICTORY_HOST_ROVS=1 VICTORY_VIEW_LIMIT=999999` ; ~11-14 min), puis 2-3
+  passages de chauffe. Regroupez les changements du traducteur.
+- **Un seul dossier de cache pour tous les builds** : la liste des pipelines de démarrage
+  (`pipelines/early-pipelines.txt`) et la bibliothèque sont réécrites par chaque exe. Un build d'un autre
+  fork lancé une fois refroidit le nôtre : donnez-lui son propre `VICTORY_CACHE_DIR`.
+
 ## Où on en est (26/11/2026)
 
 | | ms par image (médiane) | fps |
@@ -81,6 +94,12 @@ accélérée : à profiler).
 | Soleil noir, ciel en bandes : couleurs NaN ou infinies mises à 0 (`VICTORY_NAN_SCRUB=1`) | Humb8l (cool_fox-dlss), d'après trustno1-coder | dans la clé du cache de shaders | lanceurs |
 | Sol qui clignote : une vue de constantes de 0 octet reste vide | avatarmanz / fxceless 619b2dc5 | — | `descriptor/host.rs` |
 | Texture écrite par la carte recopiée même si la liste l'avait déjà envoyée | fxceless 19a45d19 (PR #1241) | — | `texture.rs` |
+| Dessins mesh lancés par la carte (`VICTORY_MESH_LAUNCH`, actif) : un étage d'amplification lit et borne chaque enregistrement, plus de passe ni d'attente entre deux dessins | stellarr-studio/kelvaroq patch 0041 (chez eux 198 → 120 ms sur RTX 5080) | ici ~295 ms, comme avant (le goulot est le CPU) ; `launch_code.rs` recompilé ici depuis `launch.hlsl` | `launch.rs` |
+| Recopies de textures écrites dans la mémoire du jeu par un fil à part (`VICTORY_TEXBACK_ASYNC`, actif) | Indy2l (trustno1-coder/VIctory-NVIDIA 2d1dc382, RTX 3060 + i5-12400F) | retire l'attente du verrou de mappage du fil de recopie | `texback.rs` |
+| Tampon DirectStorage du jeu porté à 256 Mo minimum (`VICTORY_DSTORAGE_STAGING_MB`) | CGBJ (cesarzxk) d'après cool_fox | — | `dstorage.rs` |
+| MAD/MAC « legacy » fusionnés, sources dénormales mises à 0 comme sur RDNA 2 | Marvisak #1554 (Calvix2k), fxceless PR #1026 | cœurs noirs dans les reflets les plus vifs de l'eau ; test unitaire sur la carte OK | `lower.rs` |
+| Choix de la carte (`VICTORY_ADAPTER`) ; sans réglage : la plus puissante (portables Optimus : plus la carte Intel) | trustno1-coder 033be27f + nous | #14 | `host.rs` |
+| Fenêtres de mémoire du jeu dans la mémoire de la carte vue par le CPU (`VICTORY_WINDOWS_BAR_MB`, désactivé ; 3072 pour les PC à 16 Go) | « local » bd68f5e1 (avatarmanz, trustno1) | sur 16 Go : plus de plantage 0x8007000E et 10-12 fps au lieu de 1,6-3 (RTX 3060, trustno1 #6) ; à mesurer ici (32 Go) | `shadow.rs` |
 
 ## Rejeté (mesuré, ne pas refaire sans idée nouvelle)
 
@@ -102,6 +121,10 @@ accélérée : à profiler).
 | Builds entiers d'autres forks sur cette machine **(à remesurer : nouveaux exe)** | Neptune, avatarmanz + réglages cool_fox, cold-project-vi | 290-450 ms, image moins bonne ou plantage |
 | Reflets tenus (Belobug e633374b) | Belobug | eau toujours blanche |
 | Constructeur BVH seul | — | plantage à 115 s |
+| trustno1-coder/VIctory-NVIDIA tel quel, son jeu de réglages (540p, upscaler du jeu, RT coupé), cache chauffé | trustno1 | ~5 s par image au 2e passage, 20 Go de RAM : inutilisable ici |
+| kelvaroq complet (fxceless f85101b + patches 0000-0064), ses réglages par défaut, sans DLSS | stellarr-studio | images lourdes ~300 ms : pas mieux ; on a pris le 0041 |
+| Réglages du « run 279 » fxceless qu'on avait sans les activer : `INDIRECT_WINDOW=1 CARD_REHASH_RUNS=1 BACK_OWN_VIEW=1 STAGING_POOL=0 CARD_WINDOWS_MB=1024` | fxceless | 295 ms, comme sans |
+| Eau : `VICTORY_WAVE_WIDE_ONLY` sans les deux programmes de volumétrie (5dc3…, 6f22…) + le programme sous l'eau (926c46ba…) | cool_fox PR #24, fxceless PR #695 | en cinématique l'eau devient bleu-noir et plate au lieu de blanche : pas mieux (passage froid, à revoir sur capture) |
 
 ## À essayer (par ordre d'intérêt)
 

@@ -112,6 +112,9 @@ Merci à celles et ceux qui testent, mesurent et corrigent :
 | [@sagouindupm](https://github.com/sagouindupm) | mainteneur |
 | [@Xiaoxi2021](https://github.com/Xiaoxi2021) | premières mesures sur RTX 5070 12 Go + Ryzen 7 9700X (#9) : DLSS manquant chez les testeurs |
 | [@lucid29a](https://github.com/lucid29a) | mesures sur RTX 4070 Laptop + i9-13900H (#10) : lanceur PowerShell qui s'arrêtait, shaders non préparés |
+| [@Tejvardhan-717](https://github.com/Tejvardhan-717) | verrou du tas de descripteurs (#13, #15) |
+| [@Liovera](https://github.com/Liovera) | mesures sur RTX 4050 Laptop 6 Go + 16 Go de RAM (#14) : carte Intel choisie sur les portables, plantages à 16 Go |
+| [@LuizFernandoMoretto](https://github.com/LuizFernandoMoretto) | politique du dépôt réparée, rapport de tests (#16) |
 
 Vous testez ou corrigez quelque chose ? Ajoutez-vous à ce tableau dans votre pull request
 (voir [CONTRIBUTING.md](CONTRIBUTING.md)).
@@ -127,5 +130,9 @@ GPL-3.0-or-later, comme VIctory (voir [LICENSE](LICENSE)). Aucun code sous licen
   (chargeur, services d'exécution, Direct3D 12, recompilateur de shaders).
 - **[fxceless/victory-fork](https://github.com/fxceless/victory-fork)** et sa communauté : la base de
   travail directe de ce dépôt.
+- **[stellarr-studio/kelvaroq](https://github.com/stellarr-studio/kelvaroq)** (dessins mesh lancés par la carte),
+  **[trustno1-coder/VIctory-NVIDIA](https://github.com/trustno1-coder/VIctory-NVIDIA)** et Indy2l (recopies de textures,
+  choix de la carte, fenêtres en mémoire de la carte), CGBJ (cesarzxk), avatarmanz, cool_fox, cold-project-vi :
+  les morceaux repris gardent leurs auteurs dans l'historique.
 - Les auteurs cités plus haut, dont le travail est repris avec leur historique.
 - Développé avec l'aide de [Claude Code](https://claude.com/claude-code).
