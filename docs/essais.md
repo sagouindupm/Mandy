@@ -34,6 +34,21 @@ vers la mémoire du jeu ~60 ms, plus ~40-50 ms d'attente de la carte pour une co
 descripteurs prend 60-150 ms sur un autre fil (ni un verrou plus fin ni des fils en plus ne l'ont
 accélérée : à profiler).
 
+### Ce que dit le profil (26/11, build diagnostics, `VICTORY_PROFILE=1`)
+
+- **Le processeur n'est pas plein** : ~2,4 fils occupés sur 12. Une image est limitée par des
+  **attentes en série** et des verrous, pas par le calcul.
+- Le fil qui présente l'image attend **~37 ms par image** le verrou `RELEASING` (`queue.rs
+  release_held_now`), tenu par le fil de soumission ; celui-ci y attend lui-même **~15 ms** que
+  la recopie des vols soit faite (`host.rs relay_wait`, les « settles »).
+- `HostHeap::mirror` crée des ressources du pilote (`CreateCommittedResource`, ~5 ms) **en tenant
+  le verrou du tas** : les autres attendent ~10 ms. Un verrou plus fin ne sert à rien tant que la
+  création se fait dessous.
+- `texback::Target::new` attend ~10 ms le verrou `MAPPING` pendant les mappages de pages
+  (`copy_page_mappings`, ~11 ms de mappage/démappage par image).
+- Le fil de soumission hache et recopie des textures (`blake3` ~5 ms, copies gardées ~4 ms,
+  `Staging::refresh` ~4 ms), peut-être inchangées.
+
 ## Gardé
 
 | Essai | Origine | Résultat | Où |
@@ -78,6 +93,9 @@ Prenez une ligne, ouvrez une *issue* « [en cours] … » pour que personne ne f
 |---|---|---|---|---|
 | 1 | Passe du tas : comprendre où partent ses 100-150 ms | ni le verrou ni les fils n'ont aidé ; profiler d'abord | build diagnostics + `VICTORY_PROFILE=1` ; avatarmanz 44629de (`shows_none` : 32 000 emplacements vides sur 41 000 sautés) | M |
 | 3 | **Attente « title memory read »** (~40-50 ms par image) | une copie de buffer vers une zone que les shaders en vol écrivent attend la carte | `host.rs blocked_by` : faire passer la copie dans la file des vols au lieu d'attendre | M-L |
+| 3b | Créer les ressources hors du verrou du tas | ~10 ms d'attente + 5 ms de création | `HostHeap::mirror` : réserver la clé, créer hors verrou, publier ; réutiliser les copies de textures | M |
+| 3c | `texback::Target::new` sans attendre `MAPPING` | ~10 ms sur les fils d'enregistrement | lire sans le verrou si possible, ou relâcher le verrou entre les lots de `copy_page_mappings` | S-M |
+| 3d | Ne pas hacher/recopier les textures non écrites | ~5-10 ms sur le fil de soumission | regarder la surveillance d'écriture avant `blake3` | S-M |
 | 4 | Recopie vers le jeu (~60 ms) | sur le chemin critique | profil (`VICTORY_PROFILE=1`, PDB à côté de l'exe) ; comparaisons sur la carte | M |
 | 5 | Préparation CPU (~100 ms) | le plus gros poste | profil ; `TablePlan` (codec_d e05d463) | L |
 | 6 | Visages noirs par moments | image | valeurs 16 bits lues comme flottants sur NVIDIA (trustno1 77e13a97, fxceless PR 927) | M |
