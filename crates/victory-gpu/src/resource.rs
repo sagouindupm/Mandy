@@ -1465,7 +1465,21 @@ static TARGETS_AT: std::sync::Mutex<std::collections::BTreeMap<u64, Vec<usize>>>
 /// `VICTORY_ALIAS_COPY=0`: none is found, as before; `=1`: only textures
 /// of one level and one layer, as at first.
 #[cfg(windows)]
-pub(crate) fn alias_of(this: This) -> Option<This> {
+pub(crate) fn alias_of(this: This) -> Option<Held> {
+    alias_found(this, true).map(Held)
+}
+
+/// Whether [`alias_of`] finds a texture for `this`, without holding it: for
+/// callers that only ask (and may hold other locks, under which the last
+/// reference of a held one must not go).
+#[cfg(windows)]
+pub(crate) fn has_alias(this: This) -> bool {
+    alias_found(this, false).is_some()
+}
+
+/// [`alias_of`]; `pin`: a reference is taken under the table's lock.
+#[cfg(windows)]
+fn alias_found(this: This, pin: bool) -> Option<This> {
     use std::sync::atomic::Ordering::Relaxed;
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if this.is_null()
@@ -1526,7 +1540,32 @@ pub(crate) fn alias_of(this: This) -> Option<This> {
             );
         }
     }
-    same.then_some(other)
+    // Pinned under the lock: once it is let go, the title can drop its last
+    // reference, and the caller's alias copy still needs the texture.
+    if !same || (pin && !crate::object::try_add_ref(other)) {
+        return None;
+    }
+    Some(other)
+}
+
+/// A title texture held alive ([`alias_of`]): a reference taken under the
+/// lock its destructor takes, given back when this goes.
+#[cfg(windows)]
+pub(crate) struct Held(This);
+
+#[cfg(windows)]
+impl Held {
+    /// The texture the handle keeps alive.
+    pub(crate) fn get(&self) -> This {
+        self.0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Held {
+    fn drop(&mut self) {
+        resource_release(self.0);
+    }
 }
 
 /// The format the title's shaders write textures as (`R32_UINT`), and the
@@ -1671,7 +1710,8 @@ pub(crate) fn cast_source(this: This) -> Option<(This, windows::Win32::Graphics:
     if pc_format(r.desc.format) != CAST_READ {
         return None;
     }
-    let source = alias_of(this)?;
+    // (Not held, as before: the caller may hold a slot's lock.)
+    let source = alias_found(this, false)?;
     let texture = host_resource(source)?;
     castable(texture).then(|| (source, texture.clone()))
 }
@@ -1799,7 +1839,7 @@ fn hosted(this: This, make: bool) -> Option<Made> {
         // The levels views show ([`held_only`]), those of the slots shaders
         // pick by index among them.
         let mut base = 0;
-        if shape_fits && r.host.placed.load(Relaxed) && held_only() && alias_of(this).is_none() {
+        if shape_fits && r.host.placed.load(Relaxed) && held_only() && !has_alias(this) {
             let wanted = r.host.wanted.load(Relaxed);
             let viewed = crate::descriptor::host::first_viewed(r.data() as u64).unwrap_or(u32::MAX);
             let first = wanted.min(viewed);
@@ -1811,7 +1851,7 @@ fn hosted(this: This, make: bool) -> Option<Made> {
         if texture.is_none()
             && shape_fits
             && r.host.placed.load(Relaxed)
-            && alias_of(this).is_none()
+            && !has_alias(this)
         {
             let cap = level_cap(&r.desc);
             if cap > base {

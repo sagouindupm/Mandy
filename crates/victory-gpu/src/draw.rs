@@ -4878,7 +4878,7 @@ fn readable(list: &HostList, kind: ResourceType, view: &View) {
             }
             let aliased = cast.is_some()
                 || crate::resource::alias_of(*resource as This)
-                    .is_some_and(|source| crate::texture::alias(list, *resource as This, source));
+                    .is_some_and(|source| crate::texture::alias(list, *resource as This, source.get()));
             if !aliased
                 && let Some(t) = crate::resource::host_copy(*resource as This)
                 && t.flags() & 0x7 == 0
