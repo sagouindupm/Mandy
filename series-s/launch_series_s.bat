@@ -40,6 +40,12 @@ set "VICTORY_UNWATCHED_FRAMES=2"
 rem Octets changes par le jeu sous les ecritures des shaders : envoyes groupes (ecarts de 16 octets), sans attendre la carte (-20 %% par image)
 set "VICTORY_MERGE_GAP=16"
 set "VICTORY_MERGE_RUNS=65536"
+rem Textures choisies par index envoyees par un thread a part (fxceless d4a528ba) ; zones vides du tas sautees (fxceless #1220) ; recopies groupees (#1230)
+set "VICTORY_HEAP_WORKER=1"
+set "VICTORY_HEAP_SYNC_ZERO_RUNS=1"
+set "VICTORY_READBACK_COALESCE=1"
+rem Couleurs NaN ou infinies mises a 0 : soleil noir et ciel en bandes sur NVIDIA (Humb8l, cool_fox-dlss)
+set "VICTORY_NAN_SCRUB=1"
 rem Eau turquoise : les deux calculs de l eau sans la forme "sans sauts profonds" (bandes vides sur NVIDIA)
 set "VICTORY_WAVE_DEEP_SKIPS_NOT=cad2edef5ecea3ba,731a39171b568298,5e7cd6d3557a6c35,3932709b61f074d0"
 

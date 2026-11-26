@@ -76,6 +76,11 @@ accélérée : à profiler).
 | DLSS mode performance | nous | 351 → 292 ms, image plus nette | `VICTORY_DLSS_MODE` |
 | Souris : clic = capture, Alt/Échap = libère (ne bascule plus) | cold-project-vi | confort | `gameinput.rs` |
 | `VICTORY_SKIP_PIPELINES` utilisable hors build diagnostics | nous | outil de test | `pipeline.rs` |
+| Textures choisies par index sur un thread à part (`VICTORY_HEAP_WORKER=1`) + PR #1220 (`HEAP_SYNC_ZERO_RUNS`), #1230 (`READBACK_COALESCE`), #1229, #1232 | fxceless d4a528ba et PR de nicolasveilleux, spk-c | passe du tas 99 ms au lieu de 130-180 ; image 284-289 ms, jamais plus lente (exe chauffé) | lanceurs |
+| Visages et bouches qui bougent : valeurs 16 bits passées telles quelles par les vues typées | fxceless PR #927 (tippythetaidum) | toujours actif (la traduction change : les shaders sont retraduits une fois) | `victory-shader` |
+| Soleil noir, ciel en bandes : couleurs NaN ou infinies mises à 0 (`VICTORY_NAN_SCRUB=1`) | Humb8l (cool_fox-dlss), d'après trustno1-coder | dans la clé du cache de shaders | lanceurs |
+| Sol qui clignote : une vue de constantes de 0 octet reste vide | avatarmanz / fxceless 619b2dc5 | — | `descriptor/host.rs` |
+| Texture écrite par la carte recopiée même si la liste l'avait déjà envoyée | fxceless 19a45d19 (PR #1241) | — | `texture.rs` |
 
 ## Rejeté (mesuré, ne pas refaire sans idée nouvelle)
 
@@ -112,9 +117,9 @@ Prenez une ligne, ouvrez une *issue* « [en cours] … » pour que personne ne f
 | 3d | Ne pas hacher/recopier les textures non écrites | ~5-10 ms sur le fil de soumission | regarder la surveillance d'écriture avant `blake3` | S-M |
 | 4 | Recopie vers le jeu (~60 ms) | sur le chemin critique | profil (`VICTORY_PROFILE=1`, PDB à côté de l'exe) ; comparaisons sur la carte | M |
 | 5 | Préparation CPU (~100 ms) | le plus gros poste | profil ; `TablePlan` (codec_d e05d463) | L |
-| 6 | Visages noirs par moments | image | valeurs 16 bits lues comme flottants sur NVIDIA (trustno1 77e13a97, fxceless PR 927) | M |
-| 7 | Soleil noir, ciel en bandes | image | `VICTORY_NAN_SCRUB` (Ranxanat0r/cool_fox-dlss a51ae6d, ~40 lignes) | S |
-| 8 | Buffers périmés avec `UNWATCHED_FRAMES=2` | image | codec_d 18bdf79 (balayage par tas, plage agrandie) | S |
+| 6 | Visages noirs par moments | image | PR #927 portée (visages qui bougent) ; reste à voir s'il y en a encore : avatarmanz e4245f3c (« black-face texture fixes », gros commit lié à d'autres) | M |
+| 7 | ~~Soleil noir, ciel en bandes~~ | fait (`VICTORY_NAN_SCRUB=1`) | | |
+| 8 | Buffers périmés avec `UNWATCHED_FRAMES=2` | image | codec_d 18bdf79 : dépend de `pool.rs`/`residency.rs` qu'on n'a pas (6 conflits dans `draw.rs`) ; porter seulement la partie `draw.rs` | M |
 | 9 | Eau peu profonde blanche, rectangles fantômes sur l'eau | image | `docs/deserialize-pipelines.md`, captures `VICTORY_CAPTURE_AT` | M |
 | 10 | Variables à mesurer | sans code | `VICTORY_WIDE_REFRESH=1` (1 passage : 221 ms), `VICTORY_TEXTURE_STAGE_MS=24 VICTORY_WINDOW_KB=1024 VICTORY_WINDOW_TAILS=1` (1 passage : 217 ms, p90 383 ms au lieu de ~500 : à confirmer), `VICTORY_JOIN_COPIES=1`, `VICTORY_INDIRECT_WINDOW=1`, `VICTORY_CARD_REHASH_RUNS=1` | S |
 | 11 | Mémoire de la carte écrite directement (Resizable BAR) | -2 Go de mémoire partagée | cold-project-vi 0030cd4 | M-L |
