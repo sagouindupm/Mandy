@@ -967,12 +967,32 @@ pub extern "system" fn XMemMapPhysicalPagesScatter(
 /// heap. Coalesces consecutive slices of one section into a single view;
 /// false if a source page is not mapped physical memory.
 pub fn map_alias(to: u64, from: u64, len: u64) -> bool {
-    let (to, from, len) = (to as usize, from as usize, len as usize);
+    map_aliases(&[(to, from, len)])
+}
+
+/// [`map_alias`] for each `(to, from, len)`, under one lock: the title's
+/// page-mapping batches map a constant page into hundreds of pages one by
+/// one, and each change waits for every read of title memory in place to
+/// end and holds back the reads that start meanwhile. All are tried; false
+/// if one failed.
+pub fn map_aliases(list: &[(u64, u64, u64)]) -> bool {
+    if list.is_empty() {
+        return true;
+    }
     let _costed = Costed::begin(None);
     let mut physical = physical();
     // As in `XMemMapPhysicalPages`: no read in place meets the gap.
     let _changing = victory_gpu::title_memory_remapping();
-    unmap(&mut physical, to, len);
+    let mut ok = true;
+    for &(to, from, len) in list {
+        ok &= alias(&mut physical, to, from, len);
+    }
+    ok
+}
+
+fn alias(physical: &mut Physical, to: u64, from: u64, len: u64) -> bool {
+    let (to, from, len) = (to as usize, from as usize, len as usize);
+    unmap(physical, to, len);
     if from == 0 || len == 0 {
         return true;
     }
@@ -1007,7 +1027,7 @@ pub fn map_alias(to: u64, from: u64, len: u64) -> bool {
             }
             run += next_run.min(total_pages - (page + run));
         }
-        if !map(&mut physical, to + page * PAGE, run * PAGE, first) {
+        if !map(physical, to + page * PAGE, run * PAGE, first) {
             return false;
         }
         page += run;

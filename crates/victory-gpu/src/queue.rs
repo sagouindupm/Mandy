@@ -1301,6 +1301,8 @@ extern "system" fn copy_page_mappings(
         unsafe { std::slice::from_raw_parts(batches, count as usize) }
     });
     let mut ok = true;
+    // Gathered, then mapped in one change (one lock for the whole call).
+    let mut list = Vec::new();
     for b in batches.into_iter().flatten() {
         if b.ranges.is_null() {
             continue;
@@ -1313,15 +1315,25 @@ extern "system" fn copy_page_mappings(
             let inside = |pages: u32| r.start.checked_add(pages).is_some_and(|e| e <= pool_pages);
             let source = pool + u64::from(r.start) * PAGE;
             ok &= match r.kind {
-                0 if inside(r.count) => map(at, source, len),
-                1 if inside(1) => (0..u64::from(r.count)).all(|k| map(at + k * PAGE, source, PAGE)),
-                2 => map(at, 0, len),
+                0 if inside(r.count) => {
+                    list.push((at, source, len));
+                    true
+                }
+                1 if inside(1) => {
+                    list.extend((0..u64::from(r.count)).map(|k| (at + k * PAGE, source, PAGE)));
+                    true
+                }
+                2 => {
+                    list.push((at, 0, len));
+                    true
+                }
                 3 => true,
                 _ => false,
             };
             at += len;
         }
     }
+    ok &= map(&list);
     if !ok {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| tracing::warn!(pool = format_args!("{pool:#x}"), "a page mapping failed"));
