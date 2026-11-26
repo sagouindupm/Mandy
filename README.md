@@ -20,7 +20,7 @@ Mesuré sur la machine de référence : **RTX 3050 8 Go, i5-12400F, 32 Go de RAM
 | | |
 |---|---|
 | Progression | Prologue terminé, chapitre I jusqu'à la mission en bateau |
-| Images par seconde | **4 à 5 fps** dans le monde (médiane 206-248 ms par image ; 474 ms la veille) |
+| Images par seconde | **4 à 5 fps** dans le monde avec DLSS performance (médiane 206-248 ms par image ; 474 ms la veille) ; sans DLSS, compter ~20 % de moins |
 | VRAM | ~5 Go sur 8 |
 | Eau | Turquoise, les bateaux et le joueur flottent |
 | Problèmes connus | Eau peu profonde blanche par endroits, visages noirs par moments, rectangles fantômes sur l'eau, textures qui arrivent en retard |
@@ -44,6 +44,16 @@ Tant que les shaders ne sont pas préparés, le lanceur demande au moteur d'atte
 (jusqu'à 3 s) au lieu de sauter le dessin : quelques ralentissements, pas d'écran noir.
 Pour les connaisseurs, `series-s\launch_series_s.bat` lance directement avec les mêmes réglages
 (DLSS en option, voir le fichier).
+
+**DLSS (cartes NVIDIA RTX), fortement conseillé** : nos chiffres sont mesurés avec DLSS en mode
+performance (le jeu calcule en 960x540, DLSS remet en 1080p : environ -20 % par image et une image plus
+nette). Téléchargez le SDK Streamline de NVIDIA (https://github.com/NVIDIAGameWorks/Streamline, page
+*Releases*), et copiez les 4 fichiers de `bin\x64` (`sl.interposer.dll`, `sl.common.dll`,
+`sl.dlss.dll`, `nvngx_dlss.dll`) dans un dossier **`streamline\`** à la racine du dépôt. Les lanceurs
+l'activent tout seuls quand ils les trouvent.
+
+**Préparez les shaders** (menu du lanceur) avant de mesurer : sinon le jeu attend chaque nouveau shader
+(pics de plusieurs secondes les premières minutes).
 
 **Cartes NVIDIA** : réglez la **taille du cache de shaders sur « Illimitée »** (Panneau de configuration
 NVIDIA → Gérer les paramètres 3D). Avec la limite par défaut de 4 Go, le cache se remplit et le jeu

@@ -1,4 +1,4 @@
-# keys.ps1 -At <seconds list> [-Vk -Scan] : hold a key (Enter unless said; Neptune: Space 0x20/0x39) 200 ms in the window at each time (seconds from now).
+# keys.ps1 <window title part> <seconds list> [-Vk -Scan] : hold a key (Enter unless said; Neptune: Space 0x20/0x39) 200 ms in the window at each time (seconds from now).
 # Windows may refuse to bring the window forward (foreground lock): an Alt tap unlocks it, and each press checks the window is in front first (3 tries).
 param([string]$Title = "", [string]$At, [int]$Vk = 0x0D, [int]$Scan = 0x1C)
 Add-Type @'
@@ -30,6 +30,7 @@ foreach ($s in ($At -split ',')) {
         Start-Sleep -Milliseconds 200
         $front = ([K]::GetForegroundWindow() -eq $h)
     }
+    if (-not $front) { "$s s: game not in front, no key sent"; continue }
     [K]::keybd_event([byte]$Vk, [byte]$Scan, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200
     [K]::keybd_event([byte]$Vk, [byte]$Scan, 2, [UIntPtr]::Zero)

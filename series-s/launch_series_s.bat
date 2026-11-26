@@ -5,8 +5,9 @@ setlocal
 set "GAME_EXE=C:\chemin\vers\game_scarlett_master.exe"
 set "VICTORY_EXE=%~dp0..\target\release\victory.exe"
 set "VICTORY_CONFIG=%~dp0..\victory.toml"
-rem Optionnel : DLSS (Streamline) si vous avez ses DLL
-rem set "VICTORY_DLSS_DIR=C:\chemin\vers\streamline\bin"
+rem DLSS (cartes NVIDIA RTX) : actif tout seul si les DLL de Streamline sont dans le dossier streamline\ du depot (voir README)
+if exist "%~dp0..\streamline\sl.interposer.dll" set "VICTORY_DLSS_DIR=%~dp0..\streamline"
+if exist "%~dp0..\streamline\sl.interposer.dll" set "VICTORY_DLSS_MODE=performance"
 rem Avec DLSS, mode Performance : le jeu calcule en 960x540 et la carte NVIDIA remet en 1080p
 rem (RTX 3050 : 292 ms par image au lieu de 351, image plus nette). Change en memoire l'echelle
 rem de rendu du jeu (2/3 vers 1/2) apres avoir verifie son code ; le fichier du jeu n'est pas touche.
