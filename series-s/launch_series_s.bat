@@ -36,6 +36,9 @@ rem L'eau : les bateaux et le joueur flottent
 set "VICTORY_TEXTURE_BACK=1"
 rem Memoire non surveillee recopiee une image sur deux (-17 %% par image)
 set "VICTORY_UNWATCHED_FRAMES=2"
+rem Bytes the title changes under shader writes go up joined over 16-byte gaps: no settle for them (233-216 ms vs ~280).
+set "VICTORY_MERGE_GAP=16"
+set "VICTORY_MERGE_RUNS=65536"
 
 "%VICTORY_EXE%" run "%GAME_EXE%" --console series-s --execute --unimplemented zero
 pause

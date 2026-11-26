@@ -47,6 +47,7 @@ $SeriesS = @{
     VICTORY_HEAP_USAGE = '1'; VICTORY_TEXTURE_SPILL = '1'; VICTORY_LEVELS_ON_DEMAND = '1'
     VICTORY_ASYNC_SUBMIT = '1'; VICTORY_QUEUE2 = '1'; VICTORY_COPY_PLAIN = '1'; VICTORY_FAST_CORES = '1'
     VICTORY_AMBIENT = '0.6'; VICTORY_TEXTURE_BACK = '1'; VICTORY_UNWATCHED_FRAMES = '2'
+    VICTORY_MERGE_GAP = '16'; VICTORY_MERGE_RUNS = '65536'
 }
 function Set-GameEnv {
     $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\dxil.dll' -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
