@@ -19,6 +19,20 @@ row after every test, negative results included.*
 - Ce qu'on lit dans le journal du jeu, ligne `... fps, ... ms/frame (X preparing ...; Y on the GPU;
   Z copying back ...)` et ligne `of the waiting for the card in settles, per frame, by what settled`.
 
+## ⚠️ Cache de shaders du pilote NVIDIA : à régler avant de mesurer
+
+Le pilote NVIDIA garde les pipelines qu'il a compilés dans `%LOCALAPPDATA%\NVIDIA\DXCache`,
+**4 Go par application par défaut**. VIctory en compile des milliers : le cache est plein en
+quelques jours de tests, et **tout exe compilé ensuite recompile ses pipelines à chaque lancement**
+(300-500 ms par image au lieu de ~210, pour un code identique). Panneau de configuration NVIDIA →
+Gérer les paramètres 3D → **Taille du cache de shaders → Illimitée** (ou 100 Go). Un exe nouveau
+(ou déplacé) a aussi besoin de 2-3 lancements pour remplir son cache : comparez des builds
+**chauffés**, jamais un nouvel exe contre un ancien.
+
+Conséquence ici : le cache était plein depuis le 26/11 à 05h25. Les essais marqués **(à remesurer)**
+ci-dessous comparaient un exe compilé après cette heure à l'ancien exe en cache : leur verdict ne
+vaut rien tant qu'ils ne sont pas refaits. Les essais de **variables** (même exe) restent valables.
+
 ## Où on en est (26/11/2026)
 
 | | ms par image (médiane) | fps |
@@ -68,19 +82,19 @@ accélérée : à profiler).
 | Essai | Origine | Résultat |
 |---|---|---|
 | `VICTORY_MERGE_RUNS=65536` seul | — | 290 / 343 ms : l'attente se déplace vers « title memory read » |
-| Passe « masquée » des octets changés (`VICTORY_MASKED_MIN=64`, code présent, désactivé) | cold-project-vi aff5fb2 (porté) | 388 / 280 ms, +1,3 Go de VRAM ; l'attente passe à « title memory read » (75 ms) |
-| Passe du tas par tranches (`VICTORY_HEAP_ROLL=1`, code présent, désactivé) | cold-project-vi 1141d35 | passe 110-170 ms au lieu de 63-150 ; 250 / 453 ms |
-| Saut des shaders de ray tracing (`rt_off_hashes.txt` + `VICTORY_BVH_HOLD=1`) | trustno1-coder/VIctory-NVIDIA | 362 / 241 ms ; eau grise et verte avec des taches noires |
+| Passe « masquée » des octets changés (`VICTORY_MASKED_MIN=64`, code présent, désactivé) **(à remesurer)** | cold-project-vi aff5fb2 (porté) | 388 / 280 ms, +1,3 Go de VRAM ; l'attente passe à « title memory read » (75 ms) |
+| Passe du tas par tranches (`VICTORY_HEAP_ROLL=1`, code présent, désactivé) **(à remesurer)** | cold-project-vi 1141d35 | passe 110-170 ms au lieu de 63-150 ; 250 / 453 ms |
+| Saut des shaders de ray tracing (`rt_off_hashes.txt` + `VICTORY_BVH_HOLD=1`) (vitesse à remesurer ; l'eau abîmée reste vraie) | trustno1-coder/VIctory-NVIDIA | 362 / 241 ms ; eau grise et verte avec des taches noires |
 | `VICTORY_BVH_HOLD=1` seul | variable existante | 252 / 217 ms ; eau vert sombre et taches noires |
 | `VICTORY_HEAP_SYNC_TABLES=0` | variable existante | 265 / 276 ms, pas de gain |
 | `VICTORY_ASYNC_PRESENT=1` | variable existante | 272 / 294 contre 241 / 269 ms |
 | TABLE_BUFFERS / SYNC_NULL_SKIP, DYNAMIC_SLOTS | uiliannn/VItoriaBr | plus lent ici |
 | Cache de recherche (#1237) | fxceless | plus lent ici |
 | Passe du tas en fils, mémoïsation, cache de clés | nous | plus lent (verrou partagé) |
-| Tas sous 512 verrous + chemin rapide sans verrou (branche `perf/heap-locks`) | d'après avatarmanz 6c17ce9 | passe du tas 144-155 ms au lieu de 97 ; 440 / 263 ms contre 213 : le verrou n'est pas le goulot |
+| Tas sous 512 verrous + chemin rapide sans verrou (branche `perf/heap-locks`) **(à remesurer)** | d'après avatarmanz 6c17ce9 | passe du tas 144-155 ms au lieu de 97 ; 440 / 263 ms contre 213 : le verrou n'est pas le goulot |
 | Formes wave64 « deep skips » coupées partout | — | pire ; seulement les 4 programmes de l'eau |
 | DLSS ultra performance | — | ~4 % seulement, image floue |
-| Builds entiers d'autres forks sur cette machine | Neptune, avatarmanz + réglages cool_fox, cold-project-vi | 290-450 ms, image moins bonne ou plantage |
+| Builds entiers d'autres forks sur cette machine **(à remesurer : nouveaux exe)** | Neptune, avatarmanz + réglages cool_fox, cold-project-vi | 290-450 ms, image moins bonne ou plantage |
 | Reflets tenus (Belobug e633374b) | Belobug | eau toujours blanche |
 | Constructeur BVH seul | — | plantage à 115 s |
 

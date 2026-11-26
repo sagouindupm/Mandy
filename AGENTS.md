@@ -94,6 +94,11 @@ machine, but single ideas from them won (see "Gardé").
 - Build: `cargo build --release -p victory`; checks: `cargo clippy --workspace --all-targets --locked -- -D warnings`,
   `cargo test -p <crate>`. A diagnostics build (`--features diagnostics`) adds captures
   (`VICTORY_CAPTURE`, `VICTORY_CAPTURE_AT`, `VICTORY_DUMP_TARGETS`) and is slower.
+- **NVIDIA shader cache:** the driver keeps compiled pipelines in `%LOCALAPPDATA%\NVIDIA\DXCache`,
+  4 GB per application by default. Once full, every newly built exe recompiles its pipelines at
+  every launch and looks 1.5-2x slower for identical code. Ask your user to set NVIDIA Control
+  Panel → Manage 3D settings → Shader Cache Size → Unlimited, and compare warmed builds only
+  (2-3 launches each), never a new exe against an old one.
 - Don't compile while a measurement runs on the same PC, and don't run two game instances at once:
   both ruin the numbers.
 - Prefer environment switches you can A/B without rebuilding. Many already exist, off by default:

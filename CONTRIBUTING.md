@@ -14,7 +14,10 @@ Aujourd'hui : ~4-5 images par seconde sur RTX 3050. Objectif : 15.
 3. Compilez : `cargo build --release -p victory` (chaîne Rust dans `rust-toolchain.toml`, outils
    MSVC et Windows SDK).
 4. Lancez avec `series-s\Sagouindupm.bat` (ou `series-s\launch_series_s.bat`).
-5. Préparez votre banc de mesure : [scripts/bench/run.sh](scripts/bench/run.sh) (variables à
+5. **Cartes NVIDIA** : Panneau de configuration NVIDIA → Gérer les paramètres 3D → **Taille du cache
+   de shaders → Illimitée**. Sinon, une fois les 4 Go par défaut remplis, chaque nouvelle version
+   recompile ses shaders à chaque lancement et paraît bien plus lente (voir `docs/essais.md`).
+6. Préparez votre banc de mesure : [scripts/bench/run.sh](scripts/bench/run.sh) (variables à
    renseigner en tête du fichier) et une copie de votre sauvegarde à l'endroit mesuré.
 
 ## Se répartir le travail (personne ne se marche dessus)

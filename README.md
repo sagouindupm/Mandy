@@ -45,6 +45,11 @@ Tant que les shaders ne sont pas préparés, le lanceur demande au moteur d'atte
 Pour les connaisseurs, `series-s\launch_series_s.bat` lance directement avec les mêmes réglages
 (DLSS en option, voir le fichier).
 
+**Cartes NVIDIA** : réglez la **taille du cache de shaders sur « Illimitée »** (Panneau de configuration
+NVIDIA → Gérer les paramètres 3D). Avec la limite par défaut de 4 Go, le cache se remplit et le jeu
+recompile ses shaders à chaque lancement (jusqu'à 2 fois plus lent). Les 2-3 premiers lancements d'une
+nouvelle version sont plus lents : le pilote remplit son cache.
+
 Commandes clavier : **G** bascule entre à pied et véhicule. À pied : ZQSD/WASD, souris pour la caméra
 (**clic pour la capturer, Alt ou Échap pour la libérer**), X pour marcher. En véhicule ou en bateau : W ou clic gauche
 pour accélérer, S ou clic droit pour freiner, A/D pour tourner, Maj gauche pour le frein à main.
