@@ -882,12 +882,12 @@ pub(crate) fn show_from(desc: &mut D3D12_SHADER_RESOURCE_VIEW_DESC, first: u32, 
         D3D12_SRV_DIMENSION_TEXTURE2D => {
             // SAFETY: `ViewDimension` selects `Texture2D`.
             let view = unsafe { &mut desc.Anonymous.Texture2D };
-            clamp(&mut view.MostDetailedMip, &mut view.MipLevels);
+            clamp(&mut view.MostDetailedMip, &mut view.MipLevels, &mut view.ResourceMinLODClamp);
         }
         D3D12_SRV_DIMENSION_TEXTURE2DARRAY => {
             // SAFETY: `ViewDimension` selects `Texture2DArray`.
             let view = unsafe { &mut desc.Anonymous.Texture2DArray };
-            clamp(&mut view.MostDetailedMip, &mut view.MipLevels);
+            clamp(&mut view.MostDetailedMip, &mut view.MipLevels, &mut view.ResourceMinLODClamp);
         }
         _ => {}
     }
