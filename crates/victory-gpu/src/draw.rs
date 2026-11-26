@@ -1611,14 +1611,15 @@ impl State {
             .entry(std::ptr::from_ref(host) as usize)
             .or_insert_with(|| (0, Ranges::new()));
         let changed = host.buffer_changes();
-        // Rolling (`VICTORY_HEAP_ROLL`, on; `0` = all slots every 16th pass
-        // as before): after the first pass, each pass looks again at the
+        // Rolling (`VICTORY_HEAP_ROLL=1`; off: all slots every 16th pass as
+        // before, which measured faster here: 63-150 ms a pass against
+        // 110-170 ms rolling, RTX 3050 + i5-12400F): after the first pass, each pass looks again at the
         // changed slots and at one 16th of all of them (index mod 16), so
         // every slot is still seen every 16 passes, without a pass over all
         // 83,000 (a ~140 ms spike every 16 frames). As cold-project-vi's
         // rolling buckets (1141d35, 3df3e4d), simpler.
         static ROLL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let roll = *ROLL.get_or_init(|| std::env::var_os("VICTORY_HEAP_ROLL").is_none_or(|v| v != "0"));
+        let roll = *ROLL.get_or_init(|| std::env::var_os("VICTORY_HEAP_ROLL").is_some_and(|v| v == "1"));
         let slots = if *passes == 0 || (!roll && *passes % 16 == 0) {
             ranges.clear();
             host.buffer_slots()

@@ -31,8 +31,8 @@ row after every test, negative results included.*
 Où part une image aujourd'hui (~210 ms) : **préparation CPU ~100-125 ms**, GPU 30-100 ms, recopie
 vers la mémoire du jeu ~60 ms, plus ~40-50 ms d'attente de la carte pour une copie de buffer
 (« title memory read »). En parallèle, la passe sur les emplacements de buffers du tas de
-descripteurs prend 60-150 ms sur un autre fil, bloquée par un verrou partagé avec les fils
-d'enregistrement du jeu.
+descripteurs prend 60-150 ms sur un autre fil (ni un verrou plus fin ni des fils en plus ne l'ont
+accélérée : à profiler).
 
 ## Gardé
 
@@ -62,6 +62,7 @@ d'enregistrement du jeu.
 | TABLE_BUFFERS / SYNC_NULL_SKIP, DYNAMIC_SLOTS | uiliannn/VItoriaBr | plus lent ici |
 | Cache de recherche (#1237) | fxceless | plus lent ici |
 | Passe du tas en fils, mémoïsation, cache de clés | nous | plus lent (verrou partagé) |
+| Tas sous 512 verrous + chemin rapide sans verrou (branche `perf/heap-locks`) | d'après avatarmanz 6c17ce9 | passe du tas 144-155 ms au lieu de 97 ; 440 / 263 ms contre 213 : le verrou n'est pas le goulot |
 | Formes wave64 « deep skips » coupées partout | — | pire ; seulement les 4 programmes de l'eau |
 | DLSS ultra performance | — | ~4 % seulement, image floue |
 | Builds entiers d'autres forks sur cette machine | Neptune, avatarmanz + réglages cool_fox, cold-project-vi | 290-450 ms, image moins bonne ou plantage |
@@ -75,8 +76,7 @@ Prenez une ligne, ouvrez une *issue* « [en cours] … » pour que personne ne f
 
 | # | Quoi | Pourquoi | Pistes | Taille |
 |---|---|---|---|---|
-| 1 | **Verrous par emplacement du tas** (branche `perf/heap-locks`, en mesure) | la passe sur les buffers (60-150 ms) et les fils du jeu attendent le même verrou | d'après avatarmanz 6c17ce9 | fait, à mesurer |
-| 2 | Ensembles d'emplacements en bits, passe du tas sur plusieurs fils | même verrou ; ~5 ms + parallélisme | avatarmanz c3e643e, 44629de (`shows_none`) | M |
+| 1 | Passe du tas : comprendre où partent ses 100-150 ms | ni le verrou ni les fils n'ont aidé ; profiler d'abord | build diagnostics + `VICTORY_PROFILE=1` ; avatarmanz 44629de (`shows_none` : 32 000 emplacements vides sur 41 000 sautés) | M |
 | 3 | **Attente « title memory read »** (~40-50 ms par image) | une copie de buffer vers une zone que les shaders en vol écrivent attend la carte | `host.rs blocked_by` : faire passer la copie dans la file des vols au lieu d'attendre | M-L |
 | 4 | Recopie vers le jeu (~60 ms) | sur le chemin critique | profil (`VICTORY_PROFILE=1`, PDB à côté de l'exe) ; comparaisons sur la carte | M |
 | 5 | Préparation CPU (~100 ms) | le plus gros poste | profil ; `TablePlan` (codec_d e05d463) | L |

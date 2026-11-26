@@ -60,7 +60,6 @@ Nos propres travaux :
 - **Streaming** : les pages de mémoire mappées par lots sous un seul verrou (-17 % par image).
 - **Moins d'attentes de la carte** : octets changés sous les écritures des shaders envoyés groupés,
   copies plus grandes gardées sur la carte, mémoire non surveillée recopiée une image sur deux.
-- **Tas de descripteurs sous 512 verrous** au lieu d'un seul (en mesure).
 - **Commandes clavier qui ne perdent plus les appuis** à quelques images par seconde.
 - **Sauvegardes** : emplacements XGameSave manquants (enregistrement bloquant, énumération par préfixe).
 - **Shaders** : lignes auxiliaires des pixels gardées hors des boucles, profondeur anticipée déclarée,
@@ -70,7 +69,7 @@ Nos propres travaux :
 
 Repris d'autres projets, avec leurs auteurs d'origine conservés (`cherry-pick -x` ou nommés dans le
 message) :
-- **avatarmanz** (VIctory-7900XTX) : cibles de rendu et pipelines non redéfinis, verrous par emplacement du tas.
+- **avatarmanz** (VIctory-7900XTX) : cibles de rendu et pipelines non redéfinis.
 - **trustno1-coder** (VIctory-NVIDIA) : copies sur la carte jusqu'à 1,5 Go.
 - **edupode / GextFRDD** (cold-project-vi) : capture de la souris, idées sur les attentes de la carte.
 - **Geckomacabre** : les textures que le jeu relit sur le processeur (l'eau) sont recopiées en mémoire du jeu.
