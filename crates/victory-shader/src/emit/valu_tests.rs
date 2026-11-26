@@ -264,6 +264,31 @@ fn run_cases_on(
 }
 
 #[test]
+fn ds_swizzle_reads_only_active_compute_lanes() {
+    let value = 0xdead_beef;
+    for (offset, threads, narrow, expected) in [
+        (0x041f, 1, false, 0), // bitmask-mode swap adjacent lanes (lane 1 absent)
+        (0x041f, 2, true, 0),  // bitmask-mode swap adjacent lanes (lane 1 masked by EXEC)
+        (0x80b1, 2, true, 0),  // quad-mode swap adjacent lanes (lane 1 masked by EXEC)
+        (0x041f, 2, false, value),
+        (0x80b1, 2, false, value),
+    ] {
+        let mut words = vec![vop1(0x001, 5, 128)];
+        if narrow {
+            words.push(0x7DA4_0080); // v_cmpx_eq_u32 0, v0 (local thread ID)
+        }
+        words.extend([0xD8D4_0000 | offset, 0x0500_0001]); // ds_swizzle_b32 v5, v1
+        // Only one lane writes the output, even if both ran the swizzle.
+        words.extend([0x7DA4_0080, vop1(0x001, 0, vgpr(5))]);
+        let shader = build_cs(&words, threads, 0);
+        // WARP cannot create this shader's fixed WaveSize(32) pipeline on SM 6.6.
+        run_cases_on(&shader, &[[value, 0, 0, 0]], &[("hardware", false)], |_, _, _, got| {
+            assert_eq!(got, expected, "offset {offset:#x}, {threads} threads, narrowed {narrow}");
+        });
+    }
+}
+
+#[test]
 fn scalar_quad_masks_pack_nibbles_and_set_scc() {
     let pack_words = |opcode: u32| {
         [
