@@ -23,8 +23,6 @@ rem Correctifs de rendu
 set "VICTORY_HEAP_SYNC_TABLES=1"
 set "VICTORY_SHADER_LOOP_LIMIT=256"
 set "VICTORY_AMBIENT=0.6"
-rem Passes de profondeur seule de l'ombre du soleil retirees (gros gain, ombres simplifiees)
-set "VICTORY_LITE=1280x5120"
 rem Soumission et copies
 set "VICTORY_ASYNC_SUBMIT=1"
 set "VICTORY_QUEUE2=1"
