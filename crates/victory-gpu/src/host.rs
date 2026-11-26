@@ -2823,14 +2823,55 @@ fn touches(ranges: &[(usize, usize)], from: usize, to: usize) -> bool {
 fn join_ranges(ranges: &mut Vec<(usize, usize)>, more: impl IntoIterator<Item = (usize, usize)>) {
     ranges.extend(more.into_iter().filter(|r| r.0 < r.1));
     ranges.sort_unstable();
-    let mut out: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
-    for &(from, to) in ranges.iter() {
-        match out.last_mut() {
-            Some(last) if from <= last.1 => last.1 = last.1.max(to),
-            _ => out.push((from, to)),
+    // Compact the sorted intervals in place. The write cursor never
+    // advances past the read cursor, so unread input cannot be overwritten.
+    let mut kept = 0;
+    for read in 0..ranges.len() {
+        let (from, to) = ranges[read];
+        if kept != 0 && from <= ranges[kept - 1].1 {
+            ranges[kept - 1].1 = ranges[kept - 1].1.max(to);
+        } else {
+            ranges[kept] = (from, to);
+            kept += 1;
         }
     }
-    *ranges = out;
+    ranges.truncate(kept);
+}
+
+#[cfg(test)]
+mod interval_compaction_tests {
+    #[test]
+    fn in_place_interval_compaction_matches_allocating_reference() {
+        let mut seed = 0x5e4db6d3u64;
+        for n in [0usize, 1, 17, 128, 4096] {
+            for _ in 0..32 {
+                let mut ranges = Vec::new();
+                let mut more = Vec::new();
+                for _ in 0..n {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    let from = (seed % 8192) as usize;
+                    more.push((from, from + ((seed >> 32) % 32) as usize));
+                }
+                for half in more.chunks(n.div_ceil(2).max(1)) {
+                    let mut expected = ranges.clone();
+                    expected.extend(half.iter().copied().filter(|r| r.0 < r.1));
+                    expected.sort_unstable();
+                    let mut reference: Vec<(usize, usize)> = Vec::new();
+                    for (from, to) in expected {
+                        match reference.last_mut() {
+                            Some(last) if from <= last.1 => last.1 = last.1.max(to),
+                            _ => reference.push((from, to)),
+                        }
+                    }
+                    super::join_ranges(&mut ranges, half.iter().copied());
+                    assert_eq!(ranges, reference);
+                }
+            }
+        }
+    }
+
 }
 
 /// Whether anything is in the air.
