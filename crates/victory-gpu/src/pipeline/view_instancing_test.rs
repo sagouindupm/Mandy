@@ -49,6 +49,7 @@ fn shader_bytes(dxc: &std::path::Path, dir: &std::path::Path) -> [Vec<u8>; 2] {
                     root_srvs: vec![],
                     root_uavs: vec![],
                     root_indexed_views: vec![],
+                    half_views: vec![],
                 },
                 used: vec![],
                 stores: false,

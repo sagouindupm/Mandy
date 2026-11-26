@@ -33,6 +33,19 @@ Conséquence ici : le cache était plein depuis le 26/11 à 05h25. Les essais ma
 ci-dessous comparaient un exe compilé après cette heure à l'ancien exe en cache : leur verdict ne
 vaut rien tant qu'ils ne sont pas refaits. Les essais de **variables** (même exe) restent valables.
 
+**Deux autres pièges (26/11 au soir)** :
+- **Traducteur modifié = tout est froid.** La clé du cache de shaders contient le traducteur et les listes
+  `VICTORY_WAVE_WIDE_ONLY`, `FIRSTLANE_OWN_ONLY`, `HEAP_USAGE`, `NAN_SCRUB` : un changement de l'un d'eux
+  retraduit tout, et les ~3 500 pipelines de démarrage ont un nouveau code que le pilote recompile
+  (~400 par lancement). Les passages froids n'atteignent pas le bateau à temps : les touches tombent au
+  mauvais moment et la partie finit ailleurs (plage, à pied). À faire avant de mesurer :
+  `victory translate <shaders> --warm <liste des hash vus en jeu>` (même environnement que le passage,
+  plus `VICTORY_HOST_WAVE=32 VICTORY_HOST_ROVS=1 VICTORY_VIEW_LIMIT=999999` ; ~11-14 min), puis 2-3
+  passages de chauffe. Regroupez les changements du traducteur.
+- **Un seul dossier de cache pour tous les builds** : la liste des pipelines de démarrage
+  (`pipelines/early-pipelines.txt`) et la bibliothèque sont réécrites par chaque exe. Un build d'un autre
+  fork lancé une fois refroidit le nôtre : donnez-lui son propre `VICTORY_CACHE_DIR`.
+
 ## Où on en est (26/11/2026)
 
 | | ms par image (médiane) | fps |
@@ -41,6 +54,7 @@ vaut rien tant qu'ils ne sont pas refaits. Les essais de **variables** (même ex
 | + lot de mappage (#4) | ~394 | 2,5 |
 | + cibles/pipelines non redéfinies (#6, avatarmanz) + `UNWATCHED_FRAMES=2` | ~250-280 | 3,6-4,0 |
 | + `MERGE_GAP=16` + `CARD_BUFFERS_MB=1536` (26/11) | **~206-248** | **4,0-4,9** |
+| + mise à jour image, dessins mesh par la carte, ports du 26/11 au soir (PR #18, build chauffé) | 212-322 (images lourdes en régime : 178-260) | 3,1-4,7 |
 
 Où part une image aujourd'hui (~210 ms) : **préparation CPU ~100-125 ms**, GPU 30-100 ms, recopie
 vers la mémoire du jeu ~60 ms, plus ~40-50 ms d'attente de la carte pour une copie de buffer
@@ -76,6 +90,17 @@ accélérée : à profiler).
 | DLSS mode performance | nous | 351 → 292 ms, image plus nette | `VICTORY_DLSS_MODE` |
 | Souris : clic = capture, Alt/Échap = libère (ne bascule plus) | cold-project-vi | confort | `gameinput.rs` |
 | `VICTORY_SKIP_PIPELINES` utilisable hors build diagnostics | nous | outil de test | `pipeline.rs` |
+| Textures choisies par index sur un thread à part (`VICTORY_HEAP_WORKER=1`) + PR #1220 (`HEAP_SYNC_ZERO_RUNS`), #1230 (`READBACK_COALESCE`), #1229, #1232 | fxceless d4a528ba et PR de nicolasveilleux, spk-c | passe du tas 99 ms au lieu de 130-180 ; image 284-289 ms, jamais plus lente (exe chauffé) | lanceurs |
+| Visages et bouches qui bougent : valeurs 16 bits passées telles quelles par les vues typées | fxceless PR #927 (tippythetaidum) | toujours actif (la traduction change : les shaders sont retraduits une fois) | `victory-shader` |
+| Soleil noir, ciel en bandes : couleurs NaN ou infinies mises à 0 (`VICTORY_NAN_SCRUB=1`) | Humb8l (cool_fox-dlss), d'après trustno1-coder | dans la clé du cache de shaders | lanceurs |
+| Sol qui clignote : une vue de constantes de 0 octet reste vide | avatarmanz / fxceless 619b2dc5 | — | `descriptor/host.rs` |
+| Texture écrite par la carte recopiée même si la liste l'avait déjà envoyée | fxceless 19a45d19 (PR #1241) | — | `texture.rs` |
+| Dessins mesh lancés par la carte (`VICTORY_MESH_LAUNCH`, actif) : un étage d'amplification lit et borne chaque enregistrement, plus de passe ni d'attente entre deux dessins | stellarr-studio/kelvaroq patch 0041 (chez eux 198 → 120 ms sur RTX 5080) | ici ~295 ms, comme avant (le goulot est le CPU) ; `launch_code.rs` recompilé ici depuis `launch.hlsl` | `launch.rs` |
+| Recopies de textures écrites dans la mémoire du jeu par un fil à part (`VICTORY_TEXBACK_ASYNC`, actif) | Indy2l (trustno1-coder/VIctory-NVIDIA 2d1dc382, RTX 3060 + i5-12400F) | retire l'attente du verrou de mappage du fil de recopie | `texback.rs` |
+| Tampon DirectStorage du jeu porté à 256 Mo minimum (`VICTORY_DSTORAGE_STAGING_MB`) | CGBJ (cesarzxk) d'après cool_fox | — | `dstorage.rs` |
+| MAD/MAC « legacy » fusionnés, sources dénormales mises à 0 comme sur RDNA 2 | Marvisak #1554 (Calvix2k), fxceless PR #1026 | cœurs noirs dans les reflets les plus vifs de l'eau ; test unitaire sur la carte OK | `lower.rs` |
+| Choix de la carte (`VICTORY_ADAPTER`) ; sans réglage : la plus puissante (portables Optimus : plus la carte Intel) | trustno1-coder 033be27f + nous | #14 | `host.rs` |
+| Fenêtres de mémoire du jeu dans la mémoire de la carte vue par le CPU (`VICTORY_WINDOWS_BAR_MB`, désactivé ; 3072 pour les PC à 16 Go) | « local » bd68f5e1 (avatarmanz, trustno1) | sur 16 Go : plus de plantage 0x8007000E et 10-12 fps au lieu de 1,6-3 (RTX 3060, trustno1 #6) ; à mesurer ici (32 Go) | `shadow.rs` |
 
 ## Rejeté (mesuré, ne pas refaire sans idée nouvelle)
 
@@ -97,6 +122,10 @@ accélérée : à profiler).
 | Builds entiers d'autres forks sur cette machine **(à remesurer : nouveaux exe)** | Neptune, avatarmanz + réglages cool_fox, cold-project-vi | 290-450 ms, image moins bonne ou plantage |
 | Reflets tenus (Belobug e633374b) | Belobug | eau toujours blanche |
 | Constructeur BVH seul | — | plantage à 115 s |
+| trustno1-coder/VIctory-NVIDIA tel quel, son jeu de réglages (540p, upscaler du jeu, RT coupé), cache chauffé | trustno1 | ~5 s par image au 2e passage, 20 Go de RAM : inutilisable ici |
+| kelvaroq complet (fxceless f85101b + patches 0000-0064), ses réglages par défaut, sans DLSS | stellarr-studio | images lourdes ~300 ms : pas mieux ; on a pris le 0041 |
+| Réglages du « run 279 » fxceless qu'on avait sans les activer : `INDIRECT_WINDOW=1 CARD_REHASH_RUNS=1 BACK_OWN_VIEW=1 STAGING_POOL=0 CARD_WINDOWS_MB=1024` | fxceless | 295 ms, comme sans |
+| Eau : `VICTORY_WAVE_WIDE_ONLY` sans les deux programmes de volumétrie (5dc3…, 6f22…) | cool_fox PR #24, fxceless PR #695 | l'eau blanche des cinématiques reste blanche : ce n'est pas la cause. En jeu l'eau reste bonne et le passage était plus rapide (212 ms, un seul passage) : à confirmer |
 
 ## À essayer (par ordre d'intérêt)
 
@@ -112,9 +141,9 @@ Prenez une ligne, ouvrez une *issue* « [en cours] … » pour que personne ne f
 | 3d | Ne pas hacher/recopier les textures non écrites | ~5-10 ms sur le fil de soumission | regarder la surveillance d'écriture avant `blake3` | S-M |
 | 4 | Recopie vers le jeu (~60 ms) | sur le chemin critique | profil (`VICTORY_PROFILE=1`, PDB à côté de l'exe) ; comparaisons sur la carte | M |
 | 5 | Préparation CPU (~100 ms) | le plus gros poste | profil ; `TablePlan` (codec_d e05d463) | L |
-| 6 | Visages noirs par moments | image | valeurs 16 bits lues comme flottants sur NVIDIA (trustno1 77e13a97, fxceless PR 927) | M |
-| 7 | Soleil noir, ciel en bandes | image | `VICTORY_NAN_SCRUB` (Ranxanat0r/cool_fox-dlss a51ae6d, ~40 lignes) | S |
-| 8 | Buffers périmés avec `UNWATCHED_FRAMES=2` | image | codec_d 18bdf79 (balayage par tas, plage agrandie) | S |
+| 6 | Visages noirs par moments | image | PR #927 portée (visages qui bougent) ; reste à voir s'il y en a encore : avatarmanz e4245f3c (« black-face texture fixes », gros commit lié à d'autres) | M |
+| 7 | ~~Soleil noir, ciel en bandes~~ | fait (`VICTORY_NAN_SCRUB=1`) | | |
+| 8 | Buffers périmés avec `UNWATCHED_FRAMES=2` | image | codec_d 18bdf79 : dépend de `pool.rs`/`residency.rs` qu'on n'a pas (6 conflits dans `draw.rs`) ; porter seulement la partie `draw.rs` | M |
 | 9 | Eau peu profonde blanche, rectangles fantômes sur l'eau | image | `docs/deserialize-pipelines.md`, captures `VICTORY_CAPTURE_AT` | M |
 | 10 | Variables à mesurer | sans code | `VICTORY_WIDE_REFRESH=1` (1 passage : 221 ms), `VICTORY_TEXTURE_STAGE_MS=24 VICTORY_WINDOW_KB=1024 VICTORY_WINDOW_TAILS=1` (1 passage : 217 ms, p90 383 ms au lieu de ~500 : à confirmer), `VICTORY_JOIN_COPIES=1`, `VICTORY_INDIRECT_WINDOW=1`, `VICTORY_CARD_REHASH_RUNS=1` | S |
 | 11 | Mémoire de la carte écrite directement (Resizable BAR) | -2 Go de mémoire partagée | cold-project-vi 0030cd4 | M-L |

@@ -50,6 +50,7 @@ $SeriesS = @{
     VICTORY_ASYNC_SUBMIT = '1'; VICTORY_QUEUE2 = '1'; VICTORY_COPY_PLAIN = '1'; VICTORY_FAST_CORES = '1'
     VICTORY_AMBIENT = '0.6'; VICTORY_TEXTURE_BACK = '1'; VICTORY_UNWATCHED_FRAMES = '2'; VICTORY_WAVE_DEEP_SKIPS_NOT = 'cad2edef5ecea3ba,731a39171b568298,5e7cd6d3557a6c35,3932709b61f074d0'
     VICTORY_MERGE_GAP = '16'; VICTORY_MERGE_RUNS = '65536'
+    VICTORY_HEAP_WORKER = '1'; VICTORY_HEAP_SYNC_ZERO_RUNS = '1'; VICTORY_READBACK_COALESCE = '1'; VICTORY_NAN_SCRUB = '1'
 }
 function Set-GameEnv {
     $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\dxil.dll' -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1

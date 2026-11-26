@@ -36,6 +36,8 @@ pub mod frame;
 #[cfg(windows)]
 pub mod framelog;
 #[cfg(windows)]
+mod heap_worker;
+#[cfg(windows)]
 mod host;
 #[cfg(windows)]
 mod over;
@@ -43,6 +45,7 @@ mod over;
 mod indirect;
 #[cfg(windows)]
 mod inplace;
+mod launch;
 pub mod list;
 pub mod object;
 pub mod pipeline;

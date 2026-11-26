@@ -181,6 +181,14 @@ fn mirror(handle: u64) {
 /// `VICTORY_HEAP_SYNC=0`: not done, as before. [`SYNCED`] counts.
 #[cfg(windows)]
 pub(crate) fn sync_heaps() {
+    static SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    sync_heaps_inner(*SKIP.get_or_init(|| {
+        std::env::var_os("VICTORY_HEAP_SYNC_ZERO_RUNS").is_some_and(|v| v == "1")
+    }));
+}
+
+#[cfg(windows)]
+fn sync_heaps_inner(skip_cold: bool) {
     use std::sync::atomic::Ordering::Relaxed;
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*ON.get_or_init(|| std::env::var_os("VICTORY_HEAP_SYNC").is_none_or(|v| v != "0")) {
@@ -219,7 +227,7 @@ pub(crate) fn sync_heaps() {
                     // (`HostHeap::mirror_copied_page`); one by one below
                     // with `VICTORY_HEAP_SYNC_PAGE=0`.
                     let slots = if page_at_once() {
-                        let (seen, made) = host.mirror_copied_page(slots, (start, step), from, &page_bytes);
+                        let (seen, made) = host.mirror_copied_page(slots, (start, step), from, &page_bytes, skip_cold);
                         looked += seen;
                         mirrored += made;
                         0..0
@@ -929,6 +937,21 @@ pub(crate) fn view(handle: u64) -> Option<View> {
     view_at(i, generation)
 }
 
+/// The view recorded at `handle`, and what says which record that is
+/// (`host::HostHeap::publish`).
+#[cfg(windows)]
+pub(crate) fn view_and_key(handle: u64) -> Option<(View, u64)> {
+    if handle == 0 {
+        return None;
+    }
+    // SAFETY: as in `view`.
+    let [tag, i, generation] = unsafe { (handle as *const [u32; 3]).read_unaligned() };
+    if tag != VIEW_TAG {
+        return None;
+    }
+    Some((view_at(i, generation)?, u64::from(generation) << 32 | u64::from(i)))
+}
+
 /// A description of `N` words, if the title passes one.
 fn words<const N: usize>(desc: *const [u32; N]) -> Option<[u32; N]> {
     // SAFETY: the title passes a description or null.
@@ -1219,6 +1242,74 @@ mod tests {
         );
     }
 
+    /// A table made afresh for a draw holds the descriptors its shader
+    /// moves halves through (`HostShader::half_views`), also past the range
+    /// starts its used-resource entries give: with one entry for a range
+    /// from dword 0 and a 16-bit float buffer view at dword 8, the table
+    /// takes two dynamic slots, so the next allocation does not land on the
+    /// view's. (The case avt0m4t48 found in review on #927.)
+    #[cfg(windows)]
+    #[test]
+    fn a_fresh_table_holds_the_half_views_past_its_range_starts() {
+        use victory_shader::{ResourceType, RootType, UsedResource};
+        let Some(device) = crate::host::host() else {
+            return; // no host GPU
+        };
+        let list = device.new_list().expect("a host list");
+        let desc = HeapDesc {
+            kind: VIEWS_KIND,
+            count: 2,
+            flags: SHADER_VISIBLE,
+            nodes: 1,
+        };
+        let none = Placement {
+            address: 0,
+            size: 0,
+        };
+        let mut h: This = std::ptr::null();
+        assert_eq!(create(desc, none, &mut h), S_OK);
+        let title = heap(h);
+        let host_heap = title.host().expect("a host view heap");
+        let (first, second) = (title.handle(0).unwrap(), title.handle(1).unwrap());
+        // An R16G16B16A16_FLOAT buffer view of memory in the second slot.
+        let memory = [0u64; 64];
+        let address = memory.as_ptr() as u64;
+        let resource = [1, 0, 0, 0, 512, 0, 1, 0x1_0001, 0, 1, 0, 1, 0, 0];
+        let mut words = [0u32; 16];
+        words[..10].copy_from_slice(&[10, 1, 5768, 0, 0, 0, 64, 0, 0, 0]);
+        words[10] = address as u32;
+        words[11] = (address >> 32) as u32;
+        create_placed_srv(std::ptr::null(), &resource, &words, second);
+        assert!(view(second).as_ref().and_then(host::half_view).is_some());
+        let mut state = crate::draw::State::default();
+        state.set_heaps(&[h]);
+        state.set_table(true, 1, first);
+        let range = UsedResource {
+            kind: ResourceType::Srv,
+            root: RootType::Table,
+            table_offset_dwords: 0,
+            lower_bound: 0,
+            stride: 8,
+            dwords: 4,
+            user_data: 4,
+            slot: 1,
+        };
+        let made = state.tables(&list, &[range], &[], &[(1, 8)], true);
+        let [(1, offset)] = made[..] else {
+            panic!("one fresh table for root parameter 1, not {made:?}");
+        };
+        assert_ne!(offset, u32::MAX, "the table found no dynamic slots");
+        let next = host_heap.dynamic(1).expect("a dynamic slot");
+        host_heap.release(next, 1);
+        drop(state);
+        slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
+        assert_eq!(
+            next,
+            offset / 32 + 2,
+            "the next allocation took the table's second slot"
+        );
+    }
+
     #[test]
     fn heaps_hold_count_descriptors_from_their_start() {
         let null = std::ptr::null();
@@ -1291,6 +1382,72 @@ mod tests {
             assert!(!host.made(5));
             sync_heaps();
             assert!(host.made(5));
+        }
+        slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
+        // SAFETY: this allocation belongs to the test.
+        unsafe { VirtualFree(memory, 0, MEM_RELEASE) };
+    }
+
+    #[test]
+    #[ignore = "native A/B timing; run alone"]
+    fn cold_descriptor_sync_on_placed_heap() {
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+        };
+        let page = crate::watch::PAGE;
+        let size = page * 300;
+        let memory = unsafe {
+            VirtualAlloc(
+                std::ptr::null(),
+                size,
+                MEM_RESERVE | MEM_COMMIT | 0x20_0000, // MEM_WRITE_WATCH
+                PAGE_READWRITE,
+            )
+        };
+        assert!(!memory.is_null());
+        let desc = HeapDesc { kind: VIEWS_KIND, count: (size / 32) as u32, flags: SHADER_VISIBLE, nodes: 1 };
+        let placement = Placement { address: memory as u64, size: size as u64 };
+        let mut h: This = std::ptr::null();
+        assert_eq!(create(desc, placement, &mut h), S_OK);
+        if let Some(host) = heap(h).host() {
+            let mut record = [0u64; 4];
+            create_srv(std::ptr::null(), std::ptr::null(), std::ptr::null(), record.as_mut_ptr() as u64);
+            let indices = |n: usize| (0..n).flat_map(|p| [p * page / 32, (p+1)*page/32-1]);
+            for (n, dense) in [(4, false), (40, false), (200, false), (300, false), (40, true)] {
+                if dense {
+                    // Warm most slots, leaving the two records per page below free to toggle.
+                    for p in 0..n {
+                        for i in (p * page/32 + 1)..((p + 1) * page/32 - 1) {
+                            unsafe { memory.cast::<[u64; 4]>().add(i).write_volatile(record) };
+                        }
+                    }
+                    sync_heaps_inner(false);
+                }
+                let mut samples = [Vec::<u128>::new(), Vec::<u128>::new()];
+                for pair in 0..14 {
+                    for mode in [pair % 2, (pair + 1) % 2] {
+                        for i in indices(n) {
+                            // SAFETY: aligned slot in this mapped synthetic heap.
+                            unsafe { memory.cast::<[u64;4]>().add(i).write_volatile(record) };
+                            assert!(!host.made(i as u32));
+                        }
+                        let started = std::time::Instant::now();
+                        sync_heaps_inner(mode != 0);
+                        let ns = started.elapsed().as_nanos();
+                        for i in indices(n) {
+                            assert!(host.made(i as u32), "mode {mode}, page {}, slot {i}", i*32/page);
+                            // SAFETY: same allocation and slot as above.
+                            unsafe { memory.cast::<[u64;4]>().add(i).write_volatile([0;4]) };
+                        }
+                        sync_heaps_inner(false);
+                        if pair >= 2 { samples[mode].push(ns); }
+                    }
+                }
+                for (mode, s) in samples.iter_mut().enumerate() {
+                    s.sort_unstable();
+                    println!("COLD_SYNC,{n},{dense},{mode},{:.4}", (s[5] + s[6]) as f64 / 2e6);
+                }
+            }
         }
         slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
         // SAFETY: this allocation belongs to the test.

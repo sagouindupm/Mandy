@@ -74,9 +74,11 @@ fn build() -> [u8; 32] {
     }
     h.update(&victory_shader::emit::translation_fingerprint());
     h.update(include_bytes!("shader_cache.rs"));
-    // The lists this file reads for the translator (`translate_listed`): the
-    // shader crate's fingerprint does not see them.
-    for name in ["VICTORY_WAVE_WIDE_ONLY", "VICTORY_FIRSTLANE_OWN_ONLY", "VICTORY_HEAP_USAGE"] {
+    // The switches this file reads for the translator that change every
+    // program: the shader crate's fingerprint does not see them. The
+    // per-program lists (`VICTORY_WAVE_WIDE_ONLY`, `VICTORY_FIRSTLANE_OWN_ONLY`)
+    // are in the key of the programs they name only ([`program_key`]).
+    for name in ["VICTORY_HEAP_USAGE", "VICTORY_NAN_SCRUB"] {
         h.update(name.as_bytes());
         h.update(b"=");
         if let Some(value) = std::env::var_os(name) {
@@ -120,7 +122,7 @@ pub fn warm(container: &[u8]) -> Result<bool, String> {
         translate_listed(c)
     };
     let off = !emit::deep_skips_allowed(Some(&hash)) && emit::wave64_retried(container);
-    cached(cache, &program_key(&build(), off), container, translate).map(|_| ran.load(Ordering::Relaxed))
+    cached(cache, &program_key(&build(), off, &hash), container, translate).map(|_| ran.load(Ordering::Relaxed))
 }
 
 /// The translation of a console shader container, from the cache when
@@ -137,7 +139,7 @@ pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
             // program a list names, or with `VICTORY_WAVE_DEEP_SKIPS=0`
             // any, gets there)
             let off = !emit::deep_skips_allowed(Some(&hash)) && emit::wave64_retried(container);
-            cached(cache, &program_key(&build(), off), container, translate)
+            cached(cache, &program_key(&build(), off, &hash), container, translate)
         }
         None => translate(container),
     }
@@ -190,14 +192,27 @@ fn listed(list: &OnceLock<Vec<String>>, env: &str, default: &[&str], hash: &str)
 /// compute program on a host of 32-lane waves, the only ones it can change.
 /// So the lists are in no key: changing one translates again only the
 /// programs whose decision it changes, and a program allowed the form keeps
-/// the key it had without any list.
-fn program_key(build: &[u8; 32], deep_skips_off: bool) -> [u8; 32] {
-    if !deep_skips_off {
+/// the key it had without any list. The same for the programs
+/// `VICTORY_WAVE_WIDE_ONLY` and `VICTORY_FIRSTLANE_OWN_ONLY` name (`hash`:
+/// the 16 digits the log names the program by): trying another list on the
+/// water translates those few programs again, not the whole cache.
+fn program_key(build: &[u8; 32], deep_skips_off: bool, hash: &str) -> [u8; 32] {
+    let wide = listed(&WAVE_WIDE, "VICTORY_WAVE_WIDE_ONLY", &WAVE_WIDE_DEFAULT, hash);
+    let firstlane = listed(&FIRSTLANE_OWN, "VICTORY_FIRSTLANE_OWN_ONLY", &FIRSTLANE_OWN_DEFAULT, hash);
+    if !deep_skips_off && !wide && !firstlane {
         return *build;
     }
     let mut h = blake3::Hasher::new();
     h.update(build);
-    h.update(b"VICTORY_WAVE_DEEP_SKIPS off for this program");
+    if deep_skips_off {
+        h.update(b"VICTORY_WAVE_DEEP_SKIPS off for this program");
+    }
+    if wide {
+        h.update(b"the wave-wide form allowed for this program");
+    }
+    if firstlane {
+        h.update(b"the host wave's own first lane for this program");
+    }
     *h.finalize().as_bytes()
 }
 
@@ -346,6 +361,11 @@ fn encode(s: &HostShader) -> Vec<u8> {
             word(&mut out, value);
         }
     }
+    word(&mut out, s.half_views.len() as u32);
+    for &(slot, dword) in &s.half_views {
+        word(&mut out, u32::from(slot));
+        word(&mut out, dword);
+    }
     out
 }
 
@@ -414,6 +434,11 @@ fn decode(bytes: &[u8]) -> Option<HostShader> {
             shift: u8::try_from(r.word()?).ok().filter(|&s| s < 32)?,
         });
     }
+    let n = r.word()? as usize;
+    let mut half_views = Vec::with_capacity(n.min(256));
+    for _ in 0..n {
+        half_views.push((u8::try_from(r.word()?).ok()?, r.word()?));
+    }
     r.0.is_empty().then_some(HostShader {
         stage,
         dxil,
@@ -424,6 +449,7 @@ fn decode(bytes: &[u8]) -> Option<HostShader> {
         root_srvs,
         root_uavs,
         root_indexed_views,
+        half_views,
     })
 }
 
@@ -458,6 +484,7 @@ mod tests {
                 byte_offset: 32,
                 shift: 5,
             }],
+            half_views: vec![(0, 8), (4, 0)],
         }
     }
 
@@ -507,13 +534,27 @@ mod tests {
     }
 
     #[test]
+    fn only_the_programs_a_list_names_change_key() {
+        let build = [7u8; 32];
+        // Not in the default lists: the build's key.
+        assert_eq!(program_key(&build, false, "0000000000000000"), build);
+        // A water program the default wave-wide list names: a key of its own,
+        // so another list translates it again without touching the rest.
+        let wide = program_key(&build, false, WAVE_WIDE_DEFAULT[0]);
+        if std::env::var_os("VICTORY_WAVE_WIDE_ONLY").is_none() {
+            assert_ne!(wide, build);
+            assert_ne!(wide, program_key(&build, true, WAVE_WIDE_DEFAULT[0]));
+        }
+    }
+
+    #[test]
     fn a_program_kept_out_of_the_deep_skips_form_has_a_key_of_its_own() {
         let build = [7u8; 32];
-        assert_eq!(program_key(&build, false), build, "allowed: the build's key, as without lists");
-        let off = program_key(&build, true);
+        assert_eq!(program_key(&build, false, "0000000000000000"), build, "allowed: the build's key, as without lists");
+        let off = program_key(&build, true, "0000000000000000");
         assert_ne!(off, build);
-        assert_eq!(program_key(&build, true), off, "the same decision, the same key");
-        assert_ne!(program_key(&[8; 32], true), off, "and still the build's");
+        assert_eq!(program_key(&build, true, "0000000000000000"), off, "the same decision, the same key");
+        assert_ne!(program_key(&[8; 32], true, "0000000000000000"), off, "and still the build's");
 
         // So only the program whose decision changed is translated again.
         let dir = tempfile::tempdir().unwrap();
@@ -525,16 +566,16 @@ mod tests {
         };
         let [a, b] = [b"program a".as_slice(), b"program b"];
         for c in [a, b] {
-            cached(&cache, &program_key(&build, false), c, translate).unwrap();
+            cached(&cache, &program_key(&build, false, "0000000000000000"), c, translate).unwrap();
         }
         assert_eq!(runs.load(Ordering::Relaxed), 2);
         // a listed: a translated again, b from the cache
-        cached(&cache, &program_key(&build, true), a, translate).unwrap();
-        cached(&cache, &program_key(&build, false), b, translate).unwrap();
+        cached(&cache, &program_key(&build, true, "0000000000000000"), a, translate).unwrap();
+        cached(&cache, &program_key(&build, false, "0000000000000000"), b, translate).unwrap();
         assert_eq!(runs.load(Ordering::Relaxed), 3);
         // the list emptied again: both from the cache
         for c in [a, b] {
-            cached(&cache, &program_key(&build, false), c, translate).unwrap();
+            cached(&cache, &program_key(&build, false, "0000000000000000"), c, translate).unwrap();
         }
         assert_eq!(runs.load(Ordering::Relaxed), 3);
     }
