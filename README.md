@@ -46,7 +46,7 @@ Pour les connaisseurs, `series-s\launch_series_s.bat` lance directement avec les
 (DLSS en option, voir le fichier).
 
 Commandes clavier : **G** bascule entre à pied et véhicule. À pied : ZQSD/WASD, souris pour la caméra
-(**clic pour la capturer, Alt ou Échap pour la libérer**). En véhicule ou en bateau : W ou clic gauche
+(**clic pour la capturer, Alt ou Échap pour la libérer**), X pour marcher. En véhicule ou en bateau : W ou clic gauche
 pour accélérer, S ou clic droit pour freiner, A/D pour tourner, Maj gauche pour le frein à main.
 
 ## Ce que ce dépôt apporte

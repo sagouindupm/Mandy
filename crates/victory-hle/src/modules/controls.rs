@@ -261,7 +261,9 @@ const ON_FOOT: &[(&str, &[&str])] = &[
     ("S", &["LeftDown"]),
     ("A", &["LeftLeft"]),
     ("D", &["LeftRight"]),
-    ("LAlt", &["Walk"]),
+    ("LAlt", &["ReleaseCursor"]),
+    ("RAlt", &["ReleaseCursor"]),
+    ("X", &["Walk"]),
     ("LShift", &["A"]),
     ("Space", &["X"]),
     ("F", &["Y", "ToggleVehicle"]),
@@ -317,6 +319,8 @@ const VEHICLE: &[(&str, &[&str])] = &[
     ("Enter", &["A"]),
     ("Backspace", &["B"]),
     ("Esc", &["Menu", "ReleaseCursor"]),
+    ("LAlt", &["ReleaseCursor"]),
+    ("RAlt", &["ReleaseCursor"]),
     ("P", &["Menu"]),
 ];
 
@@ -916,7 +920,7 @@ mod tests {
         assert!((p.left_x - r).abs() < 1e-6 && (p.left_y - r).abs() < 1e-6);
         let p = held(&mut c, &["A", "D"]);
         assert_eq!((p.left_x, p.left_y), (0.0, 0.0));
-        let p = held(&mut c, &["S", "LAlt"]);
+        let p = held(&mut c, &["S", "X"]);
         assert_eq!((p.left_x, p.left_y), (0.0, -0.5));
     }
 
