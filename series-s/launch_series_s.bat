@@ -36,6 +36,8 @@ rem L'eau : les bateaux et le joueur flottent
 set "VICTORY_TEXTURE_BACK=1"
 rem Memoire non surveillee recopiee une image sur deux (-17 %% par image)
 set "VICTORY_UNWATCHED_FRAMES=2"
+rem Eau turquoise : les deux calculs de l eau sans la forme "sans sauts profonds" (bandes vides sur NVIDIA)
+set "VICTORY_WAVE_DEEP_SKIPS_NOT=cad2edef5ecea3ba,731a39171b568298"
 
 "%VICTORY_EXE%" run "%GAME_EXE%" --console series-s --execute --unimplemented zero
 pause
