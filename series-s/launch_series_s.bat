@@ -37,7 +37,7 @@ set "VICTORY_TEXTURE_BACK=1"
 rem Memoire non surveillee recopiee une image sur deux (-17 %% par image)
 set "VICTORY_UNWATCHED_FRAMES=2"
 rem Eau turquoise : les deux calculs de l eau sans la forme "sans sauts profonds" (bandes vides sur NVIDIA)
-set "VICTORY_WAVE_DEEP_SKIPS_NOT=cad2edef5ecea3ba,731a39171b568298"
+set "VICTORY_WAVE_DEEP_SKIPS_NOT=cad2edef5ecea3ba,731a39171b568298,5e7cd6d3557a6c35,3932709b61f074d0"
 
 "%VICTORY_EXE%" run "%GAME_EXE%" --console series-s --execute --unimplemented zero
 pause
