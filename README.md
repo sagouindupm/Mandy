@@ -112,6 +112,7 @@ Merci à celles et ceux qui testent, mesurent et corrigent :
 | [@sagouindupm](https://github.com/sagouindupm) | mainteneur |
 | [@Xiaoxi2021](https://github.com/Xiaoxi2021) | premières mesures sur RTX 5070 12 Go + Ryzen 7 9700X (#9) : DLSS manquant chez les testeurs |
 | [@lucid29a](https://github.com/lucid29a) | mesures sur RTX 4070 Laptop + i9-13900H (#10) : lanceur PowerShell qui s'arrêtait, shaders non préparés |
+| [@tejvardhan-717](https://github.com/tejvardhan-717) | contribution assistée par IA sur le verrou de comptabilité des ressources (#13); mesure en jeu à suivre |
 
 Vous testez ou corrigez quelque chose ? Ajoutez-vous à ce tableau dans votre pull request
 (voir [CONTRIBUTING.md](CONTRIBUTING.md)).

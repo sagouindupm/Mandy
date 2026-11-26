@@ -26,6 +26,9 @@ pub(crate) struct HostHeap {
     sampler: bool,
     /// The record (view index and generation) each slot was last made from.
     made: Mutex<Vec<u64>>,
+    /// Serializes writes to static host slots while `made` is released for
+    /// potentially expensive resource resolution and descriptor creation.
+    making: Mutex<()>,
     /// A fingerprint of the record each slot held when the pass over
     /// records copied in as bytes last looked at it
     /// ([`HostHeap::mirror_copied`]; 0: never looked at). Made on first use.
@@ -1032,6 +1035,7 @@ impl HostHeap {
             dynamic: extra,
             sampler,
             made: Mutex::new(vec![0; count as usize]),
+            making: Mutex::new(()),
             copied: Mutex::new(Vec::new()),
             kept: Mutex::new(vec![None; (count + extra) as usize]),
             next: Mutex::new((0, vec![false; DYNAMIC as usize])),
@@ -1490,29 +1494,44 @@ impl HostHeap {
         if self.sampler {
             return 0;
         }
+        let _making = self.making.lock().unwrap_or_else(|e| e.into_inner());
         let starts = std::mem::take(&mut *RESHOWN.lock().unwrap_or_else(|e| e.into_inner()));
         if starts.is_empty() {
             return 0;
         }
         let slots: Vec<u32> = {
             let placed = self.placed.lock().unwrap_or_else(|e| e.into_inner());
-            starts.iter().flat_map(|&start| placed.slots_at(start)).collect()
+            starts
+                .iter()
+                .flat_map(|&start| placed.slots_at(start))
+                .collect()
         };
-        let made = self.made.lock().unwrap_or_else(|e| e.into_inner());
         let mut remade = 0;
         for slot in slots {
-            let Some(&key) = made.get(slot as usize) else {
-                continue;
+            let key = {
+                let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(key) = made.get_mut(slot as usize) else {
+                    continue;
+                };
+                if *key == 0 {
+                    continue;
+                }
+                std::mem::replace(key, 0)
             };
-            if key == 0 {
-                continue;
-            }
             let Some(view) = view_at(key as u32, (key >> 32) as u32) else {
+                let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(current) = made.get_mut(slot as usize) {
+                    *current = key;
+                }
                 continue;
             };
             if let Some(kept) = make(&view, self.cpu(slot)) {
                 self.keep(slot, kept);
                 remade += 1;
+            }
+            let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(current) = made.get_mut(slot as usize) {
+                *current = key;
             }
         }
         remade
@@ -1523,6 +1542,7 @@ impl HostHeap {
     /// the host copy can be let go (`crate::resource::let_go_idle`; a slot
     /// keeps what it views). True if the slot was made.
     pub(crate) fn texture_slot_gone(&self, index: u32) -> bool {
+        let _making = self.making.lock().unwrap_or_else(|e| e.into_inner());
         let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
         if made.get(index as usize).is_none_or(|&key| key == 0) {
             return false;
@@ -2075,6 +2095,7 @@ impl HostHeap {
             return None;
         }
         // SAFETY: the handle is a descriptor slot in title memory.
+        let _making = self.making.lock().unwrap_or_else(|e| e.into_inner());
         let [tag, i, generation] = unsafe { (handle as *const [u32; 3]).read_unaligned() };
         // Generations start at 1, so a made slot's key is never 0.
         let key = u64::from(generation) << 32 | u64::from(i);
@@ -2126,7 +2147,8 @@ impl HostHeap {
                 KEPT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return Some(view);
             }
-            made[index as usize] = if later { 0 } else { key };
+            made[index as usize] = 0;
+            drop(made);
             let kept = if later {
                 None
             } else {
@@ -2136,6 +2158,8 @@ impl HostHeap {
                 null_for(&view, self.cpu(index));
             }
             self.keep(index, kept.flatten());
+            let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
+            made[index as usize] = if later { 0 } else { key };
         }
         Some(view)
     }
