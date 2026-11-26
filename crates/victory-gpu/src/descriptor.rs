@@ -181,6 +181,14 @@ fn mirror(handle: u64) {
 /// `VICTORY_HEAP_SYNC=0`: not done, as before. [`SYNCED`] counts.
 #[cfg(windows)]
 pub(crate) fn sync_heaps() {
+    static SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    sync_heaps_inner(*SKIP.get_or_init(|| {
+        std::env::var_os("VICTORY_HEAP_SYNC_ZERO_RUNS").is_some_and(|v| v == "1")
+    }));
+}
+
+#[cfg(windows)]
+fn sync_heaps_inner(skip_cold: bool) {
     use std::sync::atomic::Ordering::Relaxed;
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*ON.get_or_init(|| std::env::var_os("VICTORY_HEAP_SYNC").is_none_or(|v| v != "0")) {
@@ -219,7 +227,7 @@ pub(crate) fn sync_heaps() {
                     // (`HostHeap::mirror_copied_page`); one by one below
                     // with `VICTORY_HEAP_SYNC_PAGE=0`.
                     let slots = if page_at_once() {
-                        let (seen, made) = host.mirror_copied_page(slots, (start, step), from, &page_bytes);
+                        let (seen, made) = host.mirror_copied_page(slots, (start, step), from, &page_bytes, skip_cold);
                         looked += seen;
                         mirrored += made;
                         0..0
@@ -1306,6 +1314,72 @@ mod tests {
             assert!(!host.made(5));
             sync_heaps();
             assert!(host.made(5));
+        }
+        slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
+        // SAFETY: this allocation belongs to the test.
+        unsafe { VirtualFree(memory, 0, MEM_RELEASE) };
+    }
+
+    #[test]
+    #[ignore = "native A/B timing; run alone"]
+    fn cold_descriptor_sync_on_placed_heap() {
+        use windows_sys::Win32::System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+        };
+        let page = crate::watch::PAGE;
+        let size = page * 300;
+        let memory = unsafe {
+            VirtualAlloc(
+                std::ptr::null(),
+                size,
+                MEM_RESERVE | MEM_COMMIT | 0x20_0000, // MEM_WRITE_WATCH
+                PAGE_READWRITE,
+            )
+        };
+        assert!(!memory.is_null());
+        let desc = HeapDesc { kind: VIEWS_KIND, count: (size / 32) as u32, flags: SHADER_VISIBLE, nodes: 1 };
+        let placement = Placement { address: memory as u64, size: size as u64 };
+        let mut h: This = std::ptr::null();
+        assert_eq!(create(desc, placement, &mut h), S_OK);
+        if let Some(host) = heap(h).host() {
+            let mut record = [0u64; 4];
+            create_srv(std::ptr::null(), std::ptr::null(), std::ptr::null(), record.as_mut_ptr() as u64);
+            let indices = |n: usize| (0..n).flat_map(|p| [p * page / 32, (p+1)*page/32-1]);
+            for (n, dense) in [(4, false), (40, false), (200, false), (300, false), (40, true)] {
+                if dense {
+                    // Warm most slots, leaving the two records per page below free to toggle.
+                    for p in 0..n {
+                        for i in (p * page/32 + 1)..((p + 1) * page/32 - 1) {
+                            unsafe { memory.cast::<[u64; 4]>().add(i).write_volatile(record) };
+                        }
+                    }
+                    sync_heaps_inner(false);
+                }
+                let mut samples = [Vec::<u128>::new(), Vec::<u128>::new()];
+                for pair in 0..14 {
+                    for mode in [pair % 2, (pair + 1) % 2] {
+                        for i in indices(n) {
+                            // SAFETY: aligned slot in this mapped synthetic heap.
+                            unsafe { memory.cast::<[u64;4]>().add(i).write_volatile(record) };
+                            assert!(!host.made(i as u32));
+                        }
+                        let started = std::time::Instant::now();
+                        sync_heaps_inner(mode != 0);
+                        let ns = started.elapsed().as_nanos();
+                        for i in indices(n) {
+                            assert!(host.made(i as u32), "mode {mode}, page {}, slot {i}", i*32/page);
+                            // SAFETY: same allocation and slot as above.
+                            unsafe { memory.cast::<[u64;4]>().add(i).write_volatile([0;4]) };
+                        }
+                        sync_heaps_inner(false);
+                        if pair >= 2 { samples[mode].push(ns); }
+                    }
+                }
+                for (mode, s) in samples.iter_mut().enumerate() {
+                    s.sort_unstable();
+                    println!("COLD_SYNC,{n},{dense},{mode},{:.4}", (s[5] + s[6]) as f64 / 2e6);
+                }
+            }
         }
         slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
         // SAFETY: this allocation belongs to the test.

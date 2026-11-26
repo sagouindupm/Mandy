@@ -2016,6 +2016,7 @@ impl HostHeap {
         (start, step): (u64, u64),
         from: usize,
         page: &[u8],
+        skip_cold: bool,
     ) -> (u64, u64) {
         let (frame, tables) = (crate::frame::current(), sync_tables());
         let mut looked = 0u64;
@@ -2025,8 +2026,23 @@ impl HostHeap {
             if copied.is_empty() {
                 copied.resize(self.count as usize, 0);
             }
-            for index in slots {
+            let mut slots = slots;
+            let mut next_run = slots.start;
+            while let Some(index) = slots.next() {
                 let handle = start + index * step;
+                if skip_cold && index >= next_run {
+                    const RUN: usize = 8;
+                    next_run = index + RUN as u64;
+                    let at = (handle as usize).checked_sub(from);
+                    if next_run <= slots.end
+                        && let Some(at) = at
+                        && cold_empty_run(&copied, index as usize, page, at, step as usize)
+                    {
+                        slots.start = next_run;
+                        looked += RUN as u64;
+                        continue;
+                    }
+                }
                 // A record that straddles the range's ends is left to the
                 // range that holds its first byte.
                 let Some(at) = (handle as usize).checked_sub(from) else {
@@ -2431,6 +2447,33 @@ fn sync_tables() -> bool {
 /// Since the last frame line: slots on changed heap pages that
 /// [`HostHeap::mirror_copied`] left to their draws (tables' slots).
 pub(crate) static COPIED_TABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn cold_empty_run(copied: &[u64], index: usize, page: &[u8], at: usize, step: usize) -> bool {
+    // A nonzero cached fingerprint is not cold: a cleared record may have
+    // to unbind a live slot. Exact byte comparison, never just a hash.
+    if copied.get(index..index + 8) != Some(&[0; 8]) {
+        return false;
+    }
+    match step {
+        16 => page.get(at..at + 128) == Some(&[0; 128]),
+        32 => page.get(at..at + 256) == Some(&[0; 256]),
+        _ => false,
+    }
+}
+
+#[test]
+fn cold_empty_runs_do_not_skip_past_cached_slots_or_clipped_bytes() {
+    let mut cache = [0u64; 9];
+    let mut page = [0u8; 257];
+    assert!(cold_empty_run(&cache, 1, &page, 1, 32));
+    assert!(!cold_empty_run(&cache, 2, &page, 1, 32));
+    assert!(!cold_empty_run(&cache, 1, &page, 2, 32));
+    cache[8] = 7;
+    assert!(!cold_empty_run(&cache, 1, &page, 1, 32));
+    assert!(cold_empty_run(&cache, 0, &page, 1, 16));
+    page[128] = 1;
+    assert!(!cold_empty_run(&cache, 0, &page, 1, 16));
+}
 
 /// A 64-bit fingerprint of a descriptor record's bytes (16 or 32 of them):
 /// equal records give equal prints, and two different records the same
