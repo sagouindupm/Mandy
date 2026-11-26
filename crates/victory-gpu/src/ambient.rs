@@ -29,6 +29,8 @@
 //! - `constant:<level>`: the constant, as beloooo's fork has it.
 //!
 //! `VICTORY_AMBIENT_SHADE=<strength>,<radius in metres>` sets the creases.
+//! `VICTORY_AMBIENT_SETTLE=<ms>[,<jump>]` has the slow mean follow by the
+//! clock, not by the frame (see `settle`).
 //!
 //! The air of a room is lit by the same probes: without rays they hold the
 //! sky's light indoors too, a brown veil at sunset. `VICTORY_AMBIENT_AIR`
@@ -140,6 +142,43 @@ fn reflect() -> f32 {
     })
 }
 
+/// How the slow mean of the light around follows the frames
+/// (`VICTORY_AMBIENT_SETTLE=<time constant in ms>[,<jump factor>]`, e.g.
+/// `250,3`; unset or 0: 0.04 of the way a frame, which is 25 frames: 0.8 s
+/// at 30 frames a second, 4-6 s at 4-6). Set, it is the same share of the
+/// way a second whatever the frame rate, and a change by more than the jump
+/// factor (3 when not given; 0: none) is taken at once, as a new room is.
+fn settle() -> Option<[f32; 2]> {
+    static SET: OnceLock<Option<[f32; 2]>> = OnceLock::new();
+    *SET.get_or_init(|| parse_settle(&std::env::var("VICTORY_AMBIENT_SETTLE").unwrap_or_default()))
+}
+
+fn parse_settle(set: &str) -> Option<[f32; 2]> {
+    let mut parts = set.split(',').map(|p| p.trim().parse::<f32>().ok());
+    let ms = parts.next().flatten().filter(|v| v.is_finite() && *v > 0.0)?;
+    let jump = parts.next().flatten().filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(3.0);
+    Some([ms, jump])
+}
+
+/// The share of the way the slow mean goes at a keeping that comes `ms`
+/// after the last.
+fn follow(ms: f32) -> f32 {
+    settle().map_or(0.04, |[constant, _]| 1.0 - (-ms / constant).exp())
+}
+
+/// Milliseconds since the last keeping ([`Role::Radiance`], once a frame);
+/// the first, and after a pause of over a second, as a frame of 30.
+fn frame_ms() -> f32 {
+    static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let now = crate::host::now_ms();
+    let last = LAST.swap(now, std::sync::atomic::Ordering::Relaxed);
+    match now.saturating_sub(last) {
+        0 => 1.0,
+        dt if last == 0 || dt > 1000 => 33.0,
+        dt => dt as f32,
+    }
+}
+
 /// Strength and radius of the creases' shade.
 fn shade() -> [f32; 2] {
     static SET: OnceLock<[f32; 2]> = OnceLock::new();
@@ -156,7 +195,7 @@ fn shade() -> [f32; 2] {
 }
 
 const SOURCE: &str = r#"
-#define RS "RootConstants(num32BitConstants=12, b0), DescriptorTable(SRV(t0)), DescriptorTable(UAV(u0)), UAV(u1), UAV(u2)"
+#define RS "RootConstants(num32BitConstants=13, b0), DescriptorTable(SRV(t0)), DescriptorTable(UAV(u0)), UAV(u1), UAV(u2)"
 #define CX 64
 #define CY 36
 #define CELLS (CX * CY)
@@ -166,6 +205,7 @@ cbuffer Set : register(b0) {
     float level; float constant; float strength; float radius;
     float near; float tan_y; uint width; uint height;
     float follow; float most; float air; float reflect_cap;
+    float jump;
 };
 Texture2D<float> depth : register(t0);
 // Cells: the light they send out (then, at CELLS, the slow mean), from
@@ -207,7 +247,11 @@ void mean() {
     for (uint i = 0; i < CELLS; i++) sum += cells[i].rgb;
     float4 was = cells[CELLS];
     float3 now = sum / CELLS;
-    cells[CELLS] = float4(was.a > 0.0 ? lerp(was.rgb, now, follow) : now, 1.0);
+    // (`jump` > 0: a change of more than that factor either way is
+    // followed at once, as a new room is.)
+    float a = max(dot(now, LUMA), 1e-5), b = max(dot(was.rgb, LUMA), 1e-5);
+    float share = (jump > 0.0 && max(a / b, b / a) > jump) ? 1.0 : follow;
+    cells[CELLS] = float4(was.a > 0.0 ? lerp(was.rgb, now, share) : now, 1.0);
 }
 #endif
 
@@ -518,13 +562,17 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     list.keep(&pass.points);
     let [strength, radius] = shade();
     let floats = [level, constant, strength, radius, 0.1, 0.45];
-    let mut words = [0u32; 12];
+    let mut words = [0u32; 13];
     for (to, v) in words.iter_mut().zip(floats) {
         *to = v.to_bits();
     }
     words[6] = views.size[0];
     words[7] = views.size[1];
-    words[8] = 0.04f32.to_bits();
+    // (The mean alone reads these two; the clock is asked at a keeping only.)
+    if role == Role::Radiance {
+        words[8] = follow(frame_ms()).to_bits();
+        words[12] = settle().map_or(0.0, |[_, jump]| jump).to_bits();
+    }
     words[9] = most().to_bits();
     words[10] = air().to_bits();
     words[11] = reflect().to_bits();
@@ -535,7 +583,7 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     unsafe {
         uav_barrier(l);
         l.SetComputeRootSignature(&pass.root);
-        l.SetComputeRoot32BitConstants(0, 12, words.as_ptr().cast(), 0);
+        l.SetComputeRoot32BitConstants(0, 13, words.as_ptr().cast(), 0);
         if let Some(depth) = views.depth {
             l.SetComputeRootDescriptorTable(1, depth);
         }
@@ -579,6 +627,10 @@ mod tests {
         assert_eq!(parse("0.8"), Set::Estimate(0.8));
         assert_eq!(parse("constant:0.3"), Set::Constant(0.3));
         assert_eq!(parse("constant:nan"), Set::Off);
+        assert_eq!(parse_settle(""), None);
+        assert_eq!(parse_settle("0"), None);
+        assert_eq!(parse_settle("250"), Some([250.0, 3.0]));
+        assert_eq!(parse_settle("250, 0"), Some([250.0, 0.0]));
     }
 
     #[test]
