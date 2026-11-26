@@ -657,6 +657,9 @@ fn create() -> windows::core::Result<Host> {
             let adapter = warp_adapter()?;
             D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?;
             tracing::info!("host device on the software adapter (WARP)");
+        } else if let Some(adapter) = chosen_adapter() {
+            D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?;
+            crate::tdr::log();
         } else {
             D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?;
         }
@@ -742,6 +745,73 @@ fn create() -> windows::core::Result<Host> {
             presenter: Mutex::new(None),
             adapter,
         })
+    }
+}
+
+/// The card `VICTORY_ADAPTER` names, for a PC with more than one (from
+/// trustno1-coder/VIctory-NVIDIA 033be27f).
+/// The value is part of the card's name, any case (`5060`, `RTX 5070`), or
+/// its index in DXGI's order (`#1`). Unset: the fastest card. A value
+/// that matches no hardware card is logged with the list and ignored.
+fn chosen_adapter() -> Option<IDXGIAdapter1> {
+    let want = std::env::var("VICTORY_ADAPTER").unwrap_or_default();
+    let want = want.trim();
+    if want.is_empty() || want == "0" {
+        // Unset: the card Windows ranks fastest, not its default one. On a
+        // laptop with two (Optimus), the default is the Intel one (#14).
+        // `VICTORY_ADAPTER=0`: Windows' default, as before.
+        if want == "0" {
+            return None;
+        }
+        // SAFETY: plain DXGI adapter queries.
+        return unsafe {
+            let factory: IDXGIFactory6 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
+            let adapter: IDXGIAdapter1 = factory.EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE).ok()?;
+            let desc = adapter.GetDesc1().ok()?;
+            if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+                return None;
+            }
+            let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+            tracing::info!(
+                adapter = %String::from_utf16_lossy(&desc.Description[..len]),
+                memory_mb = desc.DedicatedVideoMemory / (1024 * 1024),
+                "host device on the fastest card (VICTORY_ADAPTER=0: Windows' default)"
+            );
+            Some(adapter)
+        };
+    }
+    // SAFETY: plain DXGI adapter queries.
+    unsafe {
+        let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
+        let index = want.strip_prefix('#').and_then(|n| n.parse::<u32>().ok());
+        let mut seen = Vec::new();
+        for i in 0.. {
+            let Ok(adapter) = factory.EnumAdapters1(i) else { break };
+            let Ok(desc) = adapter.GetDesc1() else { continue };
+            let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+            let name = String::from_utf16_lossy(&desc.Description[..len]);
+            let software = desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0;
+            let hit = match index {
+                Some(n) => n == i,
+                None => name.to_lowercase().contains(&want.to_lowercase()),
+            };
+            if hit && !software {
+                tracing::warn!(
+                    adapter = %name,
+                    index = i,
+                    memory_mb = desc.DedicatedVideoMemory / (1024 * 1024),
+                    "host device on the card VICTORY_ADAPTER names"
+                );
+                return Some(adapter);
+            }
+            seen.push(format!("#{i} {name}"));
+        }
+        tracing::warn!(
+            want,
+            cards = %seen.join(", "),
+            "VICTORY_ADAPTER names no hardware card; Windows' default card is used"
+        );
+        None
     }
 }
 
