@@ -381,7 +381,7 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
             let m = asked.get_or_insert_with(Default::default);
             let e = m.entry((SLOT, code)).or_insert((0, size));
             e.0 += 1;
-            if calls % 4096 == 0 {
+            if calls.is_multiple_of(4096) {
                 let mut top: Vec<_> = m.iter().filter(|(k, _)| k.0 == SLOT).map(|(k, v)| (v.0, k.1, v.1)).collect();
                 top.sort_by_key(|t| std::cmp::Reverse(t.0));
                 top.truncate(6);
@@ -451,10 +451,12 @@ fn dump_unknown(slot: usize, calls: u32, desc: usize, words: Option<&[u64]>) {
     }
     for i in 1..words.len().saturating_sub(1) {
         let (at, size) = (words[i], words[i + 1]);
-        if at > 0xffff_ffff && size > 0 && size < 0x40000 {
-            if let Some(b) = read(at as usize, size as usize) {
-                let _ = std::fs::write(dir.join(format!("{name}_w{i}_{at:x}_{size:x}.bin")), b);
-            }
+        if at > 0xffff_ffff
+            && size > 0
+            && size < 0x40000
+            && let Some(b) = read(at as usize, size as usize)
+        {
+            let _ = std::fs::write(dir.join(format!("{name}_w{i}_{at:x}_{size:x}.bin")), b);
         }
     }
 }

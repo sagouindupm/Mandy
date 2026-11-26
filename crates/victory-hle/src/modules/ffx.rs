@@ -182,6 +182,13 @@ pub(crate) fn module() -> HleModule {
     }
 }
 
+/// What the title's import of `ffxDispatch` is bound to. The DLL is not an
+/// HLE module: the title's own must load, for its other entry points and
+/// for the dispatches passed on.
+pub fn dispatch_address() -> usize {
+    dispatch as *const () as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,11 +225,4 @@ mod tests {
         assert_eq!(dispatch(std::ptr::null_mut(), std::ptr::null()), ERROR);
         REAL.store(before, Ordering::Relaxed);
     }
-}
-
-/// What the title's import of `ffxDispatch` is bound to. The DLL is not an
-/// HLE module: the title's own must load, for its other entry points and
-/// for the dispatches passed on.
-pub fn dispatch_address() -> usize {
-    dispatch as *const () as usize
 }

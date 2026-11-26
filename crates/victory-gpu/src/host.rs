@@ -4593,7 +4593,7 @@ impl Host {
                                 }
                                 kept.push(buf);
                                 put_in = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-                                if MASKED_PUT[0].fetch_add(1, Ordering::Relaxed) % 2000 == 0 {
+                                if MASKED_PUT[0].fetch_add(1, Ordering::Relaxed).is_multiple_of(2000) {
                                     tracing::info!(
                                         copies = MASKED_PUT[0].load(Ordering::Relaxed),
                                         dwords = MASKED_PUT[1].load(Ordering::Relaxed),
