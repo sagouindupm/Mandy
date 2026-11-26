@@ -54,6 +54,7 @@ vaut rien tant qu'ils ne sont pas refaits. Les essais de **variables** (même ex
 | + lot de mappage (#4) | ~394 | 2,5 |
 | + cibles/pipelines non redéfinies (#6, avatarmanz) + `UNWATCHED_FRAMES=2` | ~250-280 | 3,6-4,0 |
 | + `MERGE_GAP=16` + `CARD_BUFFERS_MB=1536` (26/11) | **~206-248** | **4,0-4,9** |
+| + mise à jour image, dessins mesh par la carte, ports du 26/11 au soir (PR #18, build chauffé) | 212-322 (images lourdes en régime : 178-260) | 3,1-4,7 |
 
 Où part une image aujourd'hui (~210 ms) : **préparation CPU ~100-125 ms**, GPU 30-100 ms, recopie
 vers la mémoire du jeu ~60 ms, plus ~40-50 ms d'attente de la carte pour une copie de buffer
@@ -124,7 +125,7 @@ accélérée : à profiler).
 | trustno1-coder/VIctory-NVIDIA tel quel, son jeu de réglages (540p, upscaler du jeu, RT coupé), cache chauffé | trustno1 | ~5 s par image au 2e passage, 20 Go de RAM : inutilisable ici |
 | kelvaroq complet (fxceless f85101b + patches 0000-0064), ses réglages par défaut, sans DLSS | stellarr-studio | images lourdes ~300 ms : pas mieux ; on a pris le 0041 |
 | Réglages du « run 279 » fxceless qu'on avait sans les activer : `INDIRECT_WINDOW=1 CARD_REHASH_RUNS=1 BACK_OWN_VIEW=1 STAGING_POOL=0 CARD_WINDOWS_MB=1024` | fxceless | 295 ms, comme sans |
-| Eau : `VICTORY_WAVE_WIDE_ONLY` sans les deux programmes de volumétrie (5dc3…, 6f22…) + le programme sous l'eau (926c46ba…) | cool_fox PR #24, fxceless PR #695 | en cinématique l'eau devient bleu-noir et plate au lieu de blanche : pas mieux (passage froid, à revoir sur capture) |
+| Eau : `VICTORY_WAVE_WIDE_ONLY` sans les deux programmes de volumétrie (5dc3…, 6f22…) | cool_fox PR #24, fxceless PR #695 | l'eau blanche des cinématiques reste blanche : ce n'est pas la cause. En jeu l'eau reste bonne et le passage était plus rapide (212 ms, un seul passage) : à confirmer |
 
 ## À essayer (par ordre d'intérêt)
 
