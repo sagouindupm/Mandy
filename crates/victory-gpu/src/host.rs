@@ -2378,6 +2378,96 @@ fn landable(line: &[Option<u64>], completed: u64) -> usize {
     line.iter().position(|f| f.is_some_and(|f| f > completed)).unwrap_or(line.len())
 }
 
+/// Experimental: merge only directly adjacent readback commands. Keep the
+/// original piece list for merging, fence tracking, and bookkeeping.
+fn coalesce_readbacks() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_READBACK_COALESCE").is_some_and(|v| v == "1"))
+}
+
+/// Each tuple is (source, source start, source end, destination offset).
+/// Do not reorder pieces or bridge gaps in either address space. Different
+/// resources may alias, but are deliberately never joined.
+fn readback_runs<T, K: Eq>(
+    pieces: impl Iterator<Item = (T, usize, usize, u64)>,
+    key: impl Fn(&T) -> K,
+    enabled: bool,
+) -> impl Iterator<Item = (T, usize, usize, u64)> {
+    let mut pieces = pieces.peekable();
+    std::iter::from_fn(move || {
+        let (source, lo, mut hi, at) = pieces.next()?;
+        if enabled {
+            while let Some((next_source, next_lo, next_hi, next_at)) = pieces.peek() {
+                if hi != *next_lo || hi <= lo || *next_hi <= *next_lo
+                    || at.checked_add((hi - lo) as u64) != Some(*next_at)
+                    || key(&source) != key(next_source)
+                {
+                    break;
+                }
+                hi = *next_hi;
+                let _ = pieces.next();
+            }
+        }
+        Some((source, lo, hi, at))
+    })
+}
+
+#[cfg(test)]
+mod readback_run_tests {
+    use super::readback_runs;
+
+    #[test]
+    fn merges_only_exact_adjacency_in_both_address_spaces() {
+        let pieces = [(1, 0, 64, 0), (1, 64, 128, 64), (1, 160, 192, 128),
+                      (1, 192, 256, 192), (2, 256, 320, 256), (2, 320, 384, 320),
+                      (2, 128, 192, 384), (2, 192, 256, 448)];
+        let got: Vec<_> = readback_runs(pieces.into_iter(), |i| *i, true).collect();
+        assert_eq!(got, [(1, 0, 128, 0), (1, 160, 192, 128),
+                         (1, 192, 256, 192), (2, 256, 384, 256), (2, 128, 256, 384)]);
+        assert_eq!(readback_runs(pieces.into_iter(), |i| *i, false).collect::<Vec<_>>(), pieces);
+    }
+
+    #[test]
+    fn byte_exact_for_varied_order_and_resource_boundaries() {
+        let mut seed = 0x69f7e9b17u64;
+        for _ in 0..256 {
+            let mut pieces = Vec::new();
+            let mut dst = 0u64;
+            let mut src = 0usize;
+            let mut key = 0u32;
+            for _ in 0..128 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                if seed.is_multiple_of(5) {
+                    src = (seed % 2048) as usize;
+                }
+                if seed.is_multiple_of(7) {
+                    key = (key + 1) % 4;
+                }
+                let len = 1 + (seed % 128) as usize;
+                pieces.push((key, src, src + len, dst));
+                src += len;
+                dst += len as u64;
+            }
+            let expand = |runs: &[(u32, usize, usize, u64)]| {
+                runs.iter().flat_map(|&(key, lo, hi, dst)| {
+                    (lo..hi).map(move |i| (key, i, dst + (i - lo) as u64))
+                }).collect::<Vec<_>>()
+            };
+            let runs: Vec<_> = readback_runs(pieces.iter().copied(), |i| *i, true).collect();
+            assert_eq!(expand(&runs), expand(&pieces));
+        }
+    }
+
+    #[test]
+    fn adjacent_64k_pieces_reduce_command_count_without_reducing_bytes() {
+        let pieces: Vec<_> = (0..1024usize).map(|i| (0, i * 65536, (i + 1) * 65536, (i * 65536) as u64)).collect();
+        let runs: Vec<_> = readback_runs(pieces.iter().copied(), |i| *i, true).collect();
+        assert_eq!(runs, [(0, 0, 64 * 1024 * 1024, 0)]);
+    }
+}
+
 /// For one plan of copies in the card's memory, with [`relay`]: `flags`
 /// holds, for every piece of every range of the plan, the copy, the
 /// piece's number in the copy and whether the compare flagged it there (or
@@ -5012,8 +5102,8 @@ impl Host {
                     // title's either way.
                     let after = second.order_done();
                     let copy = second.down.list()?;
-                    for (shadow, lo, hi, at) in &pieces {
-                        copy.1.CopyBufferRegion(&buffer, *at, &shadow.buffer, *lo as u64, (*hi - *lo) as u64);
+                    for (shadow, lo, hi, at) in readback_runs(pieces.iter().map(|(s, lo, hi, at)| (s, *lo, *hi, *at)), |s| std::sync::Arc::as_ptr(s), coalesce_readbacks()) {
+                        copy.1.CopyBufferRegion(&buffer, at, &shadow.buffer, lo as u64, (hi - lo) as u64);
                     }
                     let job = second.down.send(copy, &[(&self.fence, behind)], total)?;
                     second.down.wait(job, event)?;
@@ -5032,8 +5122,8 @@ impl Host {
                 }
                 allocator.Reset()?;
                 list.Reset(&allocator, None)?;
-                for (shadow, lo, hi, at) in &pieces {
-                    list.CopyBufferRegion(&buffer, *at, &shadow.buffer, *lo as u64, (*hi - *lo) as u64);
+                for (shadow, lo, hi, at) in readback_runs(pieces.iter().map(|(s, lo, hi, at)| (s, *lo, *hi, *at)), |s| std::sync::Arc::as_ptr(s), coalesce_readbacks()) {
+                    list.CopyBufferRegion(&buffer, at, &shadow.buffer, lo as u64, (hi - lo) as u64);
                 }
                 list.Close()?;
                 let lists = [Some(list.cast::<ID3D12CommandList>()?)];
@@ -5474,7 +5564,7 @@ impl Host {
                     // relay uses, in the plainest run there is.
                     if let Some(second) = crate::queue2::second().filter(|s| s.fetches()) {
                         let copy = second.down.list()?;
-                        for &(i, lo, hi, at) in &pieces {
+                        for (i, lo, hi, at) in readback_runs(pieces.iter().copied(), |i| *i, coalesce_readbacks()) {
                             copy.1.CopyBufferRegion(fetched, at, &plan.ranges[i].shadow.buffer, lo as u64, (hi - lo) as u64);
                         }
                         let job = second.down.send(copy, &[(&self.fence, *submitted)], total)?;
@@ -5487,7 +5577,7 @@ impl Host {
                     }
                     allocator.Reset()?;
                     list.Reset(allocator, None)?;
-                    for &(i, lo, hi, at) in &pieces {
+                    for (i, lo, hi, at) in readback_runs(pieces.iter().copied(), |i| *i, coalesce_readbacks()) {
                         list.CopyBufferRegion(fetched, at, &plan.ranges[i].shadow.buffer, lo as u64, (hi - lo) as u64);
                     }
                     list.Close()?;
