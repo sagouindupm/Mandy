@@ -365,6 +365,31 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
     use std::sync::atomic::{AtomicU32, Ordering};
     static CALLS: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
     let calls = CALLS[usize::from(SLOT == 0x218)].fetch_add(1, Ordering::Relaxed) + 1;
+    // Which descriptions come back again and again (the title asks anew
+    // each frame for a pipeline it did not get): calls by the first
+    // stage's code address, the most asked logged every 4096 calls.
+    #[cfg(windows)]
+    if !desc.is_null() {
+        static ASKED: std::sync::Mutex<Option<std::collections::HashMap<(usize, u64), (u64, u64)>>> =
+            std::sync::Mutex::new(None);
+        let mut w = [0u8; 16];
+        // Words 5 and 6: the first stage's code address and size.
+        if crate::host::read_into(desc.wrapping_add(40), &mut w) {
+            let code = u64::from_le_bytes(w[..8].try_into().unwrap_or_default());
+            let size = u64::from_le_bytes(w[8..].try_into().unwrap_or_default());
+            let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+            let m = asked.get_or_insert_with(Default::default);
+            let e = m.entry((SLOT, code)).or_insert((0, size));
+            e.0 += 1;
+            if calls % 4096 == 0 {
+                let mut top: Vec<_> = m.iter().filter(|(k, _)| k.0 == SLOT).map(|(k, v)| (v.0, k.1, v.1)).collect();
+                top.sort_by_key(|t| std::cmp::Reverse(t.0));
+                top.truncate(6);
+                let top: Vec<String> = top.iter().map(|(n, c, s)| format!("{n}x code {c:#x}+{s:#x}")).collect();
+                tracing::warn!(slot = format_args!("{SLOT:#x}"), calls, distinct = m.len(), ?top, "deserialized pipelines asked for most");
+            }
+        }
+    }
     if !out.is_null() {
         // SAFETY: the title's out pointer (a local of its own).
         unsafe { *out = std::ptr::null() };

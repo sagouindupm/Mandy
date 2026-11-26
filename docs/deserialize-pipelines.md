@@ -6,8 +6,11 @@ Données relevées avec `VICTORY_DUMP_UNKNOWN_PIPELINES=<dossier>` (rien du jeu 
 ## Ce que c'est
 - **0x218** = `DeserializeComputePipelineStateX` (comme Marvisak/VIctory#2396 l'a vu pour l'upscaler AMD).
   Description : `root, (paquet, 0x1c), (hash, 0x14), (code GFX10, n), (métadonnées, m), ...`.
-- **0x1c8** = sa version graphique (`DeserializeGraphicsPipelineStateX`, nom supposé). Aucun fork ne l'implémente :
-  le jeu se passe de ces pipelines. En 5 min : plus de 16 384 appels (0x1c8) et plus de 2 048 (0x218).
+- **0x1c8** = sa version graphique (`DeserializeGraphicsPipelineStateX`, nom supposé). Aucun fork ne l'implémente.
+  Mesuré : les ~24 500 appels tombent tous en 2 s au chargement, environ 12 000 pipelines distinctes demandées
+  18 fois chacune, aucune relance par image. C'est le cache de pipelines précompilées du jeu ; il se rabat ensuite
+  sur la création classique (DXIL), que nous traduisons. Gain attendu à l'implémenter : temps de chargement et
+  compilation de shaders, pas l'image.
 
 ## Description 0x1c8 (mots de 64 bits)
 | mot | contenu |
@@ -30,3 +33,13 @@ puis des enregistrements de 32 octets (0x41 ressource lue, 0x42 déclaration de 
 1. Le format FSPX/ACCC dans notre traducteur (porter `fspx_program`).
 2. Le paquet de registres : SPI_PS_INPUT_*, sorties du vertex shader, format des cibles couleur (le code exporte déjà au format de la cible, sans les correctifs d'export du FSSM).
 3. Des signatures d'entrée/sortie fabriquées (le jeu ne passe pas de DXIL).
+
+## Eau blanche (enquête du 2026-11-26)
+Outils : `VICTORY_CAPTURE_AT=<secondes>` (capture à l'heure, les cinématiques suivent l'horloge),
+`VICTORY_DUMP_TARGETS=1`, valeurs brutes des petites cibles dans le journal (build `diagnostics`).
+- L'éclairage HDR est juste (coucher de soleil de la cour de prison correct avant post-traitement) ;
+  l'exposition vaut 2^-12,9 et le ciel, les arbres et les personnages sont bien exposés.
+- Seule l'eau est blanche, dès la cible HDR éclairée : on voit le sable plein soleil sous l'eau, sans absorption.
+- Le calcul d'eau `cad2edef5ecea3ba` écrit la couleur turquoise (R11G11B10 1280x720), trouée de bandes noires,
+  et **aucune passe ne la relit dans la même image**. La passe qui la compose manque ou lit une autre image.
+- Seuls dessins sautés : les étapes du constructeur de ray tracing (`VICTORY_BVH_BUILDER` éteint).
