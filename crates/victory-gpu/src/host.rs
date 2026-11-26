@@ -659,7 +659,6 @@ fn create() -> windows::core::Result<Host> {
             tracing::info!("host device on the software adapter (WARP)");
         } else if let Some(adapter) = chosen_adapter() {
             D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?;
-            crate::tdr::log();
         } else {
             D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?;
         }
@@ -9066,6 +9065,85 @@ impl Host {
             Ok(()) => Some((buffer?, data.cast())),
             Err(e) => {
                 tracing::warn!(error = %e, size, "no shared buffer");
+                None
+            }
+        }
+    }
+
+    /// Whether buffers can lie in the card's memory and be mapped by the CPU
+    /// (`D3D12_HEAP_TYPE_GPU_UPLOAD`: a resizable BAR, and a system and driver
+    /// that offer it); logged once.
+    pub(crate) fn mapped_card_memory(&self) -> bool {
+        static THERE: OnceLock<bool> = OnceLock::new();
+        *THERE.get_or_init(|| {
+            let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS16::default();
+            // SAFETY: writes `options` of the given size.
+            let ok = unsafe {
+                self.device
+                    .CheckFeatureSupport(
+                        D3D12_FEATURE_D3D12_OPTIONS16,
+                        (&raw mut options).cast(),
+                        size_of_val(&options) as u32,
+                    )
+                    .is_ok()
+            };
+            let supported = ok && options.GPUUploadHeapSupported.as_bool();
+            tracing::info!(supported, "card memory the CPU maps");
+            supported
+        })
+    }
+
+    /// A buffer in the card's own memory that the CPU maps, shaders read and
+    /// (with `written`) may write. The CPU should only write it: a read of the
+    /// mapping crosses the bus a few bytes at a time.
+    pub(crate) fn mapped_card_buffer(&self, size: u64, written: bool) -> Option<(ID3D12Resource, *mut u8)> {
+        if !self.mapped_card_memory() {
+            return None;
+        }
+        let heap = D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_GPU_UPLOAD,
+            ..Default::default()
+        };
+        let desc = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+            Width: size.max(1),
+            Height: 1,
+            DepthOrArraySize: 1,
+            MipLevels: 1,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+            Flags: if written {
+                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+            } else {
+                D3D12_RESOURCE_FLAG_NONE
+            },
+            ..Default::default()
+        };
+        let mut buffer: Option<ID3D12Resource> = None;
+        let mut data = std::ptr::null_mut();
+        // SAFETY: plain creation and mapping of a CPU-visible buffer.
+        let made = unsafe {
+            self.device
+                .CreateCommittedResource(
+                    &heap,
+                    D3D12_HEAP_FLAG_NONE,
+                    &desc,
+                    D3D12_RESOURCE_STATE_COMMON,
+                    None,
+                    &mut buffer,
+                )
+                .and_then(|()| {
+                    let b = buffer.as_ref().ok_or_else(windows::core::Error::empty)?;
+                    b.Map(0, None, Some(&mut data))
+                })
+        };
+        match made {
+            Ok(()) => Some((buffer?, data.cast())),
+            Err(e) => {
+                tracing::warn!(error = %e, size, "no buffer in card memory the CPU maps");
                 None
             }
         }
