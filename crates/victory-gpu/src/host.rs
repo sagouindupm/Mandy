@@ -225,6 +225,20 @@ pub(crate) fn retire<T: 'static>(object: T) {
         .push((started, Retired(Box::new(object))));
 }
 
+/// Drops `object` at the next landing after every submission started by
+/// now, never here: on the thread that buries ([`bury_aside`]) where there
+/// is one. For the sweeps, which let go of hundreds of host textures in one
+/// call on the thread that submits: releasing a reserved texture is two
+/// calls into the kernel (its allocation, its range of the card's address
+/// space), 20 ms a frame of that thread in the opening cutscene.
+pub(crate) fn retire_later<T: 'static>(object: T) {
+    RETIREMENTS[1].fetch_add(1, Ordering::Relaxed);
+    RETIRED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((STARTED.load(Ordering::Acquire), Retired(Box::new(object))));
+}
+
 /// Drops what waited for submissions up to `finished`.
 fn bury(finished: u64) {
     let done: Vec<(u64, Retired)> = {
@@ -1551,6 +1565,8 @@ struct CardWork {
     fetch: Prelude,
     root: ID3D12RootSignature,
     pso: ID3D12PipelineState,
+    /// [`CARD_MASKED`]'s root signature and pipeline, if it compiled.
+    masked: Option<(ID3D12RootSignature, ID3D12PipelineState)>,
     /// One dword per piece compared, set where the piece differs: PC
     /// memory, mapped (buffer, mapping, bytes).
     differs: (ID3D12Resource, usize, u64),
@@ -1597,6 +1613,10 @@ unsafe impl Send for CardWork {}
 
 static CARD_WORK: Mutex<Option<CardWork>> = Mutex::new(None);
 
+/// Since the last frame line: copies put in by [`CARD_MASKED`], and its
+/// entries.
+static MASKED_PUT: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
 /// The compare of a declared range of a copy in the card's memory with
 /// its bytes from before, one thread group per 64 KiB piece (cut at
 /// multiples of 64 KiB of title memory, as `Shadow::card_piece` cuts
@@ -1611,6 +1631,84 @@ static CARD_WORK: Mutex<Option<CardWork>> = Mutex::new(None);
 /// 4,096 dependent steps: 0.4-0.6 ms a pass on an RX 9070 whatever the
 /// piece count, and several hundred passes a frame. Run it with
 /// [`card_compare_dispatch`].
+/// Puts changed title bytes into a copy in the card's memory by dwords
+/// (ported from cold-project-vi aff5fb2, GextFRDD; here the bytes are read
+/// straight from the copy's CPU side, which the card can read): each entry
+/// is (dword index, mask of the bytes that changed); the card's other
+/// bytes in that dword, which shaders may have written, are kept. Entries
+/// name distinct dwords.
+const CARD_MASKED: &str = r#"
+#define RS "RootConstants(num32BitConstants=2, b0), SRV(t0), SRV(t1), UAV(u0)"
+cbuffer C : register(b0) { uint count; uint first; }
+ByteAddressBuffer entries : register(t0);
+ByteAddressBuffer src : register(t1);
+RWByteAddressBuffer dst : register(u0);
+[RootSignature(RS)]
+[numthreads(64, 1, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= count) return;
+    uint2 e = entries.Load2((first + id.x) * 8);
+    uint at = e.x * 4;
+    uint old = dst.Load(at);
+    dst.Store(at, (old & ~e.y) | (src.Load(at) & e.y));
+}
+"#;
+
+/// From how many changed ranges of one copy in the card's memory a send
+/// puts them in with one pass of [`CARD_MASKED`] instead of a copy each
+/// (`VICTORY_MASKED_MIN`; 0, the default, never). With it the cap on runs
+/// merged under flights' writes ([`merge_runs`]) is 1,048,576: the title
+/// rewrites some 16,000 to 100,000 runs of 2-3 bytes a frame in pages
+/// shaders write, which settled the flights for ~30 ms a frame here.
+fn masked_min() -> usize {
+    static MIN: OnceLock<usize> = OnceLock::new();
+    *MIN.get_or_init(|| std::env::var("VICTORY_MASKED_MIN").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
+}
+
+/// The cap on changed runs a submission puts into copies in the card's
+/// memory under flights' writes (`VICTORY_MERGE_RUNS`; 512, or 1,048,576
+/// with [`masked_min`]).
+fn merge_runs() -> usize {
+    static RUNS: OnceLock<usize> = OnceLock::new();
+    *RUNS.get_or_init(|| {
+        let default = if masked_min() > 0 { 1 << 20 } else { 512 };
+        std::env::var("VICTORY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(default, |n| n.clamp(1, 1 << 20))
+    })
+}
+
+/// [`CARD_MASKED`] entries for `ranges` (offsets in a copy): (dword index,
+/// mask of the bytes in a range), one per dword.
+fn masked_entries(ranges: &[(usize, usize)]) -> Vec<[u32; 2]> {
+    let mut sorted = ranges.to_vec();
+    sorted.sort_unstable();
+    let mut out: Vec<[u32; 2]> = Vec::new();
+    for (a, b) in sorted {
+        let mut at = a;
+        while at < b {
+            let dw = (at / 4) as u32;
+            let first = at % 4;
+            let last = (b - dw as usize * 4).min(4);
+            let mask = ((0xFFFF_FFFFu64 >> (32 - 8 * (last - first))) << (8 * first)) as u32;
+            match out.last_mut() {
+                Some(e) if e[0] == dw => e[1] |= mask,
+                _ => out.push([dw, mask]),
+            }
+            at = dw as usize * 4 + last;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod masked_tests {
+    #[test]
+    fn masked_entries_cover_each_changed_byte_once() {
+        let e = super::masked_entries(&[(9, 10), (1, 3), (3, 4), (12, 20)]);
+        assert_eq!(e, vec![[0, 0xFFFF_FF00], [2, 0x0000_FF00], [3, 0xFFFF_FFFF], [4, 0xFFFF_FFFF]]);
+        assert_eq!(super::masked_entries(&[(5, 6)]), vec![[1, 0x0000_FF00]]);
+    }
+}
+
 pub(crate) const CARD_COMPARE: &str = r#"
 #define RS "RootConstants(num32BitConstants=6, b0), SRV(t0), UAV(u0), UAV(u1)"
 cbuffer Span : register(b0) {
@@ -1906,6 +2004,8 @@ struct CardPlan {
     /// The copies whose card side was brought up to date, alive until the
     /// submission has run.
     _synced: Vec<std::sync::Arc<crate::shadow::Shadow>>,
+    /// [`CARD_MASKED`]'s entries, alive until the submission has run.
+    _kept: Vec<ID3D12Resource>,
     /// The lists of ours the plan recorded (whether the compare, the
     /// list), given back by `Host::card_done`.
     lists: Vec<(bool, Prelude)>,
@@ -1956,6 +2056,8 @@ struct Deferred {
     /// descriptor heaps): the title may release its objects before it
     /// submits the list.
     kept: Vec<windows::core::IUnknown>,
+    /// The pipelines [`HostList::bind_pipeline`] kept, by address.
+    bound: std::collections::HashSet<usize, std::hash::BuildHasherDefault<AddressHash>>,
     /// Buffer ranges refreshed since the last title copy (host copy,
     /// address, bytes): refreshing them again would find the same bytes.
     refreshed: std::collections::HashSet<(usize, usize, usize)>,
@@ -3201,14 +3303,11 @@ fn stale_under_flights(runs: &[&HostList]) -> bool {
         // The title's bytes are put in beside the flights' writes; a
         // settle is still due where that could not be done. At most this
         // many changed runs go up to copies in the card's memory, each a
-        // copy of its own there.
-        // (`VICTORY_MERGE_RUNS`: the cap. Run 218 had 500 to 5,400 changed
-        // runs a frame of a few bytes each, and the cap of 512 settled the
-        // flights twice a frame, 50 ms of the submitting thread.)
-        static RUNS: OnceLock<usize> = OnceLock::new();
-        let mut runs_left = *RUNS.get_or_init(|| {
-            std::env::var("VICTORY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(512, |n| n.clamp(1, 1 << 16))
-        });
+        // copy of its own there, or one masked pass ([`merge_runs`]).
+        // (Run 218 had 500 to 5,400 changed runs a frame of a few bytes
+        // each, and the cap of 512 settled the flights twice a frame, 50 ms
+        // of the submitting thread.)
+        let mut runs_left = merge_runs();
         return spans.iter().any(|(shadow, from, to)| shadow.merge_under_writes(*from, *to - *from, &mut runs_left));
     }
     spans.iter().any(|(shadow, from, to)| shadow.stale_under_writes(*from, *to - *from))
@@ -4137,6 +4236,42 @@ impl Host {
         })
     }
 
+    /// [`CARD_MASKED`]'s root signature and pipeline.
+    fn make_card_masked(&self) -> windows::core::Result<(ID3D12RootSignature, ID3D12PipelineState)> {
+        use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
+        use windows::Win32::Graphics::Direct3D::ID3DBlob;
+        let mut code: Option<ID3DBlob> = None;
+        // SAFETY: the source and names live through the call; the out
+        // pointer is ours; the blob's own bytes.
+        unsafe {
+            D3DCompile(
+                CARD_MASKED.as_ptr().cast(),
+                CARD_MASKED.len(),
+                windows::core::s!("card masked"),
+                None,
+                None,
+                windows::core::s!("main"),
+                windows::core::s!("cs_5_1"),
+                0,
+                0,
+                &mut code,
+                None,
+            )?;
+            let code = code.ok_or_else(windows::core::Error::empty)?;
+            let bytes = std::slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize());
+            let root: ID3D12RootSignature = self.device.CreateRootSignature(0, bytes)?;
+            let pso: ID3D12PipelineState = self.device.CreateComputePipelineState(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+                pRootSignature: std::mem::transmute_copy(&root),
+                CS: D3D12_SHADER_BYTECODE {
+                    pShaderBytecode: bytes.as_ptr().cast(),
+                    BytecodeLength: bytes.len(),
+                },
+                ..Default::default()
+            })?;
+            Ok((root, pso))
+        }
+    }
+
     fn make_card_work(&self) -> windows::core::Result<CardWork> {
         use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
         use windows::Win32::Graphics::Direct3D::ID3DBlob;
@@ -4178,12 +4313,17 @@ impl Host {
                 },
                 ..Default::default()
             })?;
+            let masked = self
+                .make_card_masked()
+                .map_err(|e| tracing::warn!(error = %e, "the masked put-in of changed title bytes could not be made"))
+                .ok();
             Ok(CardWork {
                 sync: vec![list()?],
                 check: vec![list()?],
                 fetch: list()?,
                 root,
                 pso,
+                masked,
                 differs: (differs, data as usize, RESULTS),
                 fetched: None,
                 taken: 0,
@@ -4403,6 +4543,8 @@ impl Host {
                 landed = Some(landing);
             }
         }
+        // Entry buffers of masked passes, kept with the plan.
+        let mut kept: Vec<ID3D12Resource> = Vec::new();
         if !dirty.is_empty() {
             let Some(sync) = work.sync.pop().or_else(|| self.make_prelude()) else {
                 fail(format_args!("no host list to bring host copies in the card's memory up to date"));
@@ -4418,11 +4560,55 @@ impl Host {
                     let timed = crate::cardmeter::begin(list, crate::cardmeter::Kind::Sync);
                     // Where the next range lies in the landing buffer.
                     let mut at = 0u64;
+                    let masked_at = masked_min();
                     for (shadow, ranges) in &dirty {
                         let Some((staging, before, size)) = shadow.card_sides() else {
                             continue;
                         };
+                        // The state the copy's buffer is in after its bytes went up.
+                        let mut put_in = D3D12_RESOURCE_STATE_COPY_DEST;
+                        if landed.is_none()
+                            && masked_at > 0
+                            && ranges.len() >= masked_at
+                            && let Some((mroot, mpso)) = &work.masked
+                        {
+                            let entries = masked_entries(ranges);
+                            if let Some((buf, data)) = self.shared_buffer((entries.len() * 8) as u64) {
+                                std::ptr::copy_nonoverlapping(entries.as_ptr().cast::<u8>(), data, entries.len() * 8);
+                                list.ResourceBarrier(&[transition(
+                                    &shadow.buffer,
+                                    D3D12_RESOURCE_STATE_COMMON,
+                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                )]);
+                                list.SetComputeRootSignature(mroot);
+                                list.SetPipelineState(mpso);
+                                list.SetComputeRootShaderResourceView(1, buf.GetGPUVirtualAddress());
+                                list.SetComputeRootShaderResourceView(2, staging.GetGPUVirtualAddress());
+                                list.SetComputeRootUnorderedAccessView(3, shadow.buffer.GetGPUVirtualAddress());
+                                // At most 65,535 groups of 64 a dispatch.
+                                for (n, chunk) in entries.chunks(65_535 * 64).enumerate() {
+                                    let constants = [chunk.len() as u32, (n * 65_535 * 64) as u32];
+                                    list.SetComputeRoot32BitConstants(0, 2, constants.as_ptr().cast(), 0);
+                                    list.Dispatch((chunk.len() as u32).div_ceil(64), 1, 1);
+                                }
+                                kept.push(buf);
+                                put_in = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+                                if MASKED_PUT[0].fetch_add(1, Ordering::Relaxed).is_multiple_of(2000) {
+                                    tracing::info!(
+                                        copies = MASKED_PUT[0].load(Ordering::Relaxed),
+                                        dwords = MASKED_PUT[1].load(Ordering::Relaxed),
+                                        "changed title bytes put into copies on the card by masked passes so far (VICTORY_MASKED_MIN)"
+                                    );
+                                }
+                                MASKED_PUT[1].fetch_add(entries.len() as u64, Ordering::Relaxed);
+                            }
+                        }
                         for &(a, b) in ranges {
+                            if put_in != D3D12_RESOURCE_STATE_COPY_DEST {
+                                at += (b - a) as u64;
+                                crate::shadow::CARD_STATS[0].fetch_add((b - a) as u64, Ordering::Relaxed);
+                                continue;
+                            }
                             match &landed {
                                 Some(landing) => list.CopyBufferRegion(&shadow.buffer, a as u64, landing, at, (b - a) as u64),
                                 None => list.CopyBufferRegion(&shadow.buffer, a as u64, staging, a as u64, (b - a) as u64),
@@ -4443,7 +4629,7 @@ impl Host {
                         if !ranges.is_empty() {
                             list.ResourceBarrier(&[transition(
                                 &shadow.buffer,
-                                D3D12_RESOURCE_STATE_COPY_DEST,
+                                put_in,
                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                             )]);
                         }
@@ -4482,6 +4668,7 @@ impl Host {
             ranges: Vec::new(),
             check: None,
             _synced: dirty.into_iter().map(|(shadow, _)| shadow).collect(),
+            _kept: kept,
             lists: used,
             sent_as,
             inflight: false,
@@ -6751,6 +6938,21 @@ impl HostList {
         if !pipelines.contains(name) {
             pipelines.insert(name.to_owned());
         }
+    }
+
+    /// The list binds a pipeline: it and its root signature are kept until
+    /// the list is reset, and its name noted, the first time only (a kept
+    /// pipeline's address names no other).
+    pub(crate) fn bind_pipeline(&self, name: &str, pso: &ID3D12PipelineState, root: &ID3D12RootSignature) {
+        {
+            let mut deferred = self.deferred();
+            if !deferred.bound.insert(pso.as_raw() as usize) {
+                return;
+            }
+            deferred.kept.push(pso.clone().into());
+            deferred.kept.push(root.clone().into());
+        }
+        self.used_pipeline(name);
     }
 
     fn deferred(&self) -> std::sync::MutexGuard<'_, Deferred> {
@@ -9324,5 +9526,32 @@ void main() {
             }
         }
         drop((a, b, trial));
+    }
+}
+
+/// A hash for addresses of ours: the bits that tell them apart, spread. The
+/// tables it serves are asked 40,000 times a frame, and hold no one's keys
+/// but our own.
+#[derive(Default)]
+pub(crate) struct AddressHash(u64);
+
+impl std::hash::Hasher for AddressHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_usize(usize::from(b));
+        }
+    }
+    fn write_usize(&mut self, n: usize) {
+        let h = (self.0.rotate_left(5) ^ n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 32);
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.write_usize(n as usize);
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.write_usize(n as usize);
     }
 }

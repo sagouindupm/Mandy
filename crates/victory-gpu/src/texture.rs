@@ -75,6 +75,11 @@ pub(crate) struct Staging {
     /// recorded again about a second later if the card has room by then
     /// ([`upload`]).
     waiting: std::sync::atomic::AtomicU64,
+    /// The levels the last submitted upload wrote (a bit a level): all but
+    /// the levels a texture made without them left out
+    /// (`crate::tiles::Tiled::copied_now`). An upload that would write
+    /// more now (a level was brought back) is recorded again.
+    copied: std::sync::atomic::AtomicU32,
     /// The size of the buffer if it came from the pool of spare staging
     /// buffers and goes back to it ([`staging_buffer`]); 0: a buffer of its
     /// own, released when this is dropped.
@@ -719,6 +724,15 @@ pub(crate) fn upload(list: &HostList, resource: This, texture: &ID3D12Resource) 
         staging.forget();
         staging.dirty.store(true, Relaxed);
     }
+    // A texture made without its most detailed levels writes all but
+    // those that have no tiles (`crate::tiles::Tiled::copied_now`); one
+    // brought back since the last upload (`crate::resource::promote_reduced`)
+    // is uploaded again, which gives it its tiles.
+    let tiled = if staging.on_demand { crate::resource::host_tiled(resource) } else { None };
+    let copied = tiled.as_ref().and_then(|t| t.tiled()).map_or(u32::MAX, crate::tiles::Tiled::copied_now);
+    if copied & !staging.copied.load(Relaxed) != 0 {
+        staging.dirty.store(true, Relaxed);
+    }
     // Levels on demand: the last upload left a held level without tiles
     // (the card had no room, or no heap could be had), and nothing else
     // would record an upload again until the title writes the texture: the
@@ -761,6 +775,10 @@ pub(crate) fn upload(list: &HostList, resource: This, texture: &ID3D12Resource) 
     // The staging buffer lives as long as `staging`, which the deferred
     // refresh below holds until the list is reset.
     for (i, footprint) in staging.footprints.iter().enumerate() {
+        let level = i as u32 % staging.mips;
+        if level < 32 && copied & (1 << level) == 0 {
+            continue;
+        }
         #[cfg(feature = "diagnostics")]
         {
             let f = footprint.Footprint;
@@ -815,23 +833,24 @@ pub(crate) fn upload(list: &HostList, resource: This, texture: &ID3D12Resource) 
         list.defer_host(move || {
             staging.uploaded.store(true, Relaxed);
             staging.dirty.store(false, Relaxed);
+            staging.copied.store(copied, Relaxed);
         });
     }
     // Levels on demand (`crate::tiles`): after the check below, in the
     // order of this list's steps, and before the list is executed, the
     // levels the staging buffer holds as the title's are given the card's
-    // memory if they have none. The list copies every level, so each one
-    // given here is written whole by it (the rest are copies into no
-    // memory, which the card drops).
-    let on_demand = if staging.on_demand { crate::resource::host_tiled(resource) } else { None };
-    let Some(on_demand) = on_demand else {
+    // memory if they have none. The list copies every level but those left
+    // out ([`crate::tiles::Tiled::copied_now`]), so each one given here is
+    // written whole by it (the rest are copies into no memory, which the
+    // card drops).
+    let Some(on_demand) = tiled else {
         // Once per submission however many of its lists sample the texture.
         list.defer_texture(staging);
         return;
     };
     list.defer_texture(staging.clone());
     list.defer_host(move || {
-        let waiting = on_demand.uploaded(staging.detiled.load(Relaxed), staging.memory as u64);
+        let waiting = on_demand.uploaded(staging.detiled.load(Relaxed), copied, staging.memory as u64);
         staging.waiting.store(if waiting { crate::host::moment().max(1) } else { 0 }, Relaxed);
         // A texture picked by index has no staging buffer after this
         // upload: its slots are made due again by the texture pass.
@@ -1267,6 +1286,18 @@ pub(crate) fn unstage(resource: This) {
     }
 }
 
+/// [`unstage`] for the sweep of idle host copies: the staging state is
+/// dropped later, off the thread that submits (`crate::host::retire_later`).
+pub(crate) fn unstage_later(resource: This) {
+    let gone = {
+        let mut map = STAGING.lock().unwrap_or_else(|e| e.into_inner());
+        map.as_mut().and_then(|map| map.remove(&(resource as usize)))
+    };
+    if let Some(gone) = gone {
+        crate::host::retire_later(gone);
+    }
+}
+
 /// Where a staged title texture's memory is: address and bytes.
 pub(crate) fn staged_memory(resource: This) -> Option<(u64, u64)> {
     let map = STAGING.lock().unwrap_or_else(|e| e.into_inner());
@@ -1565,6 +1596,7 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
         detiled: std::sync::atomic::AtomicU32::new(0),
         judged: [const { std::sync::atomic::AtomicU64::new(0) }; 2],
         waiting: std::sync::atomic::AtomicU64::new(0),
+        copied: std::sync::atomic::AtomicU32::new(0),
         pooled,
     });
     map.insert(resource as usize, s.clone());

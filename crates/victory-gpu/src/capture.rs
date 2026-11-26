@@ -47,7 +47,32 @@ pub(crate) fn listed(n: u64) -> bool {
     });
     let first = WORLD.load(std::sync::atomic::Ordering::Relaxed);
     let after = n.wrapping_sub(first);
-    named || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
+    named || at_time(n) || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
+}
+
+/// `VICTORY_CAPTURE_AT` (comma-separated seconds from the first frame): the
+/// first frame at or after each moment is listed too. Cutscenes run on the
+/// clock, so a moment finds the same shot in builds of different speeds,
+/// where a frame number does not.
+fn at_time(n: u64) -> bool {
+    type At = (std::time::Instant, Vec<f64>, Vec<u64>);
+    static AT: std::sync::Mutex<Option<At>> = std::sync::Mutex::new(None);
+    let mut at = AT.lock().unwrap_or_else(|e| e.into_inner());
+    let (began, pending, chosen) = at.get_or_insert_with(|| {
+        let list = std::env::var("VICTORY_CAPTURE_AT").unwrap_or_default();
+        let times = list.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        (std::time::Instant::now(), times, Vec::new())
+    });
+    if chosen.contains(&n) {
+        return true;
+    }
+    let now = began.elapsed().as_secs_f64();
+    let due = pending.iter().any(|&t| t <= now);
+    if due {
+        pending.retain(|&t| t > now);
+        chosen.push(n);
+    }
+    due
 }
 
 /// With a capture folder, for the frames [`listed`]: `what` is added to
@@ -441,6 +466,13 @@ fn dump_one(
         }
         let pitch = f.RowPitch as usize;
         let rows = std::slice::from_raw_parts(data.cast::<u8>(), pitch * f.Height as usize);
+        // Tiny targets (exposure, averages): their first row as raw words,
+        // which the normalized picture cannot show.
+        if f.Width * f.Height <= 64 {
+            let n = (f.Width as usize * 16).min(rows.len()).min(64);
+            let words: Vec<f32> = rows[..n].as_chunks::<4>().0.iter().map(|w| f32::from_le_bytes(*w)).collect();
+            tracing::info!(frame, ?resource, format = f.Format.0, w = f.Width, h = f.Height, ?words, "tiny target, first row as f32 words");
+        }
         // A 24-bit depth plane comes back as 32-bit words: which depth values
         // (low 24 bits) and which top bytes it holds, the most common first.
         if matches!(d.Format.0, 44..=47) {
@@ -594,6 +626,11 @@ fn to_rgba(format: u32, w: usize, h: usize, pitch: usize, rows: &[u8]) -> Option
         26 => (4, Box::new(move |b| {
             let v = u32_at(b, 0);
             [small_float(v & 0x7ff, 6), small_float(v >> 11 & 0x7ff, 6), small_float(v >> 22, 5)]
+        })),
+        67 => (4, Box::new(move |b| {
+            let v = u32_at(b, 0);
+            let scale = 2f32.powi((v >> 27) as i32 - 24);
+            [0, 9, 18].map(|shift| ((v >> shift) & 0x1ff) as f32 * scale)
         })),
         9..=10 => (8, Box::new(move |b| [half(u16_at(b, 0)), half(u16_at(b, 1)), half(u16_at(b, 2))])),
         11..=14 => (8, Box::new(move |b| [0, 1, 2].map(|i| f32::from(u16_at(b, i))))),

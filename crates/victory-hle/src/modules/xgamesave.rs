@@ -187,7 +187,7 @@ fn version_number(file: &str) -> Option<u64> {
 }
 
 /// The names in version folder `dir`: container, display, blobs; `None` if
-/// its manifest is missing or does not parse.
+/// its manifest is missing, malformed, or refers to a missing or non-file blob.
 fn load(dir: &Path) -> std::io::Result<Option<(String, String, Vec<String>)>> {
     let bytes = match std::fs::read(dir.join(MANIFEST)) {
         Ok(bytes) => bytes,
@@ -198,6 +198,15 @@ fn load(dir: &Path) -> std::io::Result<Option<(String, String, Vec<String>)>> {
         return Ok(None);
     };
     let blobs = names.split_off(2);
+    // Older versions may be pruned as soon as this one is selected.
+    for i in 0..blobs.len() {
+        match std::fs::metadata(dir.join(i.to_string())) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        }
+    }
     let [name, display] = <[String; 2]>::try_from(names).expect("two names, checked by the parser");
     Ok(Some((name, display, blobs)))
 }
@@ -244,7 +253,7 @@ fn current(dir: &Path) -> std::io::Result<Option<Version>> {
     // Versions exist but none reads: keep them all, and refuse.
     Err(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
-        "no save version has a readable manifest",
+        "no complete save version",
     ))
 }
 
@@ -293,8 +302,9 @@ fn commit(
         match source {
             Source::Data(data) => write(path, data)?,
             // Files are never changed in place, so sharing one is safe.
-            Source::Kept(from) => std::fs::hard_link(from, &path)
-                .or_else(|_| std::fs::copy(from, &path).map(drop))?,
+            Source::Kept(from) => {
+                std::fs::hard_link(from, &path).or_else(|_| write(path, &std::fs::read(from)?))?
+            }
         }
         step();
     }
@@ -395,6 +405,13 @@ fn take<T>(handle: *mut T) {
         // SAFETY: as in `get`; closing ends the handle.
         drop(unsafe { Box::from_raw(handle) });
     }
+}
+/// Nulls a handle the title asked for before anything can fail: the GDK
+/// documents these as null on failure (`_Outptr_result_nullonfailure_`),
+/// and titles close whatever handle they hold, without checking that the
+/// call that should have given it worked.
+fn clear<T>(out: *mut *mut T) {
+    let _ = put(out, std::ptr::null_mut());
 }
 
 impl Provider {
@@ -507,7 +524,12 @@ impl Update {
         }
         let display = self.display.as_deref();
         let display = display.or(current.as_ref().map(|v| v.display.as_str()));
-        let number = current.as_ref().map_or(1, |v| v.highest + 1);
+        // A stray `v18446744073709551615` is the highest number: nothing is above it, so the
+        // update is refused before anything is written or removed. `+ 1` wrapped to `v0`,
+        // which is not read, and then removed the committed version (#2497).
+        let Some(number) = current.as_ref().map_or(Some(1), |v| v.highest.checked_add(1)) else {
+            return NO_ACCESS;
+        };
         if let Err(e) = commit(&self.dir, number, &self.name, display.unwrap_or(""), &blobs) {
             return io_error(&self.dir, &e);
         }
@@ -712,6 +734,7 @@ extern "system" fn initialize_result(
     block: *mut AsyncBlock,
     out: *mut *mut Provider,
 ) -> HRESULT {
+    clear(out);
     xasync::result(block, (&raw const INIT).cast(), out)
 }
 extern "system" fn close_provider(_: This, provider: *mut Provider) {
@@ -810,6 +833,7 @@ extern "system" fn create_container(
     name: *const c_char,
     out: *mut *mut Container,
 ) -> HRESULT {
+    clear(out);
     let (Some(p), Some(name)) = (get(provider), text(name)) else {
         return E_INVALIDARG;
     };
@@ -943,6 +967,7 @@ extern "system" fn create_update(
     display: *const c_char,
     out: *mut *mut Update,
 ) -> HRESULT {
+    clear(out);
     let Some(c) = get(container) else {
         return E_INVALIDARG;
     };
@@ -998,12 +1023,30 @@ extern "system" fn delete_blob(_: This, update: *mut Update, name: *const c_char
     }
 }
 
+/// Applies an update and says so in the log: the container, its blobs and
+/// the result, so a save that does not stick can be told from one never made.
+fn submit_logged(update: *const Update, how: &str) -> HRESULT {
+    let Some(u) = get(update) else {
+        tracing::warn!(how, "game save: submit of an unknown update");
+        return E_INVALIDARG;
+    };
+    let hr = u.submit();
+    let written: usize = u.changes.iter().map(|(_, d)| d.as_ref().map_or(0, Vec::len)).sum();
+    let blobs: Vec<&str> = u.changes.iter().map(|(n, _)| n.as_str()).collect();
+    if hr == S_OK {
+        tracing::info!(how, container = %u.name, ?blobs, written, "game save: written");
+    } else {
+        tracing::warn!(how, container = %u.name, ?blobs, written, hr = format_args!("{hr:#010x}"), "game save: refused");
+    }
+    hr
+}
+
 extern "system" fn submit(_: This, update: *const Update) -> HRESULT {
-    get(update).map_or(E_INVALIDARG, Update::submit)
+    submit_logged(update, "blocking")
 }
 
 extern "system" fn submit_async(_: This, update: *const Update, block: *mut AsyncBlock) -> HRESULT {
-    let hr = get(update).map_or(E_INVALIDARG, Update::submit);
+    let hr = submit_logged(update, "async");
     xasync::finished(block, (&raw const SUBMIT).cast(), hr)
 }
 extern "system" fn submit_result(_: This, block: *mut AsyncBlock) -> HRESULT {
@@ -1178,6 +1221,37 @@ mod tests {
         }
     }
 
+    /// A kept blob that cannot be hard-linked (NTFS allows 1024 links to a
+    /// file) is copied into the new version with its exact bytes.
+    #[cfg(windows)]
+    #[test]
+    fn a_kept_blob_past_the_link_limit_is_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let links = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(
+            update(root, "one", &[("a", Some("old a")), ("b", Some("old b"))]),
+            S_OK
+        );
+        const NTFS: &str = "the temp folder must be on NTFS, which allows 1024 links to a file";
+        let old_b = container_dir(root, "Slot").join("v1").join("1");
+        for i in 0..1023 {
+            std::fs::hard_link(&old_b, links.path().join(i.to_string())).expect(NTFS);
+        }
+        let full = std::fs::hard_link(&old_b, links.path().join("full")).expect_err(NTFS);
+        assert_eq!(full.kind(), std::io::ErrorKind::TooManyLinks, "{NTFS}");
+
+        assert_eq!(update(root, "two", &[("a", Some("new a"))]), S_OK);
+
+        let new = (
+            "two".into(),
+            vec![("a".into(), "new a".into()), ("b".into(), "old b".into())],
+        );
+        assert_eq!(state(root), Some(new));
+        assert!(!old_b.exists());
+        assert_eq!(std::fs::read(links.path().join("0")).unwrap(), b"old b");
+    }
+
     #[test]
     fn names_are_exact() {
         for name in ["Save_1", "slot/2", "a.b c%", "\u{e9}t\u{e9}"] {
@@ -1275,6 +1349,42 @@ mod tests {
         let other = Provider::open(saves.path(), Some("other")).unwrap();
         assert_eq!(state(&other.root), None);
         assert_eq!(state(&scid.root), kept);
+    }
+
+    #[test]
+    fn a_failed_create_leaves_a_null_handle() {
+        let this: This = &OBJECT;
+        let saves = tempfile::tempdir().unwrap();
+        let provider = give(Provider::open(saves.path(), Some("scid")).unwrap());
+        // What an uninitialized handle variable may hold.
+        fn garbage<T>() -> *mut T {
+            std::ptr::without_provenance_mut(0x1234)
+        }
+
+        let mut container = garbage();
+        let bad = c"bad name".as_ptr();
+        let hr = create_container(this, provider, bad, &mut container);
+        assert_eq!(hr, INVALID_CONTAINER_NAME);
+        assert!(container.is_null());
+
+        let mut update = garbage();
+        let hr = create_update(this, std::ptr::null(), c"x".as_ptr(), &mut update);
+        assert_eq!(hr, E_INVALIDARG);
+        assert!(update.is_null());
+
+        // A provider that could not be opened (its folder could not be made).
+        let mut b = block();
+        xasync::finished_with(&mut b, (&raw const INIT).cast(), Err(NO_ACCESS));
+        let mut opened = garbage();
+        let hr = initialize_result(this, &mut b, &mut opened);
+        assert_eq!(hr, NO_ACCESS);
+        assert!(opened.is_null());
+
+        // So closing what the title holds, as it does, is harmless.
+        close_container(this, container);
+        close_update(this, update);
+        close_provider(this, opened);
+        close_provider(this, provider);
     }
 
     #[test]
@@ -1687,12 +1797,21 @@ mod tests {
     #[test]
     fn an_unreadable_newer_version_does_not_cost_the_save() {
         type Make = fn(&Path);
-        let strays: [(&str, Make); 3] = [
+        let strays: [(&str, Make); 5] = [
             ("empty folder", |p| std::fs::create_dir(p).unwrap()),
             ("file", |p| std::fs::write(p, b"not a version").unwrap()),
             ("broken manifest", |p| {
                 std::fs::create_dir(p).unwrap();
                 std::fs::write(p.join(MANIFEST), [9, 0, 0, 0, b'x']).unwrap();
+            }),
+            ("missing second blob", |p| {
+                std::fs::create_dir(p).unwrap();
+                std::fs::write(p.join(MANIFEST), manifest("Slot", "partial", &["a", "b"])).unwrap();
+                std::fs::write(p.join("0"), b"partial a").unwrap();
+            }),
+            ("directory in place of blob", |p| {
+                std::fs::create_dir_all(p.join("0")).unwrap();
+                std::fs::write(p.join(MANIFEST), manifest("Slot", "partial", &["a"])).unwrap();
             }),
         ];
         for (what, make) in strays {
@@ -1702,8 +1821,11 @@ mod tests {
             let slot = container_dir(root, "Slot");
             make(&slot.join("v2"));
 
+            let c = Provider { root: root.into() }.container("Slot");
+            let result = read(&c, None);
+            assert!(slot.join("v1").is_dir(), "{what}: v1 was removed; read returned {result:?}");
             assert_eq!(state(root), old_state(), "{what}: read");
-            assert!(slot.join("v1").is_dir(), "{what}: v1 was removed");
+            assert!(result.is_ok(), "{what}: first read failed");
 
             assert_eq!(update(root, "two", &[("a", Some("new a"))]), S_OK, "{what}: update");
             let blobs = vec![("a".into(), "new a".into()), ("b".into(), "old b".into())];
@@ -1713,6 +1835,21 @@ mod tests {
             // Read again: the new version stays the container.
             assert_eq!(state(root), after, "{what}: second read");
         }
+    }
+
+    /// A stray folder with the highest version number leaves no number for an
+    /// update: it is refused, and the committed save stays readable (#2497).
+    #[test]
+    fn no_version_above_the_highest_number_is_refused_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(update(root, "one", &[("a", Some("old a")), ("b", Some("old b"))]), S_OK);
+        let slot = container_dir(root, "Slot");
+        std::fs::create_dir(slot.join(format!("v{}", u64::MAX))).unwrap();
+        assert_eq!(update(root, "two", &[("a", Some("new a"))]), NO_ACCESS);
+        assert_eq!(state(root), old_state());
+        assert!(slot.join("v1").is_dir());
+        assert!(!slot.join("v0").exists());
     }
 
     /// With no readable version at all, reads and updates fail and nothing
@@ -1729,5 +1866,38 @@ mod tests {
         assert_eq!(update(root, "two", &[("a", Some("new a"))]), NO_ACCESS);
         assert!(slot.join("v1").join("0").is_file());
         assert!(!slot.join("v2").exists());
+    }
+
+    #[test]
+    fn incomplete_versions_survive_failed_reads_and_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let c = Provider { root: root.into() }.container("Slot");
+        let bytes = manifest("Slot", "partial", &["a", "b"]);
+        for version in ["v1", "v2"] {
+            let path = c.dir.join(version);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join(MANIFEST), &bytes).unwrap();
+            std::fs::write(path.join("0"), version).unwrap();
+        }
+        let result = read(&c, None);
+        assert!(c.dir.join("v1").is_dir(), "read removed v1: {result:?}");
+        assert_eq!(result.err(), Some(NO_ACCESS));
+        assert_eq!(update(root, "next", &[("b", Some("replacement"))]), NO_ACCESS);
+        for version in ["v1", "v2"] {
+            let path = c.dir.join(version);
+            assert_eq!(std::fs::read(path.join(MANIFEST)).unwrap(), bytes);
+            assert_eq!(std::fs::read(path.join("0")).unwrap(), version.as_bytes());
+        }
+        assert!(!c.dir.join("v3").exists());
+    }
+
+    #[test]
+    fn a_present_empty_blob_is_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(update(root, "one", &[("a", Some("old"))]), S_OK);
+        assert_eq!(update(root, "two", &[("a", Some(""))]), S_OK);
+        assert_eq!(state(root), Some(("two".into(), vec![("a".into(), "".into())])));
     }
 }
