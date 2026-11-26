@@ -502,7 +502,7 @@ pub(crate) fn making() -> u64 {
 static DROPS: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
 
 /// Shader hashes as printed in the pipeline diagnostics.
-#[cfg(all(windows, feature = "diagnostics"))]
+#[cfg(windows)]
 fn parse_skip_hashes(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -522,12 +522,21 @@ fn parse_skip_hashes(value: &str) -> Vec<String> {
         .collect()
 }
 
-#[cfg(all(windows, feature = "diagnostics"))]
+/// The shader of `p` that `VICTORY_SKIP_PIPELINES` names, if any. Also in
+/// release builds: the NVIDIA launcher drops the title's ray-tracing
+/// resolve programs with it (their rays walk structures that are never
+/// built on NVIDIA, and what they shade turns rooms and water white; list
+/// from trustno1-coder/VIctory-NVIDIA `scripts/rt_off_hashes.txt`).
+#[cfg(windows)]
 fn skipped_shader(p: &Pipeline) -> Option<&str> {
-    static HASHES: OnceLock<Vec<String>> = OnceLock::new();
+    static HASHES: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
     let hashes = HASHES.get_or_init(|| {
         let value = std::env::var("VICTORY_SKIP_PIPELINES").unwrap_or_default();
-        parse_skip_hashes(&value)
+        let set: std::collections::HashSet<String> = parse_skip_hashes(&value).into_iter().collect();
+        if !set.is_empty() {
+            tracing::info!(shaders = set.len(), "draws and dispatches of these shaders are skipped (VICTORY_SKIP_PIPELINES)");
+        }
+        set
     });
     if hashes.is_empty() {
         return None;
@@ -538,7 +547,7 @@ fn skipped_shader(p: &Pipeline) -> Option<&str> {
         .map(|shader| shader.hash.as_str())
 }
 
-#[cfg(all(windows, feature = "diagnostics"))]
+#[cfg(windows)]
 pub(crate) fn is_skipped(this: This) -> bool {
     !this.is_null() && skipped_shader(pipeline(this)).is_some()
 }
@@ -847,7 +856,7 @@ pub fn save_pipeline_cache() {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(windows, feature = "diagnostics"))]
+    #[cfg(windows)]
     #[test]
     fn skip_hashes_accepts_full_hashes_only() {
         assert!(super::parse_skip_hashes(" , ").is_empty());

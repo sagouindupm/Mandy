@@ -1034,7 +1034,6 @@ impl State {
         if self.lite() {
             return false;
         }
-        #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             return false;
         }
@@ -1612,9 +1611,26 @@ impl State {
             .entry(std::ptr::from_ref(host) as usize)
             .or_insert_with(|| (0, Ranges::new()));
         let changed = host.buffer_changes();
-        let slots = if *passes % 16 == 0 {
+        // Rolling (`VICTORY_HEAP_ROLL`, on; `0` = all slots every 16th pass
+        // as before): after the first pass, each pass looks again at the
+        // changed slots and at one 16th of all of them (index mod 16), so
+        // every slot is still seen every 16 passes, without a pass over all
+        // 83,000 (a ~140 ms spike every 16 frames). As cold-project-vi's
+        // rolling buckets (1141d35, 3df3e4d), simpler.
+        static ROLL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let roll = *ROLL.get_or_init(|| std::env::var_os("VICTORY_HEAP_ROLL").is_none_or(|v| v != "0"));
+        let slots = if *passes == 0 || (!roll && *passes % 16 == 0) {
             ranges.clear();
             host.buffer_slots()
+        } else if roll {
+            let bucket = (*passes % 16) as u32;
+            let mut slots = changed;
+            let live: std::collections::HashSet<u32> =
+                host.buffer_slots().into_iter().filter(|i| i % 16 == bucket).collect();
+            ranges.retain(|i, _| i % 16 != bucket || live.contains(i));
+            let mut seen: std::collections::HashSet<u32> = slots.iter().copied().collect();
+            slots.extend(live.into_iter().filter(|i| seen.insert(*i)));
+            slots
         } else {
             changed
         };
@@ -2266,9 +2282,9 @@ impl State {
     pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32) {
         // It may write the arguments a window holds clamped.
         self.window = None;
-        #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             DROPPED.fetch_add(1, Ordering::Relaxed);
+            #[cfg(feature = "diagnostics")]
             crate::pipeline::note_drop(self.pipeline as This);
             return;
         }
@@ -3154,8 +3170,8 @@ impl State {
         count: Option<u64>,
     ) -> bool {
         // Skip before the argument clamp can mutate the indirect buffer.
-        #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
+            #[cfg(feature = "diagnostics")]
             crate::pipeline::note_drop(self.pipeline as This);
             return false;
         }

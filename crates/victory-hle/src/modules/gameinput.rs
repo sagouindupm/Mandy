@@ -721,9 +721,10 @@ pub(crate) mod cursor {
         capture();
     }
 
-    /// The release key.
+    /// The release key (Alt, Esc): frees the cursor only; a click in the
+    /// window captures it again (as in cold-project-vi).
     pub(crate) fn toggle() {
-        if captured() { release() } else { capture() }
+        release()
     }
 }
 
