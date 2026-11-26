@@ -103,6 +103,19 @@ liste « À essayer » de [docs/essais.md](docs/essais.md).
 Personne ne pousse directement sur `main` : tout passe par une pull request, relue et fusionnée par le
 mainteneur.
 
+## Contributeurs
+
+Merci à celles et ceux qui testent, mesurent et corrigent :
+
+| Qui | Contribution |
+|---|---|
+| [@sagouindupm](https://github.com/sagouindupm) | mainteneur |
+| [@Xiaoxi2021](https://github.com/Xiaoxi2021) | premières mesures sur RTX 5070 12 Go + Ryzen 7 9700X (#9) : DLSS manquant chez les testeurs |
+| [@lucid29a](https://github.com/lucid29a) | mesures sur RTX 4070 Laptop + i9-13900H (#10) : lanceur PowerShell qui s'arrêtait, shaders non préparés |
+
+Vous testez ou corrigez quelque chose ? Ajoutez-vous à ce tableau dans votre pull request
+(voir [CONTRIBUTING.md](CONTRIBUTING.md)).
+
 ## Licence
 
 GPL-3.0-or-later, comme VIctory (voir [LICENSE](LICENSE)). Aucun code sous licence GPL-2.0-only

@@ -64,7 +64,9 @@ Aujourd'hui : ~4-5 images par seconde sur RTX 3050. Objectif : 15.
 8. **Crédits** : si vous reprenez le travail de quelqu'un, gardez son commit et son nom
    (`git cherry-pick -x`) ou nommez-le dans le message (`d'après <auteur> <commit>`). Ne
    réattribuez jamais le travail d'un autre.
-9. **IA** : bienvenue, à signaler dans la description de la PR (« AI-assisted: … »).
+9. **Contributeurs** : ajoutez-vous au tableau « Contributeurs » du README dans votre PR (pseudo GitHub et ce
+   que vous avez apporté). Une mesure ou un rapport de bug compte aussi.
+10. **IA** : bienvenue, à signaler dans la description de la PR (« AI-assisted: … »).
 
 ## Avant d'ouvrir la PR
 
