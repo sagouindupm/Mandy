@@ -21,6 +21,14 @@
 //! sizes. DLSS has no such calls, so they are answered with FSR's own
 //! formulas (`ffx_fsr3upscaler.cpp`): the title renders exactly as it does
 //! for FSR.
+//!
+//! The title asks for neither render sizes nor upscale ratios, though: of
+//! the queries it makes only the jitter phase count (`0x10004`), and it
+//! creates its context with a render size of its own (1280x720 for a
+//! 1920x1080 output on Series S, a fixed 2/3 scale). So no answer here can
+//! make it render smaller. `VICTORY_DLSS_MODE` ([`Requested`]) sets that
+//! scale in the title's code instead (the runner's `ffx_scale`), and the
+//! DLSS mode follows the sizes the context is created with ([`mode_for`]).
 #![allow(non_snake_case)]
 
 use std::ffi::{c_char, c_void};
@@ -38,6 +46,57 @@ use super::{
 /// set. It takes precedence over `VICTORY_FFX_DIR`.
 pub fn enabled() -> bool {
     std::env::var_os("VICTORY_DLSS_DIR").is_some()
+}
+
+/// The quality `VICTORY_DLSS_MODE` asks for: `quality` (the default),
+/// `balanced`, `performance` or `ultra` (ultra performance).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Requested {
+    Quality,
+    Balanced,
+    Performance,
+    Ultra,
+}
+
+impl Requested {
+    /// The mode a `VICTORY_DLSS_MODE` value names; `None` for others.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value.trim().to_ascii_lowercase().as_str() {
+            "quality" => Self::Quality,
+            "balanced" => Self::Balanced,
+            "performance" => Self::Performance,
+            "ultra" | "ultra_performance" | "ultraperformance" => Self::Ultra,
+            _ => return None,
+        })
+    }
+
+    /// The render scale per dimension this mode stands for, as FSR's and
+    /// DLSS's ratios have it (1.5, 1.7, 2 and 3). `None` for quality: the
+    /// title's own scale on Series S is already 2/3, and is left alone.
+    pub fn render_scale(self) -> Option<f32> {
+        match self {
+            Self::Quality => None,
+            Self::Balanced => Some(1.0 / 1.7),
+            Self::Performance => Some(0.5),
+            Self::Ultra => Some(1.0 / 3.0),
+        }
+    }
+}
+
+/// The mode `VICTORY_DLSS_MODE` asks for, quality without it or with a
+/// value it does not name (said once).
+pub fn requested() -> Requested {
+    static REQUESTED: OnceLock<Requested> = OnceLock::new();
+    *REQUESTED.get_or_init(|| {
+        let Some(value) = std::env::var_os("VICTORY_DLSS_MODE") else {
+            return Requested::Quality;
+        };
+        let value = value.to_string_lossy();
+        Requested::parse(&value).unwrap_or_else(|| {
+            tracing::warn!(%value, "dlss: VICTORY_DLSS_MODE is quality, balanced, performance or ultra; quality is used");
+            Requested::Quality
+        })
+    })
 }
 
 // FidelityFX (`ffx_upscale.h`).
@@ -646,6 +705,17 @@ fn mode_for(max_render: [u32; 2], max_upscale: [u32; 2]) -> Mode {
     }
 }
 
+/// The DLSS mode a requested quality gives once the title renders at its
+/// scale.
+fn mode_for_requested(requested: Requested) -> Mode {
+    match requested {
+        Requested::Quality => Mode::MaxQuality,
+        Requested::Balanced => Mode::Balanced,
+        Requested::Performance => Mode::MaxPerformance,
+        Requested::Ultra => Mode::UltraPerformance,
+    }
+}
+
 /// Makes a context for `upscale` on `device`: the context pointer the title
 /// keeps is a `Context` of ours.
 pub(super) fn create(
@@ -662,14 +732,23 @@ pub(super) fn create(
         flags: upscale.flags,
         mode: mode_for(upscale.max_render, upscale.max_upscale),
     };
+    let requested = requested();
     tracing::info!(
         viewport = ctx.viewport,
         render = ?upscale.max_render,
         upscale = ?upscale.max_upscale,
         flags = upscale.flags,
         mode = ?ctx.mode,
+        ?requested,
         "dlss: upscale context on the host GPU"
     );
+    if requested != Requested::Quality && ctx.mode != mode_for_requested(requested) {
+        tracing::warn!(
+            ?requested,
+            mode = ?ctx.mode,
+            "dlss: the title did not take the requested render scale (was its scale method patched?); the mode follows its render size"
+        );
+    }
     // SAFETY: the title's context pointer, checked for null by the caller.
     unsafe { *context = Box::into_raw(Box::new(ctx)).cast() };
     OK
@@ -946,6 +1025,29 @@ mod tests {
         };
         // SAFETY: a header only.
         assert_eq!(unsafe { query(&mut other) }, None);
+    }
+
+    /// Each requested quality's scale, applied to the Series S output as
+    /// the title rounds it down, gives back that quality's DLSS mode.
+    #[test]
+    fn requested_modes_scale_the_render_size_to_their_own_mode() {
+        assert_eq!(Requested::parse("Performance"), Some(Requested::Performance));
+        assert_eq!(Requested::parse(" ultra "), Some(Requested::Ultra));
+        assert_eq!(Requested::parse("fast"), None);
+        assert_eq!(Requested::Quality.render_scale(), None);
+        let output = [1920, 1080];
+        for (requested, render) in [
+            (Requested::Balanced, [1129, 635]),
+            (Requested::Performance, [960, 540]),
+            (Requested::Ultra, [640, 360]),
+        ] {
+            let scale = requested.render_scale().unwrap();
+            let size = output.map(|o| (o as f32 * scale) as u32);
+            assert_eq!(size, render, "{requested:?}");
+            assert_eq!(mode_for(size, output), mode_for_requested(requested));
+        }
+        // Quality is the title's own 2/3.
+        assert_eq!(mode_for([1280, 720], output), mode_for_requested(Requested::Quality));
     }
 
     #[test]
