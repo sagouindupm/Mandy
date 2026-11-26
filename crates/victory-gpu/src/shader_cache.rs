@@ -76,7 +76,7 @@ fn build() -> [u8; 32] {
     h.update(include_bytes!("shader_cache.rs"));
     // The lists this file reads for the translator (`translate_listed`): the
     // shader crate's fingerprint does not see them.
-    for name in ["VICTORY_WAVE_WIDE_ONLY", "VICTORY_FIRSTLANE_OWN_ONLY", "VICTORY_HEAP_USAGE"] {
+    for name in ["VICTORY_WAVE_WIDE_ONLY", "VICTORY_FIRSTLANE_OWN_ONLY", "VICTORY_HEAP_USAGE", "VICTORY_NAN_SCRUB"] {
         h.update(name.as_bytes());
         h.update(b"=");
         if let Some(value) = std::env::var_os(name) {
