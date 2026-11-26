@@ -41,5 +41,6 @@ Outils : `VICTORY_CAPTURE_AT=<secondes>` (capture à l'heure, les cinématiques 
   l'exposition vaut 2^-12,9 et le ciel, les arbres et les personnages sont bien exposés.
 - Seule l'eau est blanche, dès la cible HDR éclairée : on voit le sable plein soleil sous l'eau, sans absorption.
 - Le calcul d'eau `cad2edef5ecea3ba` écrit la couleur turquoise (R11G11B10 1280x720), trouée de bandes noires,
-  et **aucune passe ne la relit dans la même image**. La passe qui la compose manque ou lit une autre image.
+  et aucune passe ne la lie comme entrée dans la même image (une lecture par index, bindless, reste possible
+  et n'apparaît pas dans la liste des opérations).
 - Seuls dessins sautés : les étapes du constructeur de ray tracing (`VICTORY_BVH_BUILDER` éteint).
