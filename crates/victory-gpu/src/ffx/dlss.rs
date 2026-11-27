@@ -8,9 +8,10 @@
 //!
 //! Streamline runs in manual hooking mode on VIctory's own host device
 //! (`slSetD3DDevice`), with frame-based resource tagging. Each upscale
-//! context the title creates is one Streamline viewport. A dispatch arrives
-//! here after `ffx::ffxDispatch` has swapped the title's textures for their
-//! host copies (inputs in `NON_PIXEL_SHADER_RESOURCE`, the output in
+//! context the title creates is one Streamline viewport, beside the title's
+//! own FSR context (`ffx::bridge`). A dispatch arrives here after
+//! `ffx::record_on_host` has swapped the title's textures for their host
+//! copies (inputs in `NON_PIXEL_SHADER_RESOURCE`, the output in
 //! `UNORDERED_ACCESS`) and its command list for the host one, so this only
 //! translates the description: FidelityFX's jitter is DLSS's (both in
 //! pixels, the offset applied to the camera); its motion vector scale
@@ -18,9 +19,9 @@
 //! size the vectors are rendered at.
 //!
 //! The title also asks FidelityFX for its jitter sequence and for render
-//! sizes. DLSS has no such calls, so they are answered with FSR's own
-//! formulas (`ffx_fsr3upscaler.cpp`): the title renders exactly as it does
-//! for FSR.
+//! sizes. DLSS has no such calls: the title's own FSR answers them, so it
+//! renders exactly as it does for FSR (`query`, FSR's own formulas from
+//! `ffx_fsr3upscaler.cpp`, answers only when that FSR is not there).
 //!
 //! The title asks for neither render sizes nor upscale ratios, though: of
 //! the queries it makes only the jitter phase count (`0x10004`), and it

@@ -52,3 +52,8 @@ pub(crate) fn module() -> HleModule {
         ],
     }
 }
+
+/// DLSS beside the title's own FidelityFX DLLs: the executable's imports of
+/// them that DLSS takes (`victory_gpu::ffx::bridge`).
+#[cfg(windows)]
+pub use victory_gpu::ffx::bridge;

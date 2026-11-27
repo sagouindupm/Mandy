@@ -17,8 +17,10 @@
 //! unordered access (`crate::resource::target_format`), so the upscaler
 //! writes it directly; the port's packed RGB9E5 output is not needed here.
 //!
-//! With `VICTORY_DLSS_DIR` set instead, NVIDIA DLSS answers the same calls
-//! through Streamline (`dlss`); the swap of the title's objects for the
+//! With `VICTORY_DLSS_DIR` set instead, NVIDIA DLSS answers the upscale
+//! dispatches through Streamline (`dlss`), beside the title's own
+//! FidelityFX DLLs, which keep everything else and every dispatch DLSS
+//! does not evaluate (`bridge`); the swap of the title's objects for the
 //! host's is shared.
 #![allow(non_snake_case)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -31,6 +33,7 @@ use windows::core::{Interface, PCSTR, PCWSTR};
 
 use crate::object::This;
 
+pub mod bridge;
 pub(crate) mod dlss;
 
 type ReturnCode = u32;
@@ -143,10 +146,11 @@ struct Api {
     dispatch: Dispatch,
 }
 
-/// Whether the title's FidelityFX calls come here: `VICTORY_FFX_DIR` or
-/// `VICTORY_DLSS_DIR` set.
+/// Whether AMD's PC upscaler serves both FidelityFX DLLs in place of the
+/// title's: `VICTORY_FFX_DIR` set, and DLSS off (with DLSS the title's
+/// DLLs stay, `bridge`).
 pub fn enabled() -> bool {
-    std::env::var_os("VICTORY_FFX_DIR").is_some() || dlss::enabled()
+    std::env::var_os("VICTORY_FFX_DIR").is_some() && !dlss::enabled()
 }
 
 /// Whether DLSS answers the title's FidelityFX calls (`VICTORY_DLSS_DIR`
@@ -266,9 +270,6 @@ pub extern "C" fn ffxCreateContext(
     let Some(mut upscale) = (unsafe { upscale_in(desc) }) else {
         return ERROR_PARAMETER;
     };
-    if dlss::enabled() {
-        return dlss::create(context, device, &upscale);
-    }
     let Some(api) = api() else { return ERROR };
     // The console's version and provider descriptions name console builds;
     // the PC loader picks the newest upscaler the GPU runs.
@@ -326,9 +327,6 @@ pub extern "C" fn ffxDestroyContext(
     context: *mut *mut c_void,
     _memory: *const c_void,
 ) -> ReturnCode {
-    if dlss::enabled() {
-        return dlss::destroy(context);
-    }
     let Some(api) = api() else { return ERROR };
     // SAFETY: a context this module created.
     unsafe { (api.destroy)(context, std::ptr::null()) }
@@ -338,10 +336,6 @@ pub extern "C" fn ffxConfigure(context: *mut *mut c_void, desc: *const Header) -
     if !desc.is_null() {
         // SAFETY: the title's description.
         note("ffxConfigure", unsafe { (*desc).kind });
-    }
-    // FSR's key-value tuning has no DLSS counterpart.
-    if dlss::enabled() {
-        return OK;
     }
     let Some(api) = api() else { return ERROR };
     // SAFETY: passed on as the title made it.
@@ -355,12 +349,6 @@ pub extern "C" fn ffxQuery(context: *mut *mut c_void, desc: *mut Header) -> Retu
     // SAFETY: the title's description.
     let kind = unsafe { (*desc).kind };
     note("ffxQuery", kind);
-    if dlss::enabled() {
-        // SAFETY: the title's description of the type its header names.
-        let r = unsafe { dlss::query(desc) }.unwrap_or(ERROR_PARAMETER);
-        log_query(kind, desc, r);
-        return r;
-    }
     let (Some(api), Some(device)) = (api(), host_device()) else {
         return ERROR;
     };
@@ -439,50 +427,79 @@ fn log_query(kind: u64, desc: *mut Header, r: ReturnCode) {
 }
 
 pub extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> ReturnCode {
-    let fsr = if dlss::enabled() {
-        None
-    } else {
-        let Some(api) = api() else { return ERROR };
-        Some(api)
-    };
+    let Some(api) = api() else { return ERROR };
     if context.is_null() || desc.is_null() {
         return ERROR_PARAMETER;
     }
-    // SAFETY: the title's description.
+    // SAFETY: the title's description; the SDK's call on an open host list
+    // with live textures.
+    let recorded = unsafe {
+        record_on_host(desc, &[0, OUTPUT], |d| {
+            (api.dispatch)(context, (d as *const DispatchUpscale).cast())
+        })
+    };
+    recorded.unwrap_or(ERROR_PARAMETER)
+}
+
+/// Records an upscale dispatch on the host GPU: the title's description
+/// with its command list and textures swapped for the host's, the inputs
+/// moved to the state the upscaler reads and the output to the one it
+/// writes, passed to `record`. `Err` says why nothing was recorded (and no
+/// state changed): not an upscale dispatch, no host list, or a texture of
+/// `needed` (slots) or the output without its host copy.
+///
+/// # Safety
+///
+/// `desc` is the title's valid, non-null description.
+unsafe fn record_on_host(
+    desc: *const Header,
+    needed: &[usize],
+    record: impl FnOnce(&DispatchUpscale) -> ReturnCode,
+) -> Result<ReturnCode, &'static str> {
+    // SAFETY: the caller's description.
     let kind = unsafe { (*desc).kind };
     if kind != DISPATCH_UPSCALE {
         note("ffxDispatch", kind);
-        return ERROR_PARAMETER;
+        return Err("not an upscale dispatch");
     }
     // SAFETY: a description of this type.
     let mut d = unsafe { *desc.cast::<DispatchUpscale>() };
     let title_list = d.command_list as This;
-    let Some(list) = crate::list::host_list(title_list) else {
-        return ERROR_PARAMETER;
-    };
+    let list = crate::list::host_list(title_list).ok_or("no host list behind the title's")?;
     let output = d.resources[OUTPUT].resource as This;
     let input = d.resources[0].resource as This;
     let Some(destination) = crate::resource::host_resource(output) else {
         missing_texture(OUTPUT, output);
-        return ERROR_PARAMETER;
+        return Err("the output has no host texture");
     };
     if crate::host::legal_state(destination, HOST_UNORDERED_ACCESS) != HOST_UNORDERED_ACCESS {
         static REPORTED: std::sync::Once = std::sync::Once::new();
         REPORTED.call_once(|| {
             tracing::warn!(?output, size = ?d.upscale_size, "ffx: the output's host copy takes no unordered access");
         });
-        return ERROR_PARAMETER;
+        return Err("the output's host texture takes no unordered access");
     }
-    for (i, r) in d.resources.iter_mut().enumerate() {
+    // Every host texture first, so that a missing one changes nothing.
+    let mut hosts = [None; 7];
+    for (i, r) in d.resources.iter().enumerate() {
         if r.resource.is_null() {
             continue;
         }
         let title = r.resource as This;
-        let Some(texture) = crate::resource::host_resource(title) else {
+        hosts[i] = crate::resource::host_resource(title);
+        if hosts[i].is_none() {
             missing_texture(i, title);
+        }
+    }
+    if needed.iter().any(|&i| hosts[i].is_none()) {
+        return Err("an input the upscaler needs has no host texture");
+    }
+    for (i, (r, texture)) in d.resources.iter_mut().zip(hosts).enumerate() {
+        let Some(texture) = texture else {
             r.resource = std::ptr::null_mut();
             continue;
         };
+        let title = r.resource as This;
         let (wanted, ffx) = if i == OUTPUT {
             (HOST_UNORDERED_ACCESS, FFX_UNORDERED_ACCESS)
         } else {
@@ -499,15 +516,8 @@ pub extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) ->
         r.resource = texture.as_raw();
         r.state = ffx;
     }
-    if d.resources[0].resource.is_null() || d.resources[OUTPUT].resource.is_null() {
-        return ERROR_PARAMETER;
-    }
     d.command_list = list.list.as_raw();
-    let r = match fsr {
-        // SAFETY: the SDK's call on an open host list with live textures.
-        Some(api) => unsafe { (api.dispatch)(context, (&raw const d).cast()) },
-        None => dlss::dispatch(context, &d),
-    };
+    let r = record(&d);
     if r == OK {
         crate::texture::host_written(output);
         #[cfg(feature = "diagnostics")]
@@ -524,7 +534,7 @@ pub extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) ->
         let format = unsafe { destination.GetDesc() }.Format.0;
         tracing::info!(render = ?d.render_size, upscale = ?d.upscale_size, result = r, ?input, ?output, format, "ffx: first upscale recorded on the host GPU");
     });
-    r
+    Ok(r)
 }
 
 fn missing_texture(slot: usize, title: This) {

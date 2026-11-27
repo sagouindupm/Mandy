@@ -174,7 +174,53 @@ pub fn run(
         show(name, dll.bind_imports(&with_dlls, policy)?);
     }
     let exe_name = exe.file_name().unwrap_or_default().to_string_lossy();
-    show(&exe_name, image.bind_imports(&with_dlls, policy)?);
+    // With DLSS the executable's FidelityFX calls are ours, passed on to the
+    // title's own DLL for all but the upscales DLSS evaluates.
+    use victory_hle::modules::ffx::bridge;
+    let dlss = victory_hle::modules::ffx::dlss()
+        && match dlls.iter().find(|(name, _)| name.eq_ignore_ascii_case(bridge::LOADER)) {
+            Some((_, loader)) => bridge::take(&|name| loader.export(name)),
+            None => {
+                println!("upscaler       DLSS off: the executable imports no {}", bridge::LOADER);
+                false
+            }
+        };
+    struct TakeFfx<'a>(&'a dyn victory_loader::ImportResolver);
+    impl victory_loader::ImportResolver for TakeFfx<'_> {
+        fn resolve(
+            &self,
+            dll: &str,
+            symbol: &victory_pe::ImportSymbol,
+        ) -> victory_loader::Resolution {
+            if dll.eq_ignore_ascii_case(bridge::LOADER)
+                && let victory_pe::ImportSymbol::Name { name, .. } = symbol
+                && let Some(address) = bridge::ours(name)
+            {
+                return victory_loader::Resolution::Found {
+                    address,
+                    provenance: victory_loader::Provenance::Hle,
+                };
+            }
+            self.0.resolve(dll, symbol)
+        }
+    }
+    if dlss {
+        let taken = image
+            .info()
+            .imports
+            .iter()
+            .filter(|m| m.dll.eq_ignore_ascii_case(bridge::LOADER))
+            .flat_map(|m| m.entries.iter())
+            .filter(|e| {
+                matches!(&e.symbol, victory_pe::ImportSymbol::Name { name, .. }
+                    if bridge::NAMES.contains(&name.as_str()))
+            })
+            .count();
+        println!("upscaler       DLSS takes {taken} FidelityFX imports; FSR answers the rest");
+        show(&exe_name, image.bind_imports(&TakeFfx(&with_dlls), policy)?);
+    } else {
+        show(&exe_name, image.bind_imports(&with_dlls, policy)?);
+    }
     if execute {
         let size = image.info().size_of_image as usize;
         // SAFETY: the image stays mapped, and nothing of it has run yet.
