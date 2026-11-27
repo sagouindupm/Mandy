@@ -1,5 +1,6 @@
 import * as React from "react"
 import { listen } from "@tauri-apps/api/event"
+import { BadgeCheck, CircleAlert, CircleCheck, FolderOpen, Gauge, Gem, Images, Rocket, Save, ScrollText } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAsk } from "@/components/ask"
@@ -386,20 +387,20 @@ export default function App() {
   const pending = todo(steps).length
   const essentials = !!snap && snap.exeBuilt != null && snap.gameOk
   const readiness = !snap
-    ? { color: "bg-muted-foreground", text: "Vérification…" }
+    ? { color: "text-muted-foreground", ok: false, text: "Vérification…" }
     : !essentials
-      ? { color: "bg-destructive", text: "Pas encore prêt : voir la préparation" }
+      ? { color: "text-destructive", ok: false, text: "Pas encore prêt : voir la préparation" }
       : pending > 0
-        ? { color: "bg-warning", text: `${pending} étape${pending > 1 ? "s" : ""} de préparation à faire` }
-        : { color: "bg-success", text: "Prêt à jouer" }
+        ? { color: "text-warning", ok: false, text: `${pending} étape${pending > 1 ? "s" : ""} de préparation à faire` }
+        : { color: "text-success", ok: true, text: "Prêt à jouer" }
 
   // Profiles in the sidebar: the Series S settings, alone or with a DLSS mode.
   const profiles: Profile[] = snap
     ? [
-        { id: "off", initials: "R", name: "Recommandé" },
+        { id: "off", icon: BadgeCheck, name: "Recommandé" },
         ...snap.dlssModes.map((m) => ({
           id: m.id,
-          initials: m.id === "ultra" ? "UP" : m.id === "performance" ? "P" : "Q",
+          icon: m.id === "ultra" ? Rocket : m.id === "performance" ? Gauge : Gem,
           name: m.nom,
           disabledWhy: snap.dlssOk ? undefined : "DLSS : choisissez d'abord le dossier de Streamline dans Réglages.",
         })),
@@ -422,10 +423,10 @@ export default function App() {
             collapsed={collapsed}
             onCollapse={() => setCollapsed((c) => !c)}
             shortcuts={[
-              { label: "Journal de la dernière partie", run: () => ctx.open("last_log"), disabled: !snap.lastLog },
-              { label: "Dossier des journaux", run: () => ctx.open("logs") },
-              { label: "Dossier des captures", run: () => ctx.open("captures") },
-              { label: "Copier mes sauvegardes", run: ctx.backup },
+              { label: "Journal de la dernière partie", icon: ScrollText, run: () => ctx.open("last_log"), disabled: !snap.lastLog },
+              { label: "Dossier des journaux", icon: FolderOpen, run: () => ctx.open("logs") },
+              { label: "Dossier des captures", icon: Images, run: () => ctx.open("captures") },
+              { label: "Copier mes sauvegardes", icon: Save, run: ctx.backup },
             ]}
           />
         )}
@@ -453,7 +454,11 @@ export default function App() {
                     className="flex size-9 items-center justify-center rounded-full border border-border bg-[#2a2a2a] outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                     aria-label={readiness.text}
                   >
-                    <span className={`size-2.5 rounded-full ${readiness.color}`} />
+                    {readiness.ok ? (
+                      <CircleCheck className={`size-[18px] ${readiness.color}`} strokeWidth={1.75} />
+                    ) : (
+                      <CircleAlert className={`size-[18px] ${readiness.color}`} strokeWidth={1.75} />
+                    )}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" align="end">

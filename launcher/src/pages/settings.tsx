@@ -1,3 +1,5 @@
+import { Camera, Download, FolderOpen } from "lucide-react"
+
 import type { Ctx } from "@/App"
 import { StateBadge } from "@/components/state"
 import { Button } from "@/components/ui/button"
@@ -43,9 +45,11 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
             )}
             <div className="mt-1 flex items-center gap-4">
               <Button variant="secondary" size="sm" onClick={ctx.pickDlss} disabled={busy}>
+                <FolderOpen strokeWidth={2} />
                 Choisir
               </Button>
               <Button variant="link" className="text-[12.5px]" onClick={() => ctx.open("streamline")}>
+                <Download className="size-3.5" strokeWidth={2} />
                 Télécharger Streamline (NVIDIA)
               </Button>
             </div>
@@ -81,6 +85,7 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
             <PathField value={st.gameExe} empty="Pas encore trouvé" />
             <div className="mt-1 flex items-center gap-4">
               <Button variant="secondary" size="sm" onClick={() => ctx.act("pick_game")} disabled={busy}>
+                <FolderOpen strokeWidth={2} />
                 Changer
               </Button>
               {snap.gameOk && (
@@ -96,6 +101,7 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
             <span className="text-[12.5px] text-muted-foreground">Un fichier par tâche et par partie.</span>
             <div className="mt-1 flex items-center gap-4">
               <Button variant="secondary" size="sm" onClick={() => ctx.open("logs")}>
+                <FolderOpen strokeWidth={2} />
                 Ouvrir le dossier
               </Button>
             </div>
@@ -109,6 +115,7 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
             </span>
             <div className="mt-1 flex items-center gap-4">
               <Button variant="secondary" size="sm" onClick={ctx.captureNow} disabled={!playing}>
+                <Camera strokeWidth={2} />
                 Capturer maintenant
               </Button>
               <Button variant="link" className="text-[12.5px]" onClick={() => ctx.open("captures")}>

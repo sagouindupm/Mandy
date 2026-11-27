@@ -1,4 +1,5 @@
 import * as React from "react"
+import { ListChecks, RefreshCw, Square } from "lucide-react"
 
 import type { Ctx } from "@/App"
 import { StateBadge } from "@/components/state"
@@ -25,13 +26,19 @@ function StepCard({ step, ctx }: { step: Step; ctx: Ctx }) {
   }
   const button = a && (
     <Button variant={a.primary ? "default" : "secondary"} size="sm" disabled={blocked || busy || !!a.disabled} onClick={run}>
+      {a.icon && <a.icon strokeWidth={2} />}
       {a.label}
     </Button>
   )
   return (
     <Card className="gap-0 p-5">
       <div className="flex items-center justify-between">
-        <span className="label">Étape {step.n}</span>
+        <div className="flex items-center gap-3">
+          <span className="flex size-8 items-center justify-center rounded-md bg-[#2a2a2a] text-muted-foreground">
+            <step.icon className="size-[17px]" strokeWidth={1.75} />
+          </span>
+          <span className="label">Étape {step.n}</span>
+        </div>
         <StateBadge level={step.level} />
       </div>
       <CardTitle className="mt-3">{step.title}</CardTitle>
@@ -121,10 +128,12 @@ export function PreparePage({ ctx }: { ctx: Ctx }) {
           </div>
           {running && running !== "play" ? (
             <Button variant="secondary" onClick={ctx.stop}>
+              <Square className="size-3.5 fill-current" />
               Arrêter
             </Button>
           ) : (
             <Button onClick={ctx.prepareAll} disabled={running !== null || auto === 0}>
+              <ListChecks strokeWidth={2} />
               Tout préparer
             </Button>
           )}
@@ -165,6 +174,7 @@ export function PreparePage({ ctx }: { ctx: Ctx }) {
         <div className="flex items-center justify-between">
           <CardTitle>Ce PC</CardTitle>
           <Button variant="link" className="text-[12.5px]" onClick={() => ctx.refreshFacts()}>
+            <RefreshCw className="size-3.5" strokeWidth={2} />
             Revérifier
           </Button>
         </div>
