@@ -32,10 +32,12 @@ Suite de la nuit (même méthode, nouvelle base) :
 | Sans le module XCL (notre émulation des instructions AMD) | 104 / 103 ms contre 103 / 98 ms avec | gardé (PR #19) |
 | Dessins mesh lancés par la carte (kelvaroq 0041, porté) | 103 / 94 ms (p90 130) ; l'étage ne sert qu'aux appels sans tampon de compte (~1 par image ici) | gardé ; à étendre aux appels avec tampon de compte |
 | Souris : périphérique souris (trustno1 #9, superboynick) + clic = capture, Alt/Échap = libère, X = marcher | 98 ms, passage complet ; une 1re version qui recentrait le curseur sans le focus arrêtait le jeu vers 285 s | gardé |
-| DLSS (Streamline) en mode performance | écran noir, puis plantage : le FSR4 du jeu refuse une taille de rendu maximale de 960x540 (1280x720 ou 1920x1080 seulement) | à corriger |
+| DLSS (Streamline) corrigé : le FSR4 du jeu reçoit 1280x720 comme taille maximale, DLSS rend en dessous ; l'évaluation passe dans le flux `VICTORY_THIN` | performance : 102 ms, image propre ; qualité (720p) : 176 ms, la plus belle image | gardé (option), PR à venir sur la base #21 |
 | `VICTORY_WINDOWS_BAR_MB=3072` sur 32 Go | 100 ms, RAM au pic inchangée (20,3 Go), VRAM +550 Mo | automatique sous 24 Go seulement |
 | Bateau piloté en jeu (7 min, `VICTORY_KEYS` tenu) | 8,6-9,9 fps sur l'eau ; W n'accélère pas avec cette disposition, A tourne | à suivre |
-| Ce qui limite maintenant | la carte : « the card about 80-91% busy », fil de soumission ~90 ms par image | pistes : optimisations DXIL (PastiiJay/klbf-lab #41), barrières (avatarmanz #143) |
+| **Fusion Proudnoob4/VIctory-NVIDIA `nvidia-hybrid-v2` (PR #21)** | 105 / **93 ms (10,8 fps, p90 122)** ; fil de soumission 52-63 ms au lieu de 92-116 | gardé ; quelques carrés dans le ciel par moments |
+| Listes wave-wide par défaut (Felix2180, Xeltax ; `VICTORY_WAVE_WIDE_ONLY`, + 926c…) | 115 ms / 108 ms ; **rectangles sombres sur l'eau, blocs sombres flottants, carrés dans le ciel** | rejeté (image) |
+| Ce qui limite maintenant | la carte : « the card about 89-98% busy » à 540p | outil de coût GPU par shader en cours ; base foxhound (trustno1, 27/11) à mesurer |
 
 ## Comment on mesure
 
