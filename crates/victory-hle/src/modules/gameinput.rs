@@ -149,12 +149,13 @@ fn mouse_delta(
 
 /// The mouse cursor while the title window has focus: captured (hidden,
 /// held inside the window, its motion is the mouse device's) or free (the
-/// mouse device sees no motion and no buttons). A click in the window
-/// captures it, and so does the window getting focus some other way
-/// (Alt-Tab); Alt or Esc only frees it; losing focus or sizing and moving
-/// the window frees it too. The host poll and the title window's procedure
-/// (`lifecycle`) keep it. `VICTORY_MOUSE_CAPTURE=0`: never captured, the
-/// mouse device follows the free cursor as it did before.
+/// mouse device sees no motion and no buttons). Only a click in the window
+/// captures it (the window getting focus does not); Alt or Esc only frees
+/// it; losing focus or sizing and moving the window frees it too. Nothing
+/// touches the host cursor (clip, position, shape) unless the window has
+/// focus and the cursor is captured. The host poll and the title window's
+/// procedure (`lifecycle`) keep it. `VICTORY_MOUSE_CAPTURE=0`: never
+/// captured, the mouse device follows the free cursor as it did before.
 ///
 /// Ported from the previous base (claude-GTA6's keyboard and mouse play,
 /// fxceless's fork; Alt and Esc only freeing it, sagouindupm).
@@ -199,17 +200,15 @@ pub(crate) mod cursor {
         SIZING.store(entered, Ordering::Relaxed);
     }
 
-    /// Whether the window gaining focus captures the cursor: not when the
-    /// focus came from a mouse click (a click in the client area captures by
-    /// itself; one on a border or the title bar starts a size or move loop
-    /// and must not), and not during such a loop.
-    pub(crate) fn captures_on_focus(was_focused: bool, focused: bool, button_down: bool) -> bool {
-        focused && !was_focused && !button_down && !sizing()
-    }
-
-    /// Whether the cursor is held in the window now.
+    /// Whether the cursor is held (and hidden) in the window now: captured,
+    /// the window focused, and not being sized or moved.
     pub(crate) fn clips(focused: bool) -> bool {
         focused && captured() && !sizing()
+    }
+
+    /// [`clips`] for the window's focus as the host poll last saw it.
+    pub(crate) fn held() -> bool {
+        clips(FOCUSED.load(Ordering::Relaxed))
     }
 
     /// Where a captured cursor is held: the client rectangle (left, top,
@@ -242,10 +241,15 @@ pub(crate) mod cursor {
         }
     }
 
-    /// A click in the title window captures. Buttons held while it is
-    /// captured are no clicks for the title until they are let go (`host`).
-    pub(crate) fn click() {
-        capture();
+    /// A click in the title window's client area captures, when the window
+    /// has focus (`focused`: the window procedure's own check, the host poll
+    /// may not have seen the focus yet). Buttons held while it is captured
+    /// are no clicks for the title until they are let go (`host`).
+    pub(crate) fn click(focused: bool) {
+        if focused {
+            FOCUSED.store(true, Ordering::Relaxed);
+            capture();
+        }
     }
 
     /// Whether `held` (keys held on the keyboard) frees the cursor: Alt or
@@ -1393,7 +1397,6 @@ mod host {
         mouse: MouseState,
         /// The walk key is held on the keyboard ([`WALK_KEY`]).
         walking: bool,
-        was_focused: bool,
         was_captured: bool,
         /// We clipped the cursor (`ClipCursor`), so we let it go.
         clipped: bool,
@@ -1406,22 +1409,13 @@ mod host {
     const MOUSE_BUTTONS: [u16; 3] = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON];
 
     impl Host {
-        /// Keeps the cursor's focus rules: freed when the title window loses
-        /// focus, captured when it gains it other than by a click.
-        fn focus(&mut self, focused: bool) {
+        /// Keeps the cursor's focus rule: freed when the title window does
+        /// not have focus (only a click captures it again).
+        fn focus(focused: bool) {
             cursor::FOCUSED.store(focused, Ordering::Relaxed);
             if !focused {
                 cursor::release();
-            } else if !self.was_focused {
-                // SAFETY: plain queries.
-                let button_down = MOUSE_BUTTONS
-                    .into_iter()
-                    .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0);
-                if cursor::captures_on_focus(self.was_focused, focused, button_down) {
-                    cursor::capture();
-                }
             }
-            self.was_focused = focused;
         }
 
         /// Holds a captured cursor inside `window`'s client area (`client`,
@@ -1514,7 +1508,7 @@ mod host {
 
         fn keys(&mut self) -> Vec<KeyState> {
             let focused = focused_window().is_some();
-            self.focus(focused);
+            Self::focus(focused);
             // The scripted keys are pressed with or without focus, and never
             // capture, free the cursor or walk.
             let mut down = scripted();
@@ -1551,8 +1545,17 @@ mod host {
             if !*ENABLED {
                 return None;
             }
+            let Some(focused) = focused_window() else {
+                // Not focused: the host cursor is not touched, only a clip
+                // we set let go.
+                self.clip(None, &RECT::default());
+                self.previous_cursor = None;
+                self.was_captured = false;
+                self.mouse = MouseState::default();
+                return None;
+            };
             let (mut point, mut rect) = (POINT::default(), RECT::default());
-            let position = focused_window().and_then(|window| {
+            let position = Some(focused).and_then(|window| {
                 // SAFETY: all outputs are local and all coordinates use the same window.
                 let sampled = unsafe {
                     GetCursorPos(&mut point) != 0
@@ -1880,12 +1883,14 @@ mod tests {
     /// shrinking client area), and the keys that free it.
     #[test]
     fn a_size_or_move_loop_frees_the_cursor_and_border_clicks_do_not_capture() {
-        // Focus from Alt-Tab captures; focus from a click does not (the
-        // click captures if it lands in the client area).
-        assert!(cursor::captures_on_focus(false, true, false));
-        assert!(!cursor::captures_on_focus(false, true, true));
-        assert!(!cursor::captures_on_focus(true, true, false));
-        assert!(!cursor::captures_on_focus(false, false, false));
+        // Only a click in the focused window captures; without focus
+        // nothing holds the cursor.
+        cursor::release();
+        cursor::click(false);
+        assert!(!cursor::captured());
+        cursor::click(true);
+        assert!(cursor::captured() && cursor::clips(true) && !cursor::clips(false));
+        cursor::release();
         // The clip stays inside the client area, away from the borders.
         assert_eq!(
             cursor::clip_rect((100, 50, 900, 650)),
@@ -1899,7 +1904,8 @@ mod tests {
         cursor::size_move(true);
         assert!(!cursor::captured() && !cursor::clips(true));
         assert!(!cursor::may_capture(true), "no capture during the loop");
-        assert!(!cursor::captures_on_focus(false, true, false));
+        cursor::click(true);
+        assert!(!cursor::captured(), "a border click starts the loop: no capture");
         cursor::size_move(false);
         assert!(!cursor::captured(), "still free after the loop");
         assert!(cursor::may_capture(true), "a click in the window captures again");

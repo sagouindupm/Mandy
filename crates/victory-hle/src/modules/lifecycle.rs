@@ -262,16 +262,20 @@ extern "system" fn window_proc(
         return 0;
     }
     // The mouse cursor (`gameinput::cursor`): hidden over the window while
-    // captured, captured by a click, freed when the window loses focus or
-    // is sized or moved. The title still sees every message.
+    // held there, captured by a click in the focused window, freed when the
+    // window loses focus or is sized or moved. The title still sees every
+    // message.
     use super::gameinput::cursor;
     match message {
-        wm::WM_SETCURSOR if cursor::captured() && lparam as u32 & 0xFFFF == wm::HTCLIENT => {
+        wm::WM_SETCURSOR if cursor::held() && lparam as u32 & 0xFFFF == wm::HTCLIENT => {
             // SAFETY: no cursor while it is over our client area.
             unsafe { wm::SetCursor(std::ptr::null_mut()) };
             return 1;
         }
-        wm::WM_LBUTTONDOWN | wm::WM_RBUTTONDOWN | wm::WM_MBUTTONDOWN => cursor::click(),
+        wm::WM_LBUTTONDOWN | wm::WM_RBUTTONDOWN | wm::WM_MBUTTONDOWN => {
+            // SAFETY: a plain query.
+            cursor::click(unsafe { wm::GetForegroundWindow() } == hwnd);
+        }
         wm::WM_KILLFOCUS => cursor::release(),
         wm::WM_ENTERSIZEMOVE => cursor::size_move(true),
         wm::WM_EXITSIZEMOVE => cursor::size_move(false),
