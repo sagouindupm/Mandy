@@ -1,8 +1,9 @@
 ﻿# Sagouindupm | VIctory : lanceur pour débutant (profil Series S, cartes NVIDIA 6-12 Go, processeur 6 cœurs).
 # 1. Premier lancement : demande où est le jeu, écrit la configuration.
 # 2. [2] Prépare les shaders : traduit tous les shaders du jeu une fois (15-30 min).
-# 3. [1] Jouer : chaque partie note les pipelines que le jeu crée (VICTORY_PIPELINE_BOOK).
-# 4. [3] Construit ces pipelines hors jeu (victory warm) : plus d'à-coups ni de dessins manquants ensuite.
+# 3. [3] Construit les pipelines hors jeu, dès avant la première partie : importe la liste publiée
+#    (series-s\pipelines\series-s-rtx.txt, sans code du jeu) avec les shaders de VOTRE copie, puis victory warm.
+# 4. [1] Jouer : chaque partie note aussi les pipelines que le jeu crée (VICTORY_PIPELINE_BOOK) ; [3] les construit.
 # Pas 'Stop' : sous Windows PowerShell 5.1, chaque ligne que le jeu écrit sur sa sortie d'erreur
 # devient une erreur, et le lanceur s'arrêtait à la première ligne du journal.
 $ErrorActionPreference = 'Continue'
@@ -119,11 +120,11 @@ function Set-Dlss($s) {
 function Start-Game($s) {
     Set-GameEnv
     if (-not $s.shaders_ready) {
-        Write-Host 'Shaders pas encore préparés : les premières minutes seront lentes. Conseil : [2] d''abord.' -ForegroundColor Yellow
+        Write-Host 'Shaders pas encore préparés : les premières minutes seront lentes. Conseil : [2] puis [3] d''abord.' -ForegroundColor Yellow
     }
     $log = Join-Path $Logs ("partie_{0:yyyy-MM-dd_HHmm}.log" -f (Get-Date))
     Write-Host "`nLancement... (journal : $log)" -ForegroundColor Magenta
-    Write-Host 'Après une première partie, [3] construit les pipelines notées : les suivantes sont plus fluides.'
+    Write-Host 'Après une partie, [3] construit aussi les pipelines notées que la liste publiée n''avait pas.'
     # Par cmd : PowerShell 5.1 ne transforme pas les lignes du journal en erreurs.
     & cmd.exe /c "`"$Exe`" run `"$($s.game_exe)`" --console series-s --execute > `"$log`" 2>&1"
     $s.parties++; Save-Settings $s
@@ -141,15 +142,29 @@ function Initialize-Shaders($s) {
     Set-GameEnv
     # Les faits de la carte (NVIDIA : vagues de 32, 1 000 000 de vues) : sans eux le cache ne sert à rien en jeu.
     $env:VICTORY_HOST_WAVE = '32'; $env:VICTORY_HOST_ROVS = '1'; $env:VICTORY_VIEW_LIMIT = '999999'
+    # La liste publiée d'abord : la traduction garde au passage les shaders de vos fichiers qu'elle nomme ([3]).
+    $list = Join-Path $Root 'series-s\pipelines\series-s-rtx.txt'
+    if (Test-Path $list) { & $Exe pipelines import $list | Tee-Object -FilePath (Join-Path $Logs 'pipelines_import.txt') }
     Write-Host "`nTraduction de tous les shaders (15 à 30 minutes, le PC sera très occupé)..." -ForegroundColor Magenta
     & $Exe shaders $s.shaders_dir --jobs ([Math]::Max(2, [Environment]::ProcessorCount - 2)) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt') | Select-Object -Last 3
     if ($LASTEXITCODE -eq 0) { $s.shaders_ready = $true; Save-Settings $s; Write-Host 'Shaders prêts !' -ForegroundColor Green }
     else { Write-Host "La traduction s'est arrêtée (code $LASTEXITCODE), voir $Logs." -ForegroundColor Red }
 }
 
-function Initialize-Pipelines {
+function Initialize-Pipelines($s) {
     Set-GameEnv
-    Write-Host "`nConstruction des pipelines notées pendant vos parties (quelques minutes)..." -ForegroundColor Magenta
+    # La liste publiée : les pipelines dont le jeu se sert jusqu'après la mission du bateau (clés, empreintes des
+    # shaders, états ; aucun code du jeu). Les shaders eux-mêmes viennent de VOTRE dossier de shaders : gardés
+    # par [2] ; sinon --shaders les y cherche (~7 min ; rien à faire s'ils sont déjà là).
+    $list = Join-Path $Root 'series-s\pipelines\series-s-rtx.txt'
+    if (Test-Path $list) {
+        Write-Host "`nImport de la liste des pipelines publiée..." -ForegroundColor Magenta
+        $import = @('pipelines', 'import', $list)
+        if ($s.shaders_dir -and (Test-Path $s.shaders_dir)) { $import += @('--shaders', $s.shaders_dir) }
+        else { Write-Host 'Dossier de shaders inconnu : faites [2] d''abord, sinon seules les pipelines de vos parties seront construites.' -ForegroundColor Yellow }
+        & $Exe @import | Tee-Object -FilePath (Join-Path $Logs 'pipelines_import.txt')
+    }
+    Write-Host "`nConstruction des pipelines (liste publiée et vos parties, quelques minutes)..." -ForegroundColor Magenta
     & $Exe warm --used | Tee-Object -FilePath (Join-Path $Logs 'pipelines_warm.txt') | Select-Object -Last 2
     Write-Host 'Pipelines prêtes : la prochaine partie démarre sans à-coups.' -ForegroundColor Green
 }
@@ -177,7 +192,7 @@ while ($true) {
     Write-Host "  Shaders : $state   |   DLSS : $dlss   |   Parties lancées : $($s.parties)`n"
     Write-Host '  [1] Jouer'
     Write-Host '  [2] Préparer les shaders à l''avance (une fois, recommandé)'
-    Write-Host '  [3] Construire les pipelines (après une première partie)'
+    Write-Host '  [3] Construire les pipelines (après [2], avant la première partie ; à refaire après une partie)'
     Write-Host '  [4] Copier mes sauvegardes en lieu sûr'
     Write-Host '  [5] Changer l''emplacement du jeu'
     Write-Host '  [6] DLSS (cartes NVIDIA RTX)'
@@ -185,7 +200,7 @@ while ($true) {
     switch ((Read-Host "`nChoix").Trim().ToUpper()) {
         '1' { Start-Game $s; Read-Host 'Entrée pour revenir au menu' | Out-Null }
         '2' { Initialize-Shaders $s; Read-Host 'Entrée pour revenir au menu' | Out-Null }
-        '3' { Initialize-Pipelines; Read-Host 'Entrée pour revenir au menu' | Out-Null }
+        '3' { Initialize-Pipelines $s; Read-Host 'Entrée pour revenir au menu' | Out-Null }
         '4' { Backup-Saves; Read-Host 'Entrée pour revenir au menu' | Out-Null }
         '5' { $s.game_exe = ''; Initialize-Game $s }
         '6' { Set-Dlss $s; Read-Host 'Entrée pour revenir au menu' | Out-Null }
