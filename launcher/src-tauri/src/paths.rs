@@ -54,7 +54,7 @@ fn is_root(dir: &Path) -> bool {
         && dir.join("series-s").join("reglages.json").is_file()
 }
 
-/// The repository or the package: `--root <dir>` or SAGOUINDUPM_ROOT (set by Sagouindupm-Launcher.bat), else the
+/// The repository or the package: `--root <dir>` or SAGOUINDUPM_ROOT (set by series-s\dev\Sagouindupm-Launcher.bat), else the
 /// first folder above the exe (the package: the exe's own folder) or the current folder that holds .victory-root
 /// or engine\victory.exe, else where the launcher was compiled from.
 fn find_root() -> PathBuf {
