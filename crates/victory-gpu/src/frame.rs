@@ -39,6 +39,33 @@ fn clock() -> std::sync::MutexGuard<'static, Option<Clock>> {
     CLOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Optional override for the title's requested frame interval (`VICTORY_TARGET_FPS`).
+/// - Unset or invalid: keep the title's interval.
+/// - `0` / `uncapped` / `unlimited`: minimal 100 us tick so flip waits never cap FPS.
+/// - Positive number (e.g. `60`, `120`): pace ticks at that target FPS.
+fn target_interval() -> Option<Duration> {
+    static SET: std::sync::OnceLock<Option<Duration>> = std::sync::OnceLock::new();
+    *SET.get_or_init(|| {
+        let raw = std::env::var("VICTORY_TARGET_FPS").ok()?;
+        let s = raw.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if s.eq_ignore_ascii_case("uncapped") || s.eq_ignore_ascii_case("unlimited") {
+            return Some(Duration::from_micros(100));
+        }
+        let fps: f64 = s.parse().ok()?;
+        if !fps.is_finite() || fps < 0.0 {
+            return None;
+        }
+        if fps == 0.0 {
+            return Some(Duration::from_micros(100));
+        }
+        let ns = (1_000_000_000.0 / fps).clamp(100_000.0, 1_000_000_000.0) as u64;
+        Some(Duration::from_nanos(ns))
+    })
+}
+
 /// Device method: a frame every `length` microseconds. The period is how
 /// many intervals a frame may take to reach the display (pipeline depth),
 /// not part of the rate.
@@ -49,11 +76,20 @@ pub(crate) extern "system" fn set_interval(
     _period: u32,
     _flags: u32,
 ) -> HRESULT {
-    let interval = match length {
+    let requested = match length {
         0 => SIXTIETH,
         us => Duration::from_micros(u64::from(us)),
     };
-    tracing::info!(?interval, "frame interval");
+    let interval = match target_interval() {
+        Some(override_iv) => {
+            tracing::info!(interval = ?override_iv, ?requested, "frame interval overridden (VICTORY_TARGET_FPS)");
+            override_iv
+        }
+        None => {
+            tracing::info!(interval = ?requested, "frame interval");
+            requested
+        }
+    };
     // A new interval starts from now, after the last tick handed out.
     let first = LAST
         .iter()
