@@ -3060,8 +3060,15 @@ impl State {
                     if x > 65_535 {
                         once!(x, "a mesh dispatch of more groups than the host takes: cut");
                     }
-                    // SAFETY: an open list with everything set.
-                    unsafe { l6.DispatchMesh(x.min(65_535), 1, 1) };
+                    // With the launch stage the count goes to it as a root
+                    // constant (`crate::launch`).
+                    match self.bound_launch() {
+                        Some(launch) => {
+                            crate::launch::record(list, launch.roots, crate::launch::Launch::Direct(x.min(65_535)));
+                        }
+                        // SAFETY: an open list with everything set.
+                        None => unsafe { l6.DispatchMesh(x.min(65_535), 1, 1) },
+                    }
                     self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
                     self.mesh_scissor(list, false);
                     DRAWN.fetch_add(1, Ordering::Relaxed);
@@ -3754,6 +3761,65 @@ impl State {
         }
     }
 
+    /// The launch stage (`crate::launch`) of the title pipeline's host
+    /// pipeline, if it has one.
+    fn bound_launch<'a>(&self) -> Option<&'a crate::pipeline::host::Launch> {
+        crate::pipeline::host_pipeline(self.pipeline as This)?.launch.as_ref()
+    }
+
+    /// One indirect mesh record at `arguments` of the copy `args`, launched
+    /// by the bound pipeline's amplification stage, which reads, bounds and
+    /// charges it on the card (`crate::launch`). `p`: the title pipeline's
+    /// host pipeline. False if it cannot run on the host.
+    fn launch_record(
+        &mut self,
+        list: &HostList,
+        p: &HostPipeline,
+        args: &std::sync::Arc<crate::shadow::Shadow>,
+        arguments: u64,
+        len: u64,
+    ) -> bool {
+        #[cfg(feature = "diagnostics")]
+        let why = |what: &str| crate::pipeline::note_why(format!("indirect kind 10: {what}"));
+        #[cfg(not(feature = "diagnostics"))]
+        let why = |_: &str| {};
+        // SAFETY: a live buffer.
+        let Some(record) = unsafe { args.buffer.GetGPUVirtualAddress() }.checked_add(args.offset(arguments)) else {
+            why("a mesh record outside its copy");
+            return false;
+        };
+        if !record.is_multiple_of(4) {
+            why("a mesh record not 4-byte aligned");
+            return false;
+        }
+        // Another draw reads the scratch buffer from here on (`windows`).
+        self.window = None;
+        args.refresh(list, arguments, len);
+        if !self.prepare_for(list, false, true) {
+            why("prepare failed");
+            return false;
+        }
+        let Some(launch) = self.bound_launch() else {
+            why("the bound pipeline has no launch stage");
+            return false;
+        };
+        #[cfg(feature = "diagnostics")]
+        list.note_op(|| self.op_text(format!("indirect kind 10 max 1 at {arguments:#x} launched"), false));
+        #[cfg(feature = "diagnostics")]
+        list.ran_indirect(p.pso.as_raw() as usize, &p.name, 10, 1, &self.user);
+        list.keep(&args.buffer);
+        self.mesh_scissor(list, true);
+        let launched = crate::launch::record(list, launch.roots, crate::launch::Launch::Record(record));
+        self.mesh_scissor(list, false);
+        if !launched {
+            why("no budget for the launch");
+            return false;
+        }
+        self.drew(Some(p));
+        DRAWN.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
     /// Where the clamped record of `kind` at `arguments` of the copy `args`
     /// is, from the open batch or a new one ([`batches`]). `None` if it
     /// cannot be clamped in one.
@@ -3880,6 +3946,13 @@ impl State {
             why("mesh draws are switched off (VICTORY_MESH_TEST=skip)");
             return false;
         }
+        // One mesh record of a pipeline with the launch stage: the draw
+        // reads it itself (`crate::launch`), with no clamp of ours, no batch
+        // and no window before it.
+        let launched = kind == MESH && max == 1 && count.is_none() && self.bound_launch().is_some();
+        if launched {
+            return self.launch_record(list, p, &args, arguments, len);
+        }
         // One record without a count: clamped in a batch (`batches`).
         let batch = if batches() > 0 && max == 1 && count.is_none() {
             args.refresh(list, arguments, len);
@@ -3980,6 +4053,21 @@ impl State {
         if !ran {
             why("prepare failed");
             return false;
+        }
+        // A mesh call the launch stage does not take (a count buffer, more
+        // than one record): the same pipeline without the stage.
+        if kind == MESH
+            && let Some(launch) = self.bound_launch()
+        {
+            let Some(plain) = launch.plain() else {
+                why("no host pipeline without the launch stage");
+                return false;
+            };
+            // SAFETY: an open list and a live pipeline of the same root
+            // signature.
+            unsafe { list.list.SetPipelineState(plain) };
+            self.host_pipeline = plain.as_raw() as usize;
+            list.keep(plain);
         }
         #[cfg(feature = "diagnostics")]
         list.note_op(|| {
