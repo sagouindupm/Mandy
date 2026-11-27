@@ -46,8 +46,11 @@ raisons de chaque choix, dans **Réglages → Profil détecté**.
 ### 2. Tout préparer
 
 Onglet **Préparation**, bouton **« Tout préparer »**. Le lanceur trouve le jeu (`game_scarlett_master.exe` de
-votre copie) et **traduit les shaders** pour votre carte : 15 à 30 minutes, une seule fois. Chaque étape a son
-état et son bouton, pour la refaire à la main.
+votre copie), **traduit les shaders** pour votre carte puis **construit d'avance les pipelines** de la liste
+partagée [`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt) : les 2 874 pipelines
+dont le jeu se sert jusqu'après la mission du bateau, décrites par des empreintes seulement (aucun code du jeu),
+construites avec les shaders de **votre** copie. Une seule fois, environ 25 minutes sur notre machine (18 min de
+traduction, 6 min de construction). Chaque étape a son état et son bouton, pour la refaire à la main.
 
 Il faut la **copie complète** : l'exe avec toutes ses archives à côté (`shaders.rpf`, `levels.rpf` et les
 autres `.rpf`, ~130 Go pour la v1.0.2.1), dans son propre dossier (par exemple `C:\Jeux\GTA6`). L'exe seul, ou
@@ -57,9 +60,10 @@ quelques fichiers en vrac dans Téléchargements, ne suffisent pas : le lanceur 
 
 ### 3. Jouer
 
-Onglet **Jouer**, bouton **JOUER**. Cette première partie note les pipelines que le jeu crée. Revenez ensuite à
-**Préparation → étape 4, « Construire »** (quelques minutes) : la partie suivante n'a plus d'à-coups ni de
-dessins manquants. C'est ce qui fait passer de ~5 à ~10 images par seconde sur notre machine de référence.
+Onglet **Jouer**, bouton **JOUER**. Les pipelines étant construites d'avance, **la première partie est déjà
+fluide** : sans à-coups ni dessins manquants jusqu'après la mission du bateau. C'est ce qui fait passer de ~5 à
+~10 images par seconde sur notre machine de référence. Chaque partie note aussi les pipelines que la liste
+n'avait pas ; **Préparation → étape 4, « Construire »** les ajoute quand vous allez plus loin dans le jeu.
 
 <p align="center"><img src="docs/assets/launcher-reglages.png" alt="La page Réglages : profil détecté et réglages appliqués" width="80%"></p>
 
@@ -137,12 +141,13 @@ et plus en jeu, avec une image fidèle à la Series S.
 </details>
 
 <details>
-<summary><b>Le premier lancement saccade, c'est normal ?</b></summary>
+<summary><b>Ça saccade, c'est normal ?</b></summary>
 
-Oui, la première fois. Le jeu crée des milliers de pipelines (les programmes de la carte graphique) au fil de la
-partie. Faites dans l'ordre : traduire les shaders (étape 3), jouer une première partie, puis **Construire** les
-pipelines (étape 4). Les parties suivantes n'ont plus ces à-coups. Sur une carte NVIDIA, réglez aussi le cache
-de shaders sur « Illimitée ».
+Pas si la préparation est faite. Le jeu se sert de milliers de pipelines (les programmes de la carte graphique) ;
+« Tout préparer » traduit les shaders (étape 3) puis construit d'avance celles de la liste partagée (étape 4),
+jusqu'après la mission du bateau. Si l'étape 4 n'est pas « Prêt », lancez-la. Plus loin dans le jeu, de nouvelles
+pipelines apparaissent : chaque partie les note, et « Construire » (étape 4) les ajoute. Sur une carte NVIDIA,
+réglez aussi le cache de shaders sur « Illimitée ».
 </details>
 
 <details>
@@ -240,6 +245,24 @@ x86-64 avec AVX2, sans runtime Visual C++ à installer ; vérification du conten
 `series-s\Sagouindupm.bat` : un menu dans une console (préparer les shaders, jouer, construire les pipelines,
 DLSS, sauvegardes). Il lit les mêmes réglages (`series-s\reglages.json`, appliqués par `series-s\reglages.ps1`),
 calcule le même profil et partage la configuration du lanceur graphique (`%LOCALAPPDATA%\Sagouindupm`).
+La première fois : **[2]** (traduit les shaders et garde au passage ceux que nomme la liste partagée), **[3]**
+(importe la liste et construit ses pipelines, avant de jouer), puis **[1]**.
+</details>
+
+<details>
+<summary><b>La liste de pipelines partagée</b></summary>
+
+[`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt) décrit les pipelines dont le jeu
+se sert jusqu'après la mission du bateau : clés, empreintes BLAKE3 des shaders, états graphiques ; jamais de
+code du jeu. À la main, avec les mêmes variables que le lanceur :
+
+```powershell
+victory pipelines import series-s\pipelines\series-s-rtx.txt --shaders <vos shaders>   # ou avant « victory shaders »
+victory warm --used
+```
+
+`victory pipelines export <fichier> --used` écrit la liste de vos propres parties, `victory pipelines merge
+<sortie> <listes...>` en réunit plusieurs (format décrit dans `crates/victory-gpu/src/pipeline/known/list.rs`).
 </details>
 
 - **Assistants IA** : lisez [AGENTS.md](AGENTS.md) (le projet, ses règles, la carte du code, comment mesurer).

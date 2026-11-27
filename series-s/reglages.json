@@ -87,6 +87,10 @@
       "7c9a6a83826cdfac"
     ]
   },
+  "pipelines_partagees": {
+    "note": "La liste partagée des pipelines (clés, empreintes des shaders, états : aucun code du jeu), relative à la racine. Les deux lanceurs l'importent avant la traduction des shaders (victory pipelines import <liste> : la traduction garde au passage les shaders qu'elle nomme), ou après avec --shaders <shaders du joueur>, puis victory warm --used : la première partie n'a plus d'à-coups jusqu'après la mission du bateau. Le repère « nom:taille » dans lanceur.json (pipelines_liste) dit quelle liste a été construite.",
+    "fichier": "series-s/pipelines/series-s-rtx.txt"
+  },
   "petite_ram": {
     "note": "PC à moins de 24 Go : fenêtres de mémoire du jeu dans la mémoire de la carte (évite le plantage 0x8007000E).",
     "moins_de_go": 24,

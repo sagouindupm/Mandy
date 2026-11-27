@@ -140,6 +140,7 @@ accélérée : à profiler).
 | MAD/MAC « legacy » fusionnés, sources dénormales mises à 0 comme sur RDNA 2 | Marvisak #1554 (Calvix2k), fxceless PR #1026 | cœurs noirs dans les reflets les plus vifs de l'eau ; test unitaire sur la carte OK | `lower.rs` |
 | Choix de la carte (`VICTORY_ADAPTER`) ; sans réglage : la plus puissante (portables Optimus : plus la carte Intel) | trustno1-coder 033be27f + nous | #14 | `host.rs` |
 | Fenêtres de mémoire du jeu dans la mémoire de la carte vue par le CPU (`VICTORY_WINDOWS_BAR_MB`, désactivé ; 3072 pour les PC à 16 Go) | « local » bd68f5e1 (avatarmanz, trustno1) | sur 16 Go : plus de plantage 0x8007000E et 10-12 fps au lieu de 1,6-3 (RTX 3060, trustno1 #6) ; à mesurer ici (32 Go) | `shadow.rs` |
+| Liste de pipelines publiée, sans code du jeu (`victory pipelines export/import/merge`, `series-s/pipelines/series-s-rtx.txt` : 2 874 pipelines du cache du mainteneur passé la mission du bateau, texte de 444 Ko, 234 états, 2 944 shaders par empreinte) : construites avant la première partie | nous | cache neuf, hors jeu : `victory shaders` 18 min (6 fils, 25 780 shaders) ; import + 2 944 conteneurs retrouvés dans les fichiers du joueur par empreinte 7 min 12 s ; `warm --used` 2 874 faites en 6 min 19 s (6 processus, médiane 184 ms, 5 sans pipeline hôte, 0 sautée) ; empreinte de traduction identique à celle du cache du mainteneur (d8d859e1b5d7b418). Effet sur une vraie première partie : à mesurer | `known/list.rs`, `pipelines.rs`, lanceur [2]/[3] |
 
 ## Rejeté (mesuré, ne pas refaire sans idée nouvelle)
 

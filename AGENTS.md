@@ -19,9 +19,10 @@ pipelines prepared). Targets: 10-12 fps in cutscenes, 22 fps in game, picture 1:
 
 **Before measuring anything, prepare like a player does** (or your numbers are meaningless):
 `victory shaders <shaders>` with `VICTORY_HOST_WAVE=32 VICTORY_VIEW_LIMIT=999999` (NVIDIA), one
-run with `VICTORY_PIPELINE_BOOK=1`, then `victory warm --used`, then measure the next runs. Give a
-build of another fork its own `VICTORY_CACHE_DIR`: builds share the pipeline library and its
-start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` (12 s freezes); 150 is right.
+run with `VICTORY_PIPELINE_BOOK=1` (or, before any run, `victory pipelines import
+series-s/pipelines/series-s-rtx.txt --shaders <shaders>`), then `victory warm --used`, then measure
+the next runs. Give a build of another fork its own `VICTORY_CACHE_DIR`: builds share the pipeline
+library and its start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` (12 s freezes); 150 is right.
 
 ## Hard rules
 
@@ -62,10 +63,11 @@ start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` (12 s freezes); 
 | `crates/victory-gpu/src/texture.rs`, `resource.rs` | textures, uploads, format stand-ins |
 | `crates/victory-gpu/src/list/thin.rs`, `host/card_steps.rs`, `land.rs` | the avatarmanz architecture: list calls translated by our threads (`VICTORY_THIN`), reads of title memory under flights done on the card (`VICTORY_CARD_STEPS`), landing on helper threads |
 | `crates/victory-gpu/src/pipeline/known.rs`, `apps/victory/src/warm.rs` | the pipeline book (`VICTORY_PIPELINE_BOOK=1`) and `victory warm` |
+| `crates/victory-gpu/src/pipeline/known/list.rs`, `apps/victory/src/pipelines.rs` | shared pipeline lists without shader code (`victory pipelines export/import/merge/info`); `series-s/pipelines/` holds the one we ship. A list holds keys, stages, shader hashes and graphics states only: never put containers or `known-shaders.bin` in the repository |
 | `series-s/` | the launchers and every setting we ship: `reglages.json` (the one place for the Series S settings, read by both launchers; `materiel` holds the automatic hardware profiles), `reglages.ps1` (applies it for the console launcher), `Sagouindupm.ps1` (console), `Sagouindupm-Launcher.bat` (starts the graphical launcher) |
 | `launcher/` | the graphical launcher for novices: Tauri 2 (Rust commands in `src-tauri/src`, its own Cargo workspace) and React + shadcn/ui (`src/`); `launcher/news.json` feeds its « Nouveautés » card |
 | `launcher/src-tauri/src/profile.rs`, `scripts/check-profils.ps1` | the hardware profile (threads, card memory, RAM, vendor) computed from `materiel`; the same in `reglages.ps1`, compared by the script |
-| `scripts/package-release.ps1`, `.github/workflows/release.yml` | the downloadable zip (`VIctory S.exe` + `engineictory.exe`), built for any x86-64-v3 CPU; a `v*` tag publishes it |
+| `scripts/package-release.ps1`, `.github/workflows/release.yml` | the downloadable zip (`VIctory S.exe` + `engine\victory.exe`), built for any x86-64-v3 CPU; a `v*` tag publishes it |
 | `scripts/bench/` | the measuring scripts |
 
 Big files: don't read `host.rs`, `shadow.rs` or `draw.rs` whole. `grep -n` for the switch or the

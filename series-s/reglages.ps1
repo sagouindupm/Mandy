@@ -20,10 +20,11 @@ function Get-Settings {
 # Réglages ajoutés après la première version du lanceur : présents même dans un ancien lanceur.json.
 #   dlss_dir, dlss_mode : DLSS (dossier de Streamline, mode).
 #   pipelines_parties   : nombre de parties lancées au dernier « victory warm --used » réussi (-1 : jamais).
+#   pipelines_liste     : repère « nom:taille » de la liste partagée construite par ce « warm » ('' : aucune).
 #   nv_cache_ok         : le joueur a dit avoir réglé le cache de shaders NVIDIA sur « Illimitée ».
 #   ancien_plan         : mode d'alimentation actif avant que le lanceur graphique le change (pour revenir).
 function Complete-Settings($s) {
-    $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; nv_cache_ok = $false; ancien_plan = '' }
+    $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; pipelines_liste = ''; nv_cache_ok = $false; ancien_plan = '' }
     foreach ($k in $defaults.Keys) {
         if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $defaults[$k] }
     }
@@ -54,6 +55,18 @@ function Get-SkipPipelines {
     $skip = @($Reglages.pipelines_sautees.en_plus)
     if (Test-Path $rt) { $skip = @((Get-Content $rt -Raw).Trim()) + $skip }
     $skip -join ','
+}
+
+# La liste partagée des pipelines (« pipelines_partagees » dans reglages.json), $null si absente.
+function Get-SharedPipelineList {
+    $f = Join-Path $Root $Reglages.pipelines_partagees.fichier
+    if (Test-Path $f) { $f } else { $null }
+}
+
+# Son repère « nom:taille », pour savoir quelle liste a été construite (le même que le lanceur graphique).
+function Get-SharedPipelineMark {
+    $f = Get-SharedPipelineList
+    if ($f) { $i = Get-Item $f; "$($i.Name):$($i.Length)" } else { '' }
 }
 
 # Mémoire vive totale en octets (0 si inconnue).
