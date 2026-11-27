@@ -469,6 +469,34 @@ const TARGETS: u64 = after(13);
 const CLEAR_RTV: u64 = after(14);
 const CLEAR_DSV: u64 = after(15);
 const COPY_TEXTURE: u64 = after(16);
+const HOST_WORK: u64 = after(17);
+
+/// Host work written down in a stream ([`defer`]): done on the list of ours
+/// when the stream is translated to that point.
+pub(crate) type Work = Box<dyn FnOnce(This) + Send>;
+
+/// Writes down `work` in `this`'s stream (a title list whose calls are
+/// written down, recording now): a thread of ours does it on the list of
+/// ours, in order with the list's other calls, when it translates that
+/// point (host work that records on the host list behind a title list: an
+/// upscaler's dispatch). Gives `work` back when `this` is no such list: the
+/// caller does it now, on the list's own host list. Work a recording let go
+/// of before translating it is dropped without being done.
+pub(crate) fn defer(this: This, work: Work) -> Result<(), Work> {
+    if this.is_null() || !on() {
+        return Err(work);
+    }
+    // SAFETY: the title passes one of our lists.
+    if unsafe { (*this.cast::<List>()).host.is_some() } {
+        return Err(work);
+    }
+    let front = front(this);
+    if front.closed || front.recording.is_none() {
+        return Err(work);
+    }
+    front.put(HOST_WORK, &[Box::into_raw(Box::new(work)) as u64]);
+    Ok(())
+}
 
 /// The bytes of `count` things at `items` (none if null).
 fn bytes_of<'a, T>(items: *const T, count: usize) -> &'a [u8] {
@@ -700,6 +728,14 @@ fn translate(list: This, stream: &[u64], left: impl Fn() -> bool) -> (u64, bool)
             held(uploads).push(block);
             continue;
         }
+        if op == HOST_WORK {
+            // SAFETY: made by `defer`, named once.
+            let work = *unsafe { Box::from_raw(w[0] as *mut Work) };
+            if !skip {
+                work(list);
+            }
+            continue;
+        }
         if skip && op != CLOSE && op != RESET {
             continue;
         }
@@ -878,6 +914,32 @@ mod tests {
     }
 
     /// Arguments come out of a stream as they went in.
+    #[test]
+    fn host_work_is_done_on_our_list_where_it_was_written_unless_let_go() {
+        use std::sync::atomic::AtomicUsize;
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        let list: This = std::ptr::NonNull::<u64>::dangling().as_ptr().cast_const().cast();
+        let expected = list as usize;
+        let stream = |works: usize| {
+            let mut f = Front::default();
+            f.recording = Some(Arc::new(Recording::new(0)));
+            for k in 0..works {
+                let work: Work = Box::new(move |on| {
+                    assert_eq!(on as usize, expected);
+                    assert_eq!(DONE.fetch_add(1, Relaxed), k, "in order");
+                });
+                f.put(HOST_WORK, &[Box::into_raw(Box::new(work)) as u64]);
+            }
+            std::mem::take(&mut f.words)
+        };
+        assert_eq!(translate(list, &stream(2), || false), (2, false));
+        assert_eq!(DONE.load(Relaxed), 2);
+        // A recording let go of: dropped, not done.
+        DONE.store(0, Relaxed);
+        assert_eq!(translate(list, &stream(1), || true), (1, false));
+        assert_eq!(DONE.load(Relaxed), 0);
+    }
+
     #[test]
     fn a_stream_gives_back_what_was_written() {
         let mut f = Front::default();

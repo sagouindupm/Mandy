@@ -60,6 +60,8 @@ pub use profile::profile_on_schedule;
 #[cfg(windows)]
 pub use threads::disable_thread_calls;
 #[cfg(windows)]
+pub use hooks::use_host_upscaler;
+#[cfg(windows)]
 pub use thunks::{UnimplementedPolicy, unimplemented_call_count};
 #[cfg(windows)]
 pub use windows::{
