@@ -1371,8 +1371,8 @@ impl Shadow {
     /// Relay variant of [`Self::try_defer_piece`]: also refuses to defer any
     /// newly-armed piece that has pending/later CPU uploads (`dirty` / `sent`).
     pub(crate) fn try_defer_piece_relay(self: &Arc<Self>, lo: usize, hi: usize, fetched_after: u64) -> bool {
-        if let Some(card) = &self.card {
-            if card.touched.load(Ordering::Acquire) || card.has_sent.load(Ordering::Acquire) {
+        if let Some(card) = &self.card
+            && (card.touched.load(Ordering::Acquire) || card.has_sent.load(Ordering::Acquire)) {
                 let dirty = card.dirty.lock().unwrap_or_else(|e| e.into_inner());
                 let sent = card.sent.lock().unwrap_or_else(|e| e.into_inner());
                 let mut sent_skip = Vec::new();
@@ -1382,7 +1382,6 @@ impl Shadow {
                     return false;
                 }
             }
-        }
         self.try_defer_piece(lo, hi)
     }
 

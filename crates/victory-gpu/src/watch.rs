@@ -815,6 +815,7 @@ pub(crate) fn once() -> bool {
 /// refresh) as [`ask_ahead`] does, and lets that asking stand until
 /// [`ask_once_end`]. With [`quiet_frames`], the quiet blocks among them are
 /// asked about once a frame ([`ask_once_quiet`]).
+#[allow(dead_code)]
 pub(crate) fn ask_once(ranges: &[(usize, usize)]) {
     ask_submission(ranges, &[], quiet_frames());
 }
@@ -3230,6 +3231,7 @@ fn mapping_waited(at: usize, len: usize, since: std::time::Instant) {
 fn mapping_waited(_at: usize, _len: usize, _since: std::time::Instant) {}
 
 /// [`title_memory_reading`] if it can be had at once.
+#[allow(dead_code)]
 pub fn title_memory_reading_now() -> Option<Reading> {
     title_memory_reading_now_in(0, usize::MAX)
 }

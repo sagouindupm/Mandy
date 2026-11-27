@@ -552,7 +552,7 @@ pub(super) fn branches_around(st: &Structured, needs: &[usize]) -> Option<(Vec<u
     // None) both host waves already take it the same way, so nothing is needed; where it is
     // a lane's own bits (`Some`), the wave-wide form is what keeps the halves leaving
     // together, and it is added to be widened.
-    let mut unsafe_loop = false;
+    let unsafe_loop = false;
     for d in loop_exits_around(st, needs)? {
         match st.wave_any.get(d).copied().flatten() {
             None => {}

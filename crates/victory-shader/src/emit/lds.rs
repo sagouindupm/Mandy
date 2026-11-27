@@ -259,8 +259,8 @@ pub(super) fn meetings(
             if !safe {
                 return None;
             }
-        } else if writes[r] && !has_rmw[r] {
-            if !write_only_ok {
+        } else if writes[r] && !has_rmw[r]
+            && !write_only_ok {
                 if has_provable_shared_waw(&region_accesses[r]) {
                     return None;
                 }
@@ -274,7 +274,6 @@ pub(super) fn meetings(
                     return None;
                 }
             }
-        }
     }
 
     let mut meet = vec![(false, false); n];

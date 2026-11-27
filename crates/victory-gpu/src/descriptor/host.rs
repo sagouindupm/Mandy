@@ -154,6 +154,7 @@ impl Pool {
         Self { taken: vec![false; n], at: if n == 0 { Default::default() } else { [(0, n)].into() }, by_len, end: n }
     }
 
+    #[allow(dead_code)]
     fn free(&self) -> u32 {
         self.at.values().sum::<usize>() as u32
     }
@@ -274,6 +275,7 @@ impl Pools {
         Self { shards, size, next: Default::default(), wide: Mutex::new(()) }
     }
 
+    #[allow(dead_code)]
     fn free(&self) -> u32 {
         self.shards.iter().map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).free()).sum()
     }
@@ -350,6 +352,7 @@ impl Pools {
         given
     }
 
+    #[allow(dead_code)]
     fn taken(&self, at: usize) -> Option<bool> {
         let shard = (at / self.size).min(self.shards.len() - 1);
         let pool = self.shards[shard].lock().unwrap_or_else(|e| e.into_inner());
@@ -1774,6 +1777,7 @@ const PORTABLE_VIEWS: u32 = 1_000_000;
 /// [`PORTABLE_VIEWS`] (AMD): the title's heap (a little over 1,000,000
 /// views in the retail game) plus [`DYNAMIC`] fits with room to spare, and
 /// the last slot is the null slot every view index at or past it reads.
+#[allow(dead_code)]
 const UNCAPPED_VIEWS: u32 = 1 << 21;
 
 /// Where the raw twins of the title's slots start in a heap that has them

@@ -3004,7 +3004,7 @@ fn under_fused() -> bool {
 /// `held` is `title` afterwards.
 fn word_runs_put(at: usize, title: &[u8], held: &mut [u8]) -> Vec<(usize, usize)> {
     #[cfg(target_arch = "x86_64")]
-    if at % 4 == 0 && title.len() % 4 == 0 && title.len() == held.len() && std::arch::is_x86_feature_detected!("avx2") {
+    if at.is_multiple_of(4) && title.len().is_multiple_of(4) && title.len() == held.len() && std::arch::is_x86_feature_detected!("avx2") {
         // SAFETY: the processor has AVX2, and the lengths are the same.
         return unsafe { word_runs_put_avx2(title, held) };
     }
@@ -4868,9 +4868,9 @@ impl Shadow {
                 let fused = crate::host::words_under()
                     && under_fused()
                     && !crate::host::upcheck::on()
-                    && at % 4 == 0
-                    && lo % 4 == 0
-                    && n % 4 == 0
+                    && at.is_multiple_of(4)
+                    && lo.is_multiple_of(4)
+                    && n.is_multiple_of(4)
                     && {
                         if left.fetch_sub(most, Ordering::Relaxed) >= most {
                             true
