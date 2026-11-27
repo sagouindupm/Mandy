@@ -299,7 +299,7 @@ pub(crate) fn amd(device: &ID3D12Device) -> bool {
 /// runs). A list whose budget one garbage record empties loses all its later
 /// draws, and which record that is may differ from frame to frame. The frame
 /// line says how many records a frame are refused.
-fn rest() -> u32 {
+pub(crate) fn rest() -> u32 {
     u32::from(std::env::var("VICTORY_INDIRECT_REST").map_or(true, |v| v != "0"))
 }
 
