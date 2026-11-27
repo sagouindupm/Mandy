@@ -4865,6 +4865,9 @@ fn readable(list: &HostList, kind: ResourceType, view: &View) {
     }
     match (view, kind) {
         (View::Shader(resource, _), ResourceType::Srv) => {
+            // (`VICTORY_DUMP_SAMPLED=1`: a captured frame's sampled textures.)
+            #[cfg(feature = "diagnostics")]
+            crate::capture::note_sampled(*resource as This);
             // A view the title placed, in another format, in the memory of
             // a texture the host writes: that texture's texels, copied on
             // the host (title memory does not have them).
