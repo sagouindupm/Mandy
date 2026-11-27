@@ -27,7 +27,7 @@
 //! creates its context with a render size of its own (1280x720 for a
 //! 1920x1080 output on Series S, a fixed 2/3 scale). So no answer here can
 //! make it render smaller. `VICTORY_DLSS_MODE` ([`Requested`]) sets that
-//! scale in the title's code instead (the runner's `ffx_scale`), and the
+//! scale in the title's code instead (the loader's render-scale patches), and the
 //! DLSS mode follows the sizes the context is created with ([`mode_for`]).
 #![allow(non_snake_case)]
 
@@ -42,10 +42,43 @@ use super::{
     CreateUpscale, DispatchUpscale, ERROR, ERROR_PARAMETER, Header, OK, OUTPUT, ReturnCode, WideNul,
 };
 
+/// The Streamline files `VICTORY_DLSS_DIR` must hold.
+const FILES: [&str; 4] = [
+    "sl.interposer.dll",
+    "sl.common.dll",
+    "sl.dlss.dll",
+    "nvngx_dlss.dll",
+];
+
 /// Whether DLSS answers the title's FidelityFX calls: `VICTORY_DLSS_DIR`
-/// set. It takes precedence over `VICTORY_FFX_DIR`.
+/// set and holding Streamline's DLLs ([`FILES`]). It takes precedence over
+/// `VICTORY_FFX_DIR`. With a DLL missing it is off (said once), so the
+/// title's own FidelityFX DLLs stay in place instead of an upscaler that
+/// cannot answer.
 pub fn enabled() -> bool {
-    std::env::var_os("VICTORY_DLSS_DIR").is_some()
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        let Some(dir) = std::env::var_os("VICTORY_DLSS_DIR") else {
+            return false;
+        };
+        let missing = missing_files(std::path::Path::new(&dir));
+        if !missing.is_empty() {
+            tracing::error!(
+                dir = %std::path::Path::new(&dir).display(),
+                ?missing,
+                "dlss: VICTORY_DLSS_DIR lacks Streamline's DLLs; DLSS off, the title's own upscaler is used"
+            );
+        }
+        missing.is_empty()
+    })
+}
+
+/// The files of [`FILES`] not in `dir`.
+fn missing_files(dir: &std::path::Path) -> Vec<&'static str> {
+    FILES
+        .into_iter()
+        .filter(|f| !dir.join(f).is_file())
+        .collect()
 }
 
 /// The quality `VICTORY_DLSS_MODE` asks for: `quality` (the default),
@@ -957,6 +990,20 @@ fn report(call: &'static str, result: SlResult) -> ReturnCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_without_streamline_leaves_dlss_off() {
+        let dir = std::env::temp_dir().join(format!("victory-dlss-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(missing_files(&dir), FILES);
+        for f in &FILES[..3] {
+            std::fs::write(dir.join(f), b"").unwrap();
+        }
+        assert_eq!(missing_files(&dir), ["nvngx_dlss.dll"]);
+        std::fs::write(dir.join(FILES[3]), b"").unwrap();
+        assert!(missing_files(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn jitter_follows_fsr() {

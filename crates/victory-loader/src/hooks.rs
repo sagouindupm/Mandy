@@ -71,12 +71,30 @@ pub(crate) const RENDER_SCALE_ENV: &str = "VICTORY_RENDER_SCALE";
 /// on every console profile (Series S otherwise picks FSR).
 pub(crate) const OWN_UPSCALER_ENV: &str = "VICTORY_OWN_UPSCALER";
 
+/// The render scale a host upscaler that answers the title's FidelityFX
+/// calls (DLSS, `victory_gpu::ffx`) asks for, when one does: set by the
+/// runner before the title is mapped ([`use_host_upscaler`]).
+static HOST_UPSCALER: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+
+/// A host upscaler (DLSS) answers the title's FidelityFX calls, with the
+/// render scale its mode asks for (`None`: the title's own). Call it before
+/// the title is mapped; later calls change nothing.
+///
+/// DLSS stands in for FSR, so it needs the title's FSR path: with it,
+/// [`OWN_UPSCALER_ENV`] is ignored (said once) and the FSR scale is patched.
+/// [`RENDER_SCALE_ENV`] still wins over the mode's scale.
+pub fn use_host_upscaler(scale: Option<f32>) {
+    let _ = HOST_UPSCALER.set(scale);
+}
+
 /// A patch whose bytes are computed at load time.
 struct OwnedPatch {
     what: &'static str,
     rva: usize,
     expect: Vec<u8>,
     new: Vec<u8>,
+    /// Only written when the patch before it was.
+    after_previous: bool,
 }
 
 /// The upscaler choice: `mov eax, 6` (own upscaler) then `cmovne eax, ecx`
@@ -97,13 +115,20 @@ const FSR_SCALES: [(f32, usize); 4] = [
     (0.75, 0x6159b04),
 ];
 
+/// FSR's scale method (vtable slot 10): its scale load, and the int3
+/// padding after its end where a scale of our own can be kept.
+const FSR_SCALE_LOAD: usize = 0x28ef6b2;
+const FSR_SCALE_PADDING: usize = 0x28ef6e4;
+
 /// The render-scale patches for `scale`, with the image at `base`:
 /// - the own upscaler's minimum scale (an immediate, 2/3 by default) set to
 ///   `scale` and its maximum made equal to the minimum (`vmaxss` → `vmovss`),
 ///   so the scale is fixed;
 /// - FSR's scale (a load of 2/3 on Series S) pointed at a constant equal to
-///   `scale`, when this build has one, and its maximum size made the scaled
-///   size (vtable slot 11 → slot 10's function).
+///   `scale`: the build's own when it has one, else `scale` written into the
+///   method's padding (as the PC upscaler port's `VICTORY_FFX_SCALE` did);
+///   and its maximum size made the scaled size (vtable slot 11 → slot 10's
+///   function).
 fn render_scale_patches(base: usize, scale: f32, fsr: bool) -> Vec<OwnedPatch> {
     let mut patches = vec![
         OwnedPatch {
@@ -111,42 +136,52 @@ fn render_scale_patches(base: usize, scale: f32, fsr: bool) -> Vec<OwnedPatch> {
             rva: 0x28f1e7e,
             expect: vec![0xAB, 0xAA, 0x2A, 0x3F],
             new: scale.to_le_bytes().to_vec(),
+            after_previous: false,
         },
         OwnedPatch {
             what: "render scale: own upscaler maximum = minimum",
             rva: 0x28f1e87,
             expect: vec![0xC5, 0xFA, 0x5F, 0x86, 0x90, 0, 0, 0],
             new: vec![0xC5, 0xFA, 0x10, 0x86, 0x90, 0, 0, 0],
+            after_previous: false,
         },
     ];
     if !fsr {
         return patches;
     }
-    match FSR_SCALES.iter().find(|(v, _)| (v - scale).abs() < 1e-3) {
-        Some(&(_, constant)) => {
-            // vmovss xmm0, [rip + disp32]; the next instruction is at +8.
-            const LOAD: usize = 0x28ef6b2;
-            let disp = (constant as i64 - (LOAD as i64 + 8)) as i32;
-            let mut new = vec![0xC5, 0xFA, 0x10, 0x05];
-            new.extend_from_slice(&disp.to_le_bytes());
-            patches.push(OwnedPatch {
-                what: "render scale: FSR scale",
-                rva: LOAD,
-                expect: vec![0xC5, 0xFA, 0x10, 0x05, 0xA2, 0xE2, 0x86, 0x03],
-                new,
-            });
-            patches.push(OwnedPatch {
-                what: "render scale: FSR maximum = scaled size",
-                rva: 0x6300ba8,
-                expect: ((base + 0x28ef6f0) as u64).to_le_bytes().to_vec(),
-                new: ((base + 0x28ef680) as u64).to_le_bytes().to_vec(),
-            });
+    // vmovss xmm0, [rip + disp32]; the next instruction is at +8.
+    let load = |constant: usize, after_previous| {
+        let disp = (constant as i64 - (FSR_SCALE_LOAD as i64 + 8)) as i32;
+        let mut new = vec![0xC5, 0xFA, 0x10, 0x05];
+        new.extend_from_slice(&disp.to_le_bytes());
+        OwnedPatch {
+            what: "render scale: FSR scale",
+            rva: FSR_SCALE_LOAD,
+            expect: vec![0xC5, 0xFA, 0x10, 0x05, 0xA2, 0xE2, 0x86, 0x03],
+            new,
+            after_previous,
         }
-        None => tracing::warn!(
-            scale,
-            "no FSR constant for this scale (0.5, 0.4, 1/3, 0.75); FSR keeps its own (use {OWN_UPSCALER_ENV}=1)"
-        ),
+    };
+    match FSR_SCALES.iter().find(|(v, _)| (v - scale).abs() < 1e-3) {
+        Some(&(_, constant)) => patches.push(load(constant, false)),
+        None => {
+            patches.push(OwnedPatch {
+                what: "render scale: FSR scale constant in padding",
+                rva: FSR_SCALE_PADDING,
+                expect: vec![0xCC; 4],
+                new: scale.to_le_bytes().to_vec(),
+                after_previous: false,
+            });
+            patches.push(load(FSR_SCALE_PADDING, true));
+        }
     }
+    patches.push(OwnedPatch {
+        what: "render scale: FSR maximum = scaled size",
+        rva: 0x6300ba8,
+        expect: ((base + 0x28ef6f0) as u64).to_le_bytes().to_vec(),
+        new: ((base + 0x28ef680) as u64).to_le_bytes().to_vec(),
+        after_previous: false,
+    });
     patches
 }
 
@@ -162,8 +197,10 @@ fn parse_scale(text: &str) -> Option<f32> {
 /// # Safety
 /// As `disarm_watchdog`.
 pub(crate) unsafe fn resolution_levers(base: usize, hash: &blake3::Hash) -> usize {
+    let host = HOST_UPSCALER.get().copied();
     let scale = std::env::var(RENDER_SCALE_ENV).ok();
-    let own = std::env::var_os(OWN_UPSCALER_ENV).is_some_and(|v| v != "0");
+    let own_asked = std::env::var_os(OWN_UPSCALER_ENV).is_some_and(|v| v != "0");
+    let (own, scale) = levers(host, scale, own_asked);
     if scale.is_none() && !own {
         return 0;
     }
@@ -172,6 +209,11 @@ pub(crate) unsafe fn resolution_levers(base: usize, hash: &blake3::Hash) -> usiz
     if !hash.to_hex().starts_with(BUILD_1_0_2_1) {
         tracing::debug!("resolution levers: not the 1.0.2.1 executable; nothing patched");
         return 0;
+    }
+    if own_asked && !own {
+        tracing::warn!(
+            "{OWN_UPSCALER_ENV} ignored: DLSS answers the title's FSR calls, so it replaces the title's own upscaler"
+        );
     }
     let mut applied = 0;
     if own {
@@ -182,7 +224,11 @@ pub(crate) unsafe fn resolution_levers(base: usize, hash: &blake3::Hash) -> usiz
         match parse_scale(&text) {
             Some(scale) => {
                 // With the own upscaler forced, FSR is left as it is.
+                let mut previous = false;
                 for p in render_scale_patches(base, scale, !own) {
+                    if p.after_previous && !previous {
+                        continue;
+                    }
                     let p = Patch {
                         what: p.what,
                         rva: p.rva,
@@ -190,13 +236,26 @@ pub(crate) unsafe fn resolution_levers(base: usize, hash: &blake3::Hash) -> usiz
                         new: &p.new,
                     };
                     // SAFETY: forwarded from this function's contract.
-                    applied += usize::from(unsafe { apply(base, &p) });
+                    previous = unsafe { apply(base, &p) };
+                    applied += usize::from(previous);
                 }
             }
             None => tracing::warn!(text, "{RENDER_SCALE_ENV} wants a number in 0.2..=1.0"),
         }
     }
     applied
+}
+
+/// Whether the own upscaler is forced and the render scale asked for, from
+/// a host upscaler's scale (`host`: one answers the title's FidelityFX
+/// calls; inside, its mode's scale), [`RENDER_SCALE_ENV`] and
+/// [`OWN_UPSCALER_ENV`]. A host upscaler needs FSR's path, so it turns the
+/// own upscaler off; the environment's scale wins over its mode's.
+fn levers(host: Option<Option<f32>>, scale: Option<String>, own: bool) -> (bool, Option<String>) {
+    match host {
+        Some(mode) => (false, scale.or(mode.map(|s| s.to_string()))),
+        None => (own, scale),
+    }
 }
 
 /// # Safety
@@ -250,9 +309,35 @@ mod tests {
     }
 
     #[test]
-    fn odd_scales_patch_only_the_own_upscaler() {
-        assert_eq!(render_scale_patches(0, 0.6, true).len(), 2);
+    fn own_upscaler_scales_patch_only_the_own_upscaler() {
+        assert_eq!(render_scale_patches(0, 0.6, false).len(), 2);
         assert_eq!(render_scale_patches(0, 0.5, false).len(), 2);
+    }
+
+    #[test]
+    fn odd_fsr_scales_keep_their_constant_in_the_padding() {
+        let p = render_scale_patches(0, 1.0 / 1.7, true);
+        assert_eq!(p.len(), 5);
+        assert_eq!(p[2].rva, FSR_SCALE_PADDING);
+        assert_eq!(p[2].expect, [0xCC; 4]);
+        assert_eq!(p[2].new, (1.0f32 / 1.7).to_le_bytes());
+        // The load reads the padding: its next instruction plus its disp.
+        let disp = i32::from_le_bytes(p[3].new[4..8].try_into().unwrap());
+        assert_eq!(FSR_SCALE_LOAD as i64 + 8 + i64::from(disp), FSR_SCALE_PADDING as i64);
+        assert!(p[3].after_previous && !p[2].after_previous);
+        assert!(p.iter().all(|p| p.new.len() == p.expect.len()));
+    }
+
+    #[test]
+    fn a_host_upscaler_keeps_fsr_and_its_mode_scale_yields_to_the_environment() {
+        let half = Some("0.5".to_owned());
+        // No host upscaler: the environment as it is.
+        assert_eq!(levers(None, half.clone(), true), (true, half.clone()));
+        // DLSS: never the own upscaler; its mode's scale unless one is set.
+        assert_eq!(levers(Some(Some(0.5)), None, true), (false, half.clone()));
+        assert_eq!(levers(Some(Some(1.0 / 3.0)), half.clone(), true), (false, half));
+        // DLSS quality: the title's own 2/3, nothing patched.
+        assert_eq!(levers(Some(None), None, true), (false, None));
     }
 }
 

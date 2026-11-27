@@ -63,6 +63,18 @@ pub fn run(
 
     let images = cfg.cache_subdir("images")?;
     victory_hle::modules::d3d12x::use_shader_cache(cfg.cache_subdir("shaders")?);
+    // DLSS (`VICTORY_DLSS_DIR`) answers the title's FidelityFX calls, so the
+    // title must take its FSR path, at the scale of `VICTORY_DLSS_MODE`: the
+    // loader's resolution patches are told before the title is mapped.
+    if victory_hle::modules::ffx::dlss() {
+        let scale =
+            victory_hle::modules::ffx::dlss_render_scale(matches!(console, Console::SeriesS));
+        println!(
+            "upscaler       DLSS through Streamline (render scale {})",
+            scale.map_or("the title's own".to_owned(), |s| format!("{s:.3}"))
+        );
+        victory_loader::use_host_upscaler(scale);
+    }
     let image = victory_loader::load(&prepared, &images)?;
     // The program is mapped from the copy `load` wrote: the file's bytes
     // and their patched copy are not read again, and were held for the
