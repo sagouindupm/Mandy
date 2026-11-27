@@ -854,8 +854,9 @@ fn log_memory() {
     );
     {
         let [textures, staging] = crate::pool::memory();
+        let [free, empty, sparse] = crate::pool::texture_holes();
         let capped = crate::resource::CAPPED.load(Relaxed);
-        tracing::info!("memory in blocks (VICTORY_TEXTURE_POOL=0 turns them off): {textures} MB of textures, {staging} MB of their staging buffers; {capped} host copies made without their largest levels (VICTORY_TEXTURE_MAX)");
+        tracing::info!("memory in blocks (VICTORY_TEXTURE_POOL=0 turns them off): {textures} MB of textures, {staging} MB of their staging buffers; {free} MB of the textures' free ({empty} blocks empty, {sparse} under a quarter full; VICTORY_POOL_FULLEST); {capped} host copies made without their largest levels (VICTORY_TEXTURE_MAX)");
     }
     let targets = crate::resource::targets_census();
     tracing::info!(
