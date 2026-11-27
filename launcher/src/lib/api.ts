@@ -20,6 +20,22 @@ export type Settings = {
   pipelinesImport: string
   /** The window's language (« langue » in lanceur.json, "en" when absent). */
   langue: "en" | "fr"
+  /** The options of Settings (« framegen », « petite_vram » in lanceur.json), off by default. */
+  framegen: boolean
+  petiteVram: boolean
+}
+
+/** Frame generation on this PC (« framegen » in series-s/reglages.json). */
+export type Framegen = {
+  /** "fsr3" (RTX 20/30, GTX 16: FSR 3 behind DLSS-G's calls), "nvidia" (RTX 40/50: NVIDIA's own) or "" (not offered). */
+  kind: "fsr3" | "nvidia" | ""
+  /** The frame generation folder and what it still lacks (NVIDIA's files, the "framegen" task fetches them). */
+  dir: string
+  filesOk: boolean
+  missing: string[]
+  /** dlssg-to-fsr3's files are in the package's fg folder. */
+  fsr3Ready: boolean
+  env: [string, string][]
 }
 
 /** The shared pipeline list (series-s/pipelines): built before the first game. */
@@ -46,6 +62,9 @@ export type HardwareProfile = {
   env: [string, string][]
   dlss: boolean
   shadersNvidia: boolean
+  /** Frame generation on this card ("fsr3", "nvidia" or ""), and the low video memory mode advised for it. */
+  framegen: string
+  lowVramAdvised: boolean
   /** The graphics card is not checked yet. */
   pending: boolean
   /** What the player copies into a feedback report. */
@@ -94,6 +113,8 @@ export type Snapshot = {
   lowRamEnv: [string, string][]
   dlssNote: string
   dlssModes: DlssMode[]
+  framegen: Framegen | null
+  lowVramEnv: [string, string][]
   applied: [string, string][]
   running: string | null
   warmDone: boolean
@@ -122,7 +143,7 @@ export type Facts = {
   dxCache: number
 }
 
-export type JobKind = "rust" | "vs" | "build" | "import" | "shaders" | "warm" | "play"
+export type JobKind = "rust" | "vs" | "build" | "import" | "shaders" | "warm" | "framegen" | "play"
 
 /** The tasks' titles (i18n keys). */
 export const JOB_KEYS: Record<JobKind, Key> = {
@@ -132,6 +153,7 @@ export const JOB_KEYS: Record<JobKind, Key> = {
   import: "job.import",
   shaders: "job.shaders",
   warm: "job.warm",
+  framegen: "job.framegen",
   play: "job.play",
 }
 
@@ -144,6 +166,7 @@ export const api = {
   pickGame: (title: string, filter: string) => invoke<string | null>("pick_game", { title, filter }),
   pickDlss: (title: string) => invoke<string | null>("pick_dlss", { title }),
   setMode: (mode: string) => invoke<void>("set_mode", { mode }),
+  setOption: (name: "framegen" | "petite_vram", on: boolean) => invoke<void>("set_option", { name, on }),
   setLang: (lang: "en" | "fr") => invoke<void>("set_lang", { lang }),
   runJob: (kind: JobKind) => invoke<number>("run_job", { kind }),
   stopJob: () => invoke<void>("stop_job"),

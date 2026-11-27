@@ -68,6 +68,7 @@ export const fr: Dict = {
   "job.import": "Import de la liste de pipelines partagée",
   "job.shaders": "Traduction des shaders",
   "job.warm": "Construction des pipelines",
+  "job.framegen": "Récupération des fichiers de génération d'images",
   "job.play": "Partie en cours",
   "job.ended": "Terminé (code {code})",
 
@@ -84,6 +85,8 @@ export const fr: Dict = {
   "toast.playError": "La partie s'est terminée avec une erreur : ouvrez son journal.",
   "toast.captureSaved": "Capture enregistrée : {file}",
   "toast.dlssSaved": "Dossier du DLSS enregistré.",
+  "toast.framegenFiles": "Fichiers de génération d'images prêts (NVIDIA Streamline, SHA-256 vérifiés).",
+  "toast.framegenFilesFailed": "Impossible de récupérer les fichiers de génération d'images : voir leur journal (framegen_fichiers.txt).",
   "toast.savesCopied": "Sauvegardes copiées dans {path}",
   "toast.profileCopied": "Profil copié : collez-le dans votre retour.",
   "toast.copyFailed": "Copie impossible.",
@@ -261,6 +264,23 @@ export const fr: Dict = {
   "settings.dlss.mode": "Mode",
   "settings.dlss.off": "Désactivé · 540p et upscaler du jeu",
   "settings.dlss.notIncluded": "Les DLL Streamline ne sont pas fournies (licence NVIDIA).",
+  "settings.option.on": "Activé",
+  "settings.option.off": "Désactivé",
+  "settings.framegen": "Génération d'images (FSR 3)",
+  "settings.framegen.fsr3": "Génération d'images FSR 3 derrière le DLSS-G de NVIDIA (dlssg-to-fsr3), pour les cartes RTX 20/30 et GTX 16. Désactivée par défaut.",
+  "settings.framegen.nvidia": "Sur cette carte : NVIDIA DLSS Frame Generation (RTX 40/50). Désactivée par défaut.",
+  "settings.framegen.notReady": "Fichiers manquants",
+  "settings.framegen.warning":
+    "Affiche environ deux fois plus d'images ; la latence reste celle des vraies images ; idéal au-dessus de ~30 vraies images par seconde ; utilise ~1 Go de mémoire vidéo (les réglages de mémoire de la carte sont baissés pour elle).",
+  "settings.framegen.files": "Fichiers (NVIDIA Streamline, chez NVIDIA)",
+  "settings.framegen.filesOk": "Prêts, SHA-256 vérifiés.",
+  "settings.framegen.filesMissing": "Pas encore là ({files}) : récupérés depuis la publication de NVIDIA quand vous l'activez (~70 Mo).",
+  "settings.framegen.noFsr3": "dlssg-to-fsr3 n'est pas dans ce dossier (fg\\ de la version téléchargeable) : la génération d'images ne peut pas démarrer.",
+  "settings.framegen.get": "Récupérer les fichiers",
+  "settings.lowVram": "Mode mémoire vidéo réduite",
+  "settings.lowVram.desc": "Pour les cartes de 6 Go ou les écrans noirs : textures plus petites, moins de tampons sur la carte. Un peu moins net.",
+  "settings.lowVram.recommended": "Conseillé",
+  "settings.lowVram.advised": "Conseillé pour cette carte ({gb} Go) : activez-le si l'image devient noire ou si des objets restent noirs.",
   "settings.files": "Fichiers",
   "settings.files.desc": "Votre copie du jeu, les journaux et les captures.",
   "settings.game": "Jeu",
@@ -310,6 +330,23 @@ export const fr: Dict = {
   "help.trouble.p2":
     "Écran noir au début : shaders pas traduits. Plantage 0x8007000E : mémoire insuffisante, fermez les autres programmes et laissez Windows gérer la mémoire virtuelle.",
   "help.trouble.logs": "Journaux",
+  "help.vram": "Cartes de 6 Go et PC portables",
+  "help.vram.p1": "Le jeu prend presque toute la mémoire d'une carte de 6 Go. Pour lui en laisser le plus :",
+  "help.vram.laptop":
+    "PC portable : Paramètres Windows → Système → Affichage → Graphiques, ajoutez « VIctory S.exe » et engine\\victory.exe et mettez-les tous deux en « Performances élevées » (la carte NVIDIA, pas la puce intégrée) ; branchez le chargeur.",
+  "help.vram.close": "Fermez le navigateur, Discord, OBS et les overlays avant de jouer : chacun garde de la mémoire vidéo.",
+  "help.vram.mode": "Réglages, « Mode mémoire vidéo réduite » : conseillé sur les cartes de 6 Go, et si l'image devient noire.",
+  "help.framegen": "Génération d'images",
+  "help.framegen.p1":
+    "Réglages, « Génération d'images (FSR 3) », désactivée par défaut : environ deux fois plus d'images affichées. Le jeu réagit toujours au rythme des vraies images, c'est donc plus agréable au-dessus de ~30 vraies images par seconde ; elle utilise ~1 Go de mémoire vidéo.",
+  "help.framegen.p2":
+    "RTX 20/30 et GTX 16 : FSR 3 derrière le DLSS-G de NVIDIA (dlssg-to-fsr3, fourni). RTX 40/50 : NVIDIA DLSS Frame Generation. Pas encore proposée sur les cartes AMD et Intel.",
+  "help.framegen.p3":
+    "Les fichiers de NVIDIA (Streamline) sont récupérés depuis la publication de NVIDIA quand vous l'activez (la licence de NVIDIA ne nous permet pas de les fournir). Le titre de la fenêtre du jeu affiche alors « fps · shown ».",
+  "help.log": "Comment envoyer votre journal",
+  "help.log.s1": "Dossier des journaux (bouton ci-dessous, ou la barre latérale) : %LOCALAPPDATA%\\Sagouindupm\\journaux.",
+  "help.log.s2": "Prenez le partie_….log le plus récent (triez par date) : c'est le journal de votre dernière partie.",
+  "help.log.s3": "Joignez-le à votre rapport sur GitHub (« Signaler un problème » ou « Donner mon avis »), avec ce que vous avez vu et quand.",
   "help.feedback.p":
     "Vos images par seconde, les saccades, ce qui s'affiche mal : chaque retour sur une autre machine nous aide à régler les profils. Le bouton ouvre un formulaire GitHub déjà rempli avec votre configuration et le profil détecté ; vous le relisez, ajoutez vos impressions et l'envoyez vous-même (compte GitHub gratuit).",
 
@@ -342,4 +379,5 @@ export const fr: Dict = {
   "err.gameMinimized": "La fenêtre du jeu est réduite.",
   "err.urlRefused": "Adresse refusée : {url}",
   "err.openFailed": "Impossible d'ouvrir {url}",
+  "err.noFsr3": "Génération d'images : dlssg-to-fsr3 n'est pas dans {dir} (dossier fg de la version téléchargeable). Désactivez la génération d'images ou téléchargez de nouveau le paquet complet.",
 }

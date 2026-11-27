@@ -44,6 +44,10 @@ export type Ctx = {
   prepareAll: () => Promise<void>
   stop: () => void
   setMode: (mode: string) => Promise<void>
+  /** An option of Settings; turning frame generation on fetches its files when they are missing. */
+  setOption: (name: "framegen" | "petite_vram", on: boolean) => Promise<void>
+  /** NVIDIA's Streamline files for frame generation (series-s/framegen.ps1). */
+  getFramegenFiles: () => Promise<boolean>
   pickDlss: () => Promise<void>
   open: (target: string) => void
   backup: () => Promise<void>
@@ -171,6 +175,14 @@ export default function App() {
       toast.error(err(e))
       return false
     }
+  }
+
+  const getFramegenFiles = async (): Promise<boolean> => {
+    const ok = await runJob("framegen")
+    await refresh()
+    if (ok) toast.success(t("toast.framegenFiles"))
+    else toast.error(t("toast.framegenFilesFailed"))
+    return ok
   }
 
   const pickGame = () => api.pickGame(t("dialog.pickGame.title"), t("dialog.pickGame.filter"))
@@ -432,6 +444,17 @@ export default function App() {
       }
       await refresh()
     },
+    setOption: async (name, on) => {
+      try {
+        await api.setOption(name, on)
+      } catch (e) {
+        toast.error(err(e))
+      }
+      const s = await refresh()
+      // Frame generation turned on without its files: fetch them now (NVIDIA's release, ~70 MB).
+      if (name === "framegen" && on && s.framegen && s.framegen.kind !== "" && !s.framegen.filesOk) await getFramegenFiles()
+    },
+    getFramegenFiles,
     pickDlss: async () => {
       try {
         if (await api.pickDlss(t("dialog.pickDlss.title"))) toast.success(t("toast.dlssSaved"))
