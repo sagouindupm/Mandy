@@ -435,7 +435,7 @@ export default function App() {
 
           <header className="relative flex shrink-0 items-end justify-between gap-8 px-10 pt-6 pb-2">
             <div className="flex min-w-0 flex-col gap-1">
-              <span className="truncate text-[12px] text-muted-foreground">Sagouindupm | VIctory</span>
+              <span className="truncate text-[12px] text-muted-foreground">VIctory S</span>
               <h1 className="text-[34px] leading-tight font-bold">{TITLES[tab]}</h1>
             </div>
             <div className="flex items-center gap-8 pb-1.5">
@@ -499,7 +499,7 @@ export default function App() {
           )}
 
           <footer className="relative flex shrink-0 items-center gap-6 border-t border-white/8 px-10 py-3.5 text-[11px] font-semibold tracking-[0.08em] text-[#8a8a8a]">
-            <span>© Sagouindupm | VIctory</span>
+            <span>© VIctory S</span>
             <button type="button" className={link} onClick={() => ctx?.open("docs")}>
               Documentation
             </button>

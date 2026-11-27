@@ -51,9 +51,7 @@ export function PlayPage({ ctx }: { ctx: Ctx }) {
     <div className="flex flex-1 items-end justify-between gap-10">
       <div className="flex min-w-0 flex-col">
         <h2 className="font-wordmark text-[54px] leading-[0.98] font-bold tracking-[0.1em] uppercase">
-          Sagouindupm
-          <br />
-          VIctory
+          VIctory S
         </h2>
         <p className="mt-4 text-[14px] text-muted-foreground">{ctx.profileLine}</p>
 
