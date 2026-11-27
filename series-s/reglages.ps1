@@ -23,8 +23,10 @@ function Get-Settings {
 #   pipelines_liste     : "name:size" mark of the shared list built by that "warm" ('': none).
 #   nv_cache_ok         : the player said they set the NVIDIA shader cache to "Unlimited".
 #   ancien_plan         : power plan active before the graphical launcher changed it (to go back).
+#   framegen            : frame generation on ("framegen" in reglages.json), off by default.
+#   petite_vram         : low video memory mode ("petite_vram" in reglages.json), off by default.
 function Complete-Settings($s) {
-    $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; pipelines_liste = ''; nv_cache_ok = $false; ancien_plan = '' }
+    $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; pipelines_liste = ''; nv_cache_ok = $false; ancien_plan = ''; framegen = $false; petite_vram = $false }
     foreach ($k in $defaults.Keys) {
         if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $defaults[$k] }
     }
@@ -139,6 +141,28 @@ function Get-GpuVendor([string]$Name) {
     'inconnu'
 }
 
+# Frame generation on this card ("framegen" in reglages.json): 'fsr3' (RTX 20/30, GTX 16: FSR 3 behind DLSS-G's calls,
+# dlssg-to-fsr3), 'nvidia' (RTX 40/50: NVIDIA's own DLSS-G) or '' (not offered). "RTX 3050 Laptop" -> "RTX 30". The
+# same as framegen_kind in launcher/src-tauri/src/profile.rs.
+function Get-FramegenKind([string]$Name) {
+    $series = ''
+    if ($Name.ToUpper() -match '\b(RTX|GTX)\s*(\d{2})\d{2}(?!\d)') { $series = "$($Matches[1]) $($Matches[2])" }
+    if (-not $series) { return '' }
+    if (@($Reglages.framegen.cartes_fsr3) -contains $series) { return 'fsr3' }
+    if (@($Reglages.framegen.cartes_nvidia) -contains $series) { return 'nvidia' }
+    ''
+}
+
+# The frame generation folder holds what frame generation needs (fichiers_requis).
+function Test-FramegenFiles([string]$Dir) {
+    if (-not $Dir) { return $false }
+    foreach ($f in $Reglages.framegen.fichiers_requis) { if (-not (Test-Path -LiteralPath (Join-Path $Dir $f))) { return $false } }
+    $true
+}
+
+# The frame generation folder: %LOCALAPPDATA%\Sagouindupm\framegen (series-s\framegen.ps1 fills it).
+$FramegenDir = Join-Path $Home_ $Reglages.framegen.dossier
+
 function Format-Env($o) { ($o.PSObject.Properties | ForEach-Object { "$($_.Name -replace '^VICTORY_', '')=$($_.Value)" }) -join ', ' }
 
 # This PC's profile: Env (what changes compared with the groups), Reasons, Warnings, Tips, Dlss, ShadersNvidia.
@@ -199,29 +223,77 @@ function Get-HardwareProfile($hw) {
     if ($hw.VramBytes -gt 0) { $label += "$([Math]::Round($vramGb)) GB" }
     if ($hw.Threads -gt 0) { $label += "$($hw.Threads) threads" }
     if ($hw.RamBytes -gt 0) { $label += "$([Math]::Round($ramGb)) GB of RAM" }
+    # The low video memory mode is advised (not forced) under conseille_sous_go GB of card memory.
+    $lowVram = $hw.VramBytes -gt 0 -and $vramGb -lt [double]$Reglages.petite_vram.conseille_sous_go
     [pscustomobject]@{
         Label = $label -join ' · '; Vendor = $vendor; Env = $changed; Reasons = $reasons; Warnings = $warnings; Tips = $tips
         Dlss = [bool]$v.dlss; ShadersNvidia = [bool]$v.shaders_nvidia
+        Framegen = Get-FramegenKind $hw.GpuName; LowVramAdvised = $lowVram
     }
 }
 
 # The variables victory.exe receives: Set (in order) and Remove. No PATH or file: checkable on its own.
-function Get-GameEnvMap($s, $hw) {
+# $FgDir: the frame generation folder (the launcher's own by default). With both options off, the same as before them.
+function Get-GameEnvMap($s, $hw, [string]$FgDir = $FramegenDir) {
     $set = [ordered]@{ VICTORY_CONFIG = $Toml }
     $seriesS = Get-SeriesSSettings
     foreach ($k in $seriesS.Keys) { $set[$k] = $seriesS[$k] }
     $prof = Get-HardwareProfile $hw
     foreach ($k in $prof.Env.Keys) { $set[$k] = $prof.Env[$k] }
+    # Low video memory mode (the player's choice): see "petite_vram" in reglages.json.
+    if ($s.petite_vram -eq $true) { foreach ($p in $Reglages.petite_vram.env.PSObject.Properties) { $set[$p.Name] = [string]$p.Value } }
+    # Frame generation (the player's choice, a card that has it, its files there): see "framegen" in reglages.json.
+    $fg = $Reglages.framegen
+    $fgOn = $s.framegen -eq $true -and $prof.Framegen -and (Test-FramegenFiles $FgDir)
+    if ($fgOn) {
+        foreach ($p in $fg.env.PSObject.Properties) { $set[$p.Name] = [string]$p.Value }
+        foreach ($p in $fg.plafonds.PSObject.Properties) {
+            $cap = [double]$p.Value
+            if (-not $set.Contains($p.Name) -or [double]$set[$p.Name] -gt $cap) { $set[$p.Name] = [string]$cap }
+        }
+        $set[$fg.variable_dossier] = $FgDir
+    }
     $set[$Reglages.pipelines_sautees.variable] = Get-SkipPipelines
-    # DLSS (RTX cards only): see "dlss" in reglages.json.
+    # DLSS (RTX cards only): see "dlss" in reglages.json. With frame generation on, Streamline is loaded once from
+    # VICTORY_DLSS_DIR, which must then hold both: the frame generation folder, if it has DLSS's files.
     $d = $Reglages.dlss
     $remove = @($d.variable_dossier, $d.variable_mode)
-    if ($prof.Dlss -and $s.dlss_mode -and $s.dlss_mode -ne 'off' -and $s.dlss_dir -and (Test-Path (Join-Path $s.dlss_dir $d.fichier_requis))) {
-        $set[$d.variable_dossier] = $s.dlss_dir; $set[$d.variable_mode] = $s.dlss_mode
+    $dlssDir = if ($fgOn) {
+        if (@($fg.fichiers_dlss | Where-Object { -not (Test-Path -LiteralPath (Join-Path $FgDir $_)) }).Count -eq 0) { $FgDir } else { '' }
+    } elseif ($s.dlss_dir -and (Test-Path (Join-Path $s.dlss_dir $d.fichier_requis))) { $s.dlss_dir } else { '' }
+    if ($prof.Dlss -and $s.dlss_mode -and $s.dlss_mode -ne 'off' -and $dlssDir) {
+        $set[$d.variable_dossier] = $dlssDir; $set[$d.variable_mode] = $s.dlss_mode
         foreach ($v in $d.retire) { $set.Remove($v) }
         $remove = @($d.retire)
+    } elseif ($fgOn) {
+        # The title's own upscaler: DLSS super resolution off, the folder serves frame generation only.
+        foreach ($p in $fg.sans_dlss.PSObject.Properties) { $set[$p.Name] = [string]$p.Value }
+        $remove = @($d.variable_dossier)
     }
     [pscustomobject]@{ Set = $set; Remove = $remove }
+}
+
+# dlssg-to-fsr3 (fg\ of the downloadable package) next to victory.exe and in the frame generation folder when frame
+# generation runs on an RTX 20/30 or GTX 16 card ($On), taken away otherwise: Streamline's sl.interposer.dll imports
+# dbghelp.dll, the mod's loader, which must not stay there without frame generation or on RTX 40/50 (NVIDIA's own
+# DLSS-G). Only copies of the package's files are taken away. The same as place_fsr3 in launcher/src-tauri/src/lib.rs.
+function Sync-Fsr3([bool]$On, [string]$FgDir = $FramegenDir) {
+    $f = $Reglages.framegen.fsr3
+    $src = Join-Path $Root $f.dossier_paquet
+    $dirs = @((Split-Path -Parent $Exe), $FgDir) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    $have = @($f.fichiers | Where-Object { Test-Path -LiteralPath (Join-Path $src $_) }).Count -eq @($f.fichiers).Count
+    if ($On -and -not $have) { Write-Host "Frame generation: the dlssg-to-fsr3 files are not in $src (fg folder of the downloadable package)." -ForegroundColor Yellow; return }
+    foreach ($dir in $dirs) {
+        foreach ($name in $f.fichiers) {
+            $from = Join-Path $src $name; $to = Join-Path $dir $name
+            if ($On) {
+                if (-not (Test-Path -LiteralPath $to) -or (Get-FileHash -LiteralPath $to).Hash -ne (Get-FileHash -LiteralPath $from).Hash) { Copy-Item -LiteralPath $from $to -Force }
+            } elseif (Test-Path -LiteralPath $to) {
+                $ours = if (Test-Path -LiteralPath $from) { (Get-FileHash -LiteralPath $to).Hash -eq (Get-FileHash -LiteralPath $from).Hash } else { $name -ne 'dbghelp.dll' -or (Test-Path -LiteralPath (Join-Path $dir 'dlssg_to_fsr3_amd_is_better.dll')) }
+                if ($ours) { Remove-Item -LiteralPath $to -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    }
 }
 
 # Prepares victory.exe's environment (in this process: the programs started afterwards inherit it).
@@ -229,6 +301,10 @@ function Set-GameEnv($s) {
     $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\dxil.dll' -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
     if ($sdk -and -not ($env:PATH -like "$($sdk.DirectoryName);*")) { $env:PATH = "$($sdk.DirectoryName);$env:PATH" }
     $map = Get-GameEnvMap $s (Get-Hardware)
+    # This console stays open between sessions: what an option set for an earlier session goes when it is off now.
+    $fg = $Reglages.framegen
+    $optional = @($fg.env.PSObject.Properties.Name) + @($fg.sans_dlss.PSObject.Properties.Name) + @($fg.variable_dossier) + @($Reglages.petite_vram.env.PSObject.Properties.Name)
+    foreach ($k in $optional) { if (-not $map.Set.Contains($k)) { Remove-Item "env:$k" -ErrorAction SilentlyContinue } }
     foreach ($k in $map.Set.Keys) { Set-Item "env:$k" $map.Set[$k] }
     foreach ($k in $map.Remove) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
 }

@@ -58,6 +58,47 @@ export function HelpPage({ ctx }: { ctx: Ctx }) {
         </div>
       </Section>
 
+      <Section title={t("help.vram")}>
+        <p>{t("help.vram.p1")}</p>
+        <ul className="flex list-disc flex-col gap-1.5 pl-5">
+          <li>{t("help.vram.laptop")}</li>
+          <li>{t("help.vram.close")}</li>
+          <li>{t("help.vram.mode")}</li>
+        </ul>
+        <div className="mt-1 flex items-center gap-4">
+          <Button variant="secondary" size="sm" onClick={() => ctx.go("settings")}>
+            {t("nav.settings")}
+          </Button>
+        </div>
+      </Section>
+
+      <Section title={t("help.framegen")}>
+        <p>{t("help.framegen.p1")}</p>
+        <p>{t("help.framegen.p2")}</p>
+        <p>{t("help.framegen.p3")}</p>
+      </Section>
+
+      <div className="col-span-2">
+        <Section title={t("help.log")}>
+          <ol className="flex flex-col gap-2">
+            {[t("help.log.s1"), t("help.log.s2"), t("help.log.s3")].map((text, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="w-3 shrink-0 font-bold text-white">{i + 1}</span>
+                <span>{text}</span>
+              </li>
+            ))}
+          </ol>
+          <div className="mt-1 flex items-center gap-4">
+            <Button variant="secondary" size="sm" onClick={() => ctx.open("logs")}>
+              {t("help.trouble.logs")}
+            </Button>
+            <Button variant="link" className="text-[12.5px]" onClick={() => ctx.open("last_log")} disabled={!ctx.snap.lastLog}>
+              {t("shortcut.lastLog")}
+            </Button>
+          </div>
+        </Section>
+      </div>
+
       <div className="col-span-2">
         <Section title={t("footer.feedback")}>
           <p>{t("help.feedback.p")}</p>

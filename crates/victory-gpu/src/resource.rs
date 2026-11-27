@@ -1982,14 +1982,20 @@ pub(crate) fn room_lately() -> bool {
 /// textures wait (runs 170-174); the card copies of title buffers from
 /// 1 MiB up take 449 MB more of the card than before (941 against 492),
 /// and 94 gives the textures about that much back.
+///
+/// With frame generation asked for (`VICTORY_FRAMEGEN=1`) the default is 80:
+/// DLSS-G keeps its own copies of the frame on the card (NVIDIA: about
+/// 0.3-0.5 GB at 1080p-1440p), as trustno1-coder/VIctory-NVIDIA 22c6be2's
+/// launcher holds back with this switch.
 #[cfg(windows)]
 fn room_percent() -> u64 {
     static PERCENT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *PERCENT.get_or_init(|| {
+        let default = if crate::ffx::framegen::wanted() { 80 } else { 90 };
         std::env::var("VICTORY_TEXTURE_ROOM_PERCENT")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
-            .map_or(90, |percent| percent.clamp(50, 97))
+            .map_or(default, |percent| percent.clamp(50, 97))
     })
 }
 

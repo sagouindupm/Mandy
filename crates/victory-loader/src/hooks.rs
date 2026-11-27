@@ -268,6 +268,67 @@ fn levers(host: Option<Option<f32>>, scale: Option<String>, own: bool) -> (bool,
     }
 }
 
+/// The own temporal upscaler's virtual table (renderer 6, 1.0.2.1): its
+/// slot 12, the dispatch method (`Upscaler::Dispatch(const Inputs&)`,
+/// returning its result through a pointer), and that method. The FidelityFX
+/// upscaler's table has its dispatch in the same slot (at 0x6300bb0, the
+/// method at 0x28ef700 that fills `ffxDispatchDescUpscale` from the same
+/// inputs), next to the scale methods `render_scale_patches` changes.
+const OWN_UPSCALE_SLOT: usize = 0x6300c50;
+const OWN_UPSCALE_DISPATCH: usize = 0x28f1ea0;
+
+/// Frame generation's stand-in for the own upscaler's dispatch method, and
+/// where to tell it the method's address ([`tap_upscale`]).
+static UPSCALE_TAP: std::sync::OnceLock<(usize, fn(usize))> = std::sync::OnceLock::new();
+
+/// Frame generation (`victory_gpu::ffx::framegen`): the title's own temporal
+/// upscaler's dispatch method is called through `hook`, which reads the
+/// frame's depth, motion vectors and camera from its inputs; `original` is
+/// told the method's address first. Call it before the title is mapped;
+/// later calls change nothing.
+pub fn tap_upscale(hook: usize, original: fn(usize)) {
+    let _ = UPSCALE_TAP.set((hook, original));
+}
+
+/// The slot patch [`tap_upscale`] asks for, with the image at `base`.
+fn upscale_tap_patch(base: usize, hook: usize) -> OwnedPatch {
+    OwnedPatch {
+        what: "frame generation: the own upscaler's dispatch goes through ours",
+        rva: OWN_UPSCALE_SLOT,
+        expect: ((base + OWN_UPSCALE_DISPATCH) as u64).to_le_bytes().to_vec(),
+        new: (hook as u64).to_le_bytes().to_vec(),
+        after_previous: false,
+    }
+}
+
+/// Applies [`tap_upscale`]'s patch, if asked for. True if applied.
+///
+/// # Safety
+/// As `disarm_watchdog`.
+pub(crate) unsafe fn upscale_tap(base: usize, hash: &blake3::Hash) -> bool {
+    let Some(&(hook, original)) = UPSCALE_TAP.get() else {
+        return false;
+    };
+    if !hash.to_hex().starts_with(BUILD_1_0_2_1) {
+        tracing::debug!("upscale tap: not the 1.0.2.1 executable; nothing patched");
+        return false;
+    }
+    original(base + OWN_UPSCALE_DISPATCH);
+    let p = upscale_tap_patch(base, hook);
+    // SAFETY: forwarded from this function's contract.
+    unsafe {
+        apply(
+            base,
+            &Patch {
+                what: p.what,
+                rva: p.rva,
+                expect: &p.expect,
+                new: &p.new,
+            },
+        )
+    }
+}
+
 /// # Safety
 /// See `disarm_watchdog`.
 unsafe fn apply(base: usize, p: &Patch<'_>) -> bool {
@@ -296,6 +357,18 @@ unsafe fn apply(base: usize, p: &Patch<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_upscale_tap_swaps_the_own_upscalers_dispatch_slot() {
+        let base = 0x7ff0_0000_0000;
+        let p = upscale_tap_patch(base, 0x1234_5678);
+        assert_eq!(p.rva, 0x6300c50);
+        assert_eq!(p.expect, ((base + 0x28f1ea0) as u64).to_le_bytes());
+        assert_eq!(p.new, 0x1234_5678u64.to_le_bytes());
+        // The FidelityFX table's maximum slot, patched by the render scale,
+        // is another one of that table.
+        assert!(render_scale_patches(base, 0.5, true, true).iter().all(|q| q.rva != p.rva));
+    }
 
     #[test]
     fn scales_outside_the_floor_are_refused() {

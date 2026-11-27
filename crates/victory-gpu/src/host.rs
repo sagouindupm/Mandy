@@ -9671,18 +9671,20 @@ impl Host {
     /// shown; else, in diagnostics builds, whether the frame was black.
     #[allow(dead_code)]
     pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
-        self.present_over(texture, state, None, frame)
+        self.present_over(texture, state, None, frame, None)
     }
 
     /// LOCAL (port of fxceless #1189): [`Self::present`], with a second
     /// plane laid over `texture` if there is one (`crate::compose`): its
-    /// texture and its state, which it is left in.
+    /// texture and its state, which it is left in. `fg`: frame generation's
+    /// inputs for this frame (`crate::ffx::framegen`).
     pub(crate) fn present_over(
         &self,
         texture: &ID3D12Resource,
         state: u32,
         over: Option<(&ID3D12Resource, u32)>,
         frame: u64,
+        fg: Option<&crate::ffx::framegen::ForPresent>,
     ) -> Option<bool> {
         // SAFETY: a live resource.
         let desc = unsafe { texture.GetDesc() };
@@ -9705,6 +9707,9 @@ impl Host {
         if (p.width, p.height, p.format) != (width, height, format) {
             // Presents sent ahead hold back buffers until they have run.
             settle_now(WHY_SYNC);
+            // Frame generation off across the resize (on again at the next
+            // present).
+            crate::ffx::framegen::before_resize();
             // SAFETY: no back buffer is held; every submission was waited for.
             let resized = unsafe {
                 p.swap_chain
@@ -9819,7 +9824,13 @@ impl Host {
             #[cfg(feature = "diagnostics")]
             crate::replay::record::present(texture, state);
             let mut showing = crate::timeline::span("the host's Present");
+            // Frame generation (Streamline's proxy swap chain): the frame's
+            // constants and tags, the latency markers. The scene plane is
+            // the colour without the interface; the back buffer is a copy
+            // of it, or of it with the interface laid over it.
+            crate::ffx::framegen::present_start(frame, fg, [width, height], Some((texture, state.0 as u32)), over);
             let shown = p.swap_chain.Present(0, DXGI_PRESENT(0));
+            crate::ffx::framegen::present_end(frame);
             showing.next("the frame meter");
             #[cfg(feature = "diagnostics")]
             p.panel.frame(p.meter.line_due());
@@ -9852,6 +9863,9 @@ impl Host {
         // SAFETY: plain object creation for our window.
         unsafe {
             let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
+            // With frame generation (`VICTORY_FRAMEGEN=1`): Streamline's
+            // proxy of the factory, whose swap chain shows generated frames.
+            let factory = crate::ffx::framegen::start(&self.device, factory);
             let desc = DXGI_SWAP_CHAIN_DESC1 {
                 Width: width,
                 Height: height,
@@ -11334,8 +11348,11 @@ mod refresh_once_tests {
 }
 
 /// The window's title: Sagouindupm | VIctory, the console profile, the frame
-/// rate, then the card (its name, its memory in use of its budget) and the
-/// shaders translated so far.
+/// rate (with frame generation on, " · 22 shown": the frames presented,
+/// "~22" when that is the multiplier asked for rather than DLSS-G's own
+/// count, see `crate::ffx::framegen::shown_per_rendered`), then the card
+/// (its name, its memory in use of its budget) and the shaders translated
+/// so far.
 fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
     static CARD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let card = CARD.get_or_init(|| {
@@ -11358,9 +11375,31 @@ fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
         .map(|[budget, used, _, _]| format!(" {:.1}/{:.1} Go", used as f64 / 1e9, budget as f64 / 1e9))
         .unwrap_or_default();
     let shaders = crate::pipeline::kept()[2];
+    let shown = shown_text(fps, crate::ffx::framegen::shown_per_rendered());
     format!(
-        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders"
+        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps{shown}  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders"
     )
+}
+
+/// " · 22 shown" after the frame rate: `fps` times the frames shown per
+/// rendered one, "~" before it when that is an estimate; nothing without
+/// frame generation.
+fn shown_text(fps: f64, shown: Option<(u32, bool)>) -> String {
+    match shown {
+        Some((per, exact)) => format!(" · {}{:.0} shown", if exact { "" } else { "~" }, fps * f64::from(per)),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod caption_tests {
+    #[test]
+    fn frames_shown_after_the_frame_rate() {
+        assert_eq!(super::shown_text(11.2, None), "");
+        assert_eq!(super::shown_text(11.2, Some((2, true))), " · 22 shown");
+        assert_eq!(super::shown_text(11.2, Some((2, false))), " · ~22 shown");
+        assert_eq!(super::shown_text(10.0, Some((3, true))), " · 30 shown");
+    }
 }
 
 /// The title bar in the sunset pink of the title's own art (#FF3C78) with a

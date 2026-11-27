@@ -75,6 +75,14 @@ pub fn run(
         );
         victory_loader::use_host_upscaler(scale);
     }
+    // Frame generation (`VICTORY_FRAMEGEN=1`) reads each frame's depth and
+    // motion vectors from the title's upscale: the own upscaler's dispatch
+    // goes through it (the FidelityFX path's through DLSS's or AMD's).
+    if victory_hle::modules::ffx::framegen() {
+        let (hook, original) = victory_hle::modules::ffx::framegen_upscale_tap();
+        victory_loader::tap_upscale(hook, original);
+        println!("frame gen      DLSS Frame Generation through Streamline (VICTORY_FRAMEGEN)");
+    }
     let image = victory_loader::load(&prepared, &images)?;
     // The program is mapped from the copy `load` wrote: the file's bytes
     // and their patched copy are not read again, and were held for the

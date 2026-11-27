@@ -50,8 +50,34 @@ function Set-Dlss($s) {
     Write-Host "DLSS: $($s.dlss_mode)" -ForegroundColor Green
 }
 
+function Set-Framegen($s) {
+    $kind = (Get-HardwareProfile (Get-Hardware)).Framegen
+    if (-not $kind) { Write-Host 'Frame generation: needs an NVIDIA RTX 20/30/40/50 or GTX 16 card (not offered on AMD and Intel yet).' -ForegroundColor Yellow; return }
+    Write-Host 'Frame generation (FSR 3): shows about twice the frames; the input lag stays that of the real frames;' -ForegroundColor Yellow
+    Write-Host 'best above ~30 real fps; uses ~1 GB of video memory (the card memory settings are lowered for it).'
+    if ($kind -eq 'nvidia') { Write-Host 'On this card: NVIDIA DLSS Frame Generation.' } else { Write-Host 'On this card: FSR 3 frame generation (dlssg-to-fsr3) behind NVIDIA''s DLSS-G.' }
+    $s.framegen = -not ($s.framegen -eq $true)
+    Save-Settings $s
+    if ($s.framegen -and -not (Test-FramegenFiles $FramegenDir)) {
+        Write-Host "`nGetting the frame generation files from NVIDIA (NVIDIA Streamline, ~70 MB)..." -ForegroundColor Magenta
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'framegen.ps1') -Dest $FramegenDir
+        if ($LASTEXITCODE -ne 0) { Write-Host 'The files could not be fetched: frame generation stays off until they are there ([7] again).' -ForegroundColor Red }
+    }
+    Write-Host "Frame generation: $(if ($s.framegen) { 'on' } else { 'off' })" -ForegroundColor Green
+}
+
+function Set-LowVram($s) {
+    Write-Host 'Low video memory mode: for 6 GB cards or black screens (smaller textures, fewer card buffers).' -ForegroundColor Yellow
+    if ((Get-HardwareProfile (Get-Hardware)).LowVramAdvised) { Write-Host 'Recommended for this card.' }
+    $s.petite_vram = -not ($s.petite_vram -eq $true)
+    Save-Settings $s
+    Write-Host "Low video memory mode: $(if ($s.petite_vram) { 'on' } else { 'off' })" -ForegroundColor Green
+}
+
 function Start-Game($s) {
     Set-GameEnv $s
+    # dlssg-to-fsr3 beside victory.exe only for a session with frame generation on an RTX 20/30 or GTX 16 card.
+    Sync-Fsr3 ($env:VICTORY_FRAMEGEN -eq '1' -and (Get-HardwareProfile (Get-Hardware)).Framegen -eq 'fsr3')
     if (-not $s.shaders_ready) {
         Write-Host 'Shaders not prepared yet: the first minutes will be slow. Advice: [2] then [3] first.' -ForegroundColor Yellow
     }
@@ -139,16 +165,21 @@ while ($true) {
     Show-Title
     $state = if ($s.shaders_ready) { 'ready' } else { 'not prepared yet' }
     $dlss = if ($s.dlss_mode -and $s.dlss_mode -ne 'off') { $s.dlss_mode } else { 'off' }
+    $fgState = if (-not $Profil.Framegen) { 'not on this card' } elseif ($s.framegen -eq $true) { if (Test-FramegenFiles $FramegenDir) { 'on' } else { 'on, files missing' } } else { 'off' }
+    $lowState = if ($s.petite_vram -eq $true) { 'on' } elseif ($Profil.LowVramAdvised) { 'off (recommended for this card)' } else { 'off' }
     Write-Host "  Detected profile: Series S · $($Profil.Label)" -ForegroundColor DarkMagenta
     foreach ($w in $Profil.Warnings) { Write-Host "  ! $w" -ForegroundColor Yellow }
     foreach ($t in $Profil.Tips) { Write-Host "  $t" -ForegroundColor DarkYellow }
-    Write-Host "  Shaders: $state   |   DLSS: $dlss   |   Sessions launched: $($s.parties)`n"
+    Write-Host "  Shaders: $state   |   DLSS: $dlss   |   Sessions launched: $($s.parties)"
+    Write-Host "  Frame generation: $fgState   |   Low video memory mode: $lowState`n"
     Write-Host '  [1] Play'
     Write-Host '  [2] Prepare the shaders ahead of time (once, recommended)'
     Write-Host '  [3] Build the pipelines (after [2], before the first session; redo after a session)'
     Write-Host '  [4] Copy my saves to a safe place'
     Write-Host '  [5] Change the game location'
     Write-Host '  [6] DLSS (NVIDIA RTX cards)'
+    Write-Host '  [7] Frame generation (FSR 3) on/off'
+    Write-Host '  [8] Low video memory mode on/off (6 GB cards, black screens)'
     Write-Host '  [Q] Quit'
     switch ((Read-Host "`nChoice").Trim().ToUpper()) {
         '1' { Start-Game $s; Read-Host 'Enter to go back to the menu' | Out-Null }
@@ -157,6 +188,8 @@ while ($true) {
         '4' { Backup-Saves; Read-Host 'Enter to go back to the menu' | Out-Null }
         '5' { $s.game_exe = ''; Initialize-Game $s }
         '6' { Set-Dlss $s; Read-Host 'Enter to go back to the menu' | Out-Null }
+        '7' { Set-Framegen $s; Read-Host 'Enter to go back to the menu' | Out-Null }
+        '8' { Set-LowVram $s; Read-Host 'Enter to go back to the menu' | Out-Null }
         'Q' { exit 0 }
     }
 }

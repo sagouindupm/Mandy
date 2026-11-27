@@ -35,6 +35,7 @@ use crate::object::This;
 
 pub mod bridge;
 pub(crate) mod dlss;
+pub mod framegen;
 
 type ReturnCode = u32;
 const OK: ReturnCode = 0;
@@ -431,6 +432,9 @@ pub extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) ->
     if context.is_null() || desc.is_null() {
         return ERROR_PARAMETER;
     }
+    // Frame generation's depth, motion vectors and numbers (`framegen`).
+    // SAFETY: the title's non-null description.
+    unsafe { framegen::from_ffx(desc) };
     // SAFETY: the title's description; the SDK's call on an open host list
     // with live textures.
     let recorded = unsafe {

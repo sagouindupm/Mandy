@@ -72,6 +72,7 @@ export const en = {
   "job.import": "Importing the shared pipeline list",
   "job.shaders": "Translating shaders",
   "job.warm": "Building pipelines",
+  "job.framegen": "Getting the frame generation files",
   "job.play": "Game running",
   "job.ended": "Finished (code {code})",
 
@@ -88,6 +89,8 @@ export const en = {
   "toast.playError": "The game ended with an error: open its log.",
   "toast.captureSaved": "Screenshot saved: {file}",
   "toast.dlssSaved": "DLSS folder saved.",
+  "toast.framegenFiles": "Frame generation files ready (NVIDIA Streamline, SHA-256 checked).",
+  "toast.framegenFilesFailed": "Couldn't get the frame generation files: see their log (framegen_fichiers.txt).",
   "toast.savesCopied": "Saves copied to {path}",
   "toast.profileCopied": "Profile copied: paste it into your feedback.",
   "toast.copyFailed": "Couldn't copy.",
@@ -262,6 +265,23 @@ export const en = {
   "settings.dlss.mode": "Mode",
   "settings.dlss.off": "Off · 540p and the game's upscaler",
   "settings.dlss.notIncluded": "The Streamline DLLs aren't included (NVIDIA license).",
+  "settings.option.on": "On",
+  "settings.option.off": "Off",
+  "settings.framegen": "Frame generation (FSR 3)",
+  "settings.framegen.fsr3": "FSR 3 frame generation behind NVIDIA DLSS-G (dlssg-to-fsr3), for RTX 20/30 and GTX 16 cards. Off by default.",
+  "settings.framegen.nvidia": "On this card: NVIDIA DLSS Frame Generation (RTX 40/50). Off by default.",
+  "settings.framegen.notReady": "Files missing",
+  "settings.framegen.warning":
+    "Shows about twice the frames; input lag stays that of the real frames; best above ~30 real fps; uses ~1 GB of video memory (the card memory settings are lowered for it).",
+  "settings.framegen.files": "Files (NVIDIA Streamline, from NVIDIA)",
+  "settings.framegen.filesOk": "Ready, SHA-256 checked.",
+  "settings.framegen.filesMissing": "Not there yet ({files}): fetched from NVIDIA's release when you turn it on (~70 MB).",
+  "settings.framegen.noFsr3": "dlssg-to-fsr3 isn't in this folder (fg\\ of the downloadable version): frame generation can't start.",
+  "settings.framegen.get": "Get frame generation files",
+  "settings.lowVram": "Low video memory mode",
+  "settings.lowVram.desc": "For 6 GB cards or black screens: smaller textures, fewer card buffers. A little less sharp.",
+  "settings.lowVram.recommended": "Recommended",
+  "settings.lowVram.advised": "Recommended for this card ({gb} GB): turn it on if the picture goes black or objects stay black.",
   "settings.files": "Files",
   "settings.files.desc": "Your copy of the game, the logs and the screenshots.",
   "settings.game": "Game",
@@ -300,7 +320,7 @@ export const en = {
   "help.what.p1":
     "It runs your copy of an Xbox Series game on PC, with the Series S profile and settings measured on an 8 GB card, a 6-core processor and 32 GB of RAM, adjusted to your PC automatically (Settings, “Detected profile”).",
   "help.what.p2":
-    "Nothing from the game is provided or modified. The settings come from series-s\\reglages.json, as for the console launcher (series-s\dev\Sagouindupm.bat).",
+    "Nothing from the game is provided or modified. The settings come from series-s\\reglages.json, as for the console launcher (series-s\\dev\\Sagouindupm.bat).",
   "help.perf": "Performance",
   "help.perf.p1":
     "About 10 frames per second on an RTX 3050 in the boat mission. The console shares one memory between processor and graphics card; a PC has two, which VIctory keeps in sync constantly.",
@@ -311,6 +331,23 @@ export const en = {
   "help.trouble.p2":
     "Black screen at the start: shaders not translated. Crash 0x8007000E: not enough memory; close other programs and let Windows manage virtual memory.",
   "help.trouble.logs": "Logs",
+  "help.vram": "6 GB cards and laptops",
+  "help.vram.p1": "The game needs nearly all of a 6 GB card's memory. To give it the most:",
+  "help.vram.laptop":
+    "Laptop: Windows Settings → System → Display → Graphics, add “VIctory S.exe” and engine\\victory.exe and set both to “High performance” (the NVIDIA card, not the built-in chip); plug in the charger.",
+  "help.vram.close": "Close your browser, Discord, OBS and overlays before playing: each one keeps video memory.",
+  "help.vram.mode": "Settings, “Low video memory mode”: recommended on 6 GB cards, and if the picture goes black.",
+  "help.framegen": "Frame generation",
+  "help.framegen.p1":
+    "Settings, “Frame generation (FSR 3)”, off by default: about twice the frames shown. The game still reacts at the pace of the real frames, so it feels best above ~30 real fps; it uses ~1 GB of video memory.",
+  "help.framegen.p2":
+    "RTX 20/30 and GTX 16: FSR 3 behind NVIDIA DLSS-G (dlssg-to-fsr3, included). RTX 40/50: NVIDIA DLSS Frame Generation. Not offered on AMD and Intel cards yet.",
+  "help.framegen.p3":
+    "The NVIDIA files (Streamline) are fetched from NVIDIA's own release when you turn it on (NVIDIA's license doesn't let us ship them). The game window's title then shows “fps · shown”.",
+  "help.log": "How to send your log",
+  "help.log.s1": "Logs folder (button below, or the sidebar): %LOCALAPPDATA%\\Sagouindupm\\journaux.",
+  "help.log.s2": "Take the newest partie_….log (sort by date): it is the log of your last game.",
+  "help.log.s3": "Attach it to your report on GitHub (“Report a problem” or “Give feedback”), with what you saw and when.",
   "help.feedback.p":
     "Your frame rate, stutters, anything that displays wrong: every report from another machine helps us tune the profiles. The button opens a GitHub form already filled in with your setup and the detected profile; you review it, add your impressions and send it yourself (free GitHub account).",
 
@@ -342,6 +379,7 @@ export const en = {
   "err.gameMinimized": "The game window is minimized.",
   "err.urlRefused": "Address refused: {url}",
   "err.openFailed": "Couldn't open {url}",
+  "err.noFsr3": "Frame generation: dlssg-to-fsr3 isn't in {dir} (fg folder of the downloadable version). Turn frame generation off or download the full package again.",
 } satisfies Record<string, Entry>
 
 export type Key = keyof typeof en

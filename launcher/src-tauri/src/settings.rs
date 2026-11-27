@@ -22,7 +22,8 @@ pub struct Settings(pub Map<String, Value>);
 /// pipelines_liste: « nom:taille » of the shared list the last successful « warm --used » built (as the console).
 /// pipelines_import (this launcher only): the list whose shader containers are in the cache (imported with
 /// --shaders, or before a translation that kept them: pipelines_import_pending until it succeeds).
-fn defaults() -> [(&'static str, Value); 12] {
+/// framegen, petite_vram: the frame generation and low video memory options (off by default).
+fn defaults() -> [(&'static str, Value); 14] {
     [
         ("game_exe", json!("")),
         ("shaders_dir", json!("")),
@@ -36,6 +37,8 @@ fn defaults() -> [(&'static str, Value); 12] {
         ("pipelines_liste", json!("")),
         ("pipelines_import", json!("")),
         ("pipelines_import_pending", json!("")),
+        ("framegen", json!(false)),
+        ("petite_vram", json!(false)),
     ]
 }
 
@@ -277,6 +280,52 @@ impl SharedList {
     }
 }
 
+/// « petite_vram » in reglages.json: the low video memory mode (the player's choice), advised under
+/// conseille_sous_go GB of card memory.
+#[derive(Deserialize, Clone)]
+pub struct LowVram {
+    pub conseille_sous_go: f64,
+    pub env: Map<String, Value>,
+}
+
+/// « framegen.fsr3 »: dlssg-to-fsr3's files in the package's fg folder.
+#[derive(Deserialize, Clone)]
+pub struct Fsr3 {
+    pub dossier_paquet: String,
+    pub fichiers: Vec<String>,
+}
+
+/// « framegen » in reglages.json: frame generation (the player's choice), on the cards that have it.
+#[derive(Deserialize, Clone)]
+pub struct Framegen {
+    pub env: Map<String, Value>,
+    pub plafonds: Map<String, Value>,
+    pub variable_dossier: String,
+    pub sans_dlss: Map<String, Value>,
+    pub dossier: String,
+    pub cartes_fsr3: Vec<String>,
+    pub cartes_nvidia: Vec<String>,
+    pub fichiers_requis: Vec<String>,
+    pub fichiers_dlss: Vec<String>,
+    pub fsr3: Fsr3,
+}
+
+impl Framegen {
+    /// What frame generation needs (fichiers_requis) and `dir` lacks.
+    pub fn missing(&self, dir: &Path) -> Vec<String> {
+        self.fichiers_requis.iter().filter(|f| !dir.join(f).is_file()).cloned().collect()
+    }
+
+    pub fn files_ok(&self, dir: &Path) -> bool {
+        self.missing(dir).is_empty()
+    }
+
+    /// "fsr3", "nvidia" or "" for this card (profile::framegen_kind).
+    pub fn kind(&self, gpu_name: &str) -> &'static str {
+        crate::profile::framegen_kind(gpu_name, &self.cartes_fsr3, &self.cartes_nvidia)
+    }
+}
+
 #[derive(Deserialize, Clone)]
 pub struct Reglages {
     pub profil: String,
@@ -287,6 +336,8 @@ pub struct Reglages {
     pub pipelines_partagees: SharedList,
     pub materiel: Materiel,
     pub dlss: Dlss,
+    pub petite_vram: LowVram,
+    pub framegen: Framegen,
     pub shaders: Shaders,
 }
 
@@ -370,14 +421,24 @@ pub fn base_env(r: &Reglages) -> Vec<(String, String)> {
     set
 }
 
-/// The hardware profile of this PC (see profile.rs).
+/// The hardware profile of this PC (see profile.rs), with what the options of reglages.json say of this card.
 pub fn profile(r: &Reglages, hw: &Hardware) -> Profile {
-    r.materiel.profile(hw, &base_env(r), &r.petite_ram)
+    let mut p = r.materiel.profile(hw, &base_env(r), &r.petite_ram);
+    p.framegen = r.framegen.kind(&hw.gpu_name).to_string();
+    p.low_vram_advised = hw.vram_bytes > 0 && (hw.vram_bytes as f64 / (1u64 << 30) as f64) < r.petite_vram.conseille_sous_go;
+    p
+}
+
+/// The frame generation folder, in the launcher's own (%LOCALAPPDATA%\Sagouindupm\framegen).
+pub fn framegen_dir(paths: &Paths, r: &Reglages) -> PathBuf {
+    paths.home.join(&r.framegen.dossier)
 }
 
 /// Set-GameEnv without the PATH and the files: VICTORY_CONFIG, the Series S settings adjusted by the hardware
-/// profile (which holds the small-RAM rule), the skipped pipelines, DLSS (RTX cards only).
-pub fn game_env_for(r: &Reglages, s: &Settings, hw: &Hardware, toml: &str, skip: &str) -> EnvPlan {
+/// profile (which holds the small-RAM rule), the low video memory mode and frame generation if chosen (`fg_dir`:
+/// the frame generation folder), the skipped pipelines, DLSS (RTX cards only). With both options off, the same as
+/// before them.
+pub fn game_env_for(r: &Reglages, s: &Settings, hw: &Hardware, toml: &str, skip: &str, fg_dir: &Path) -> EnvPlan {
     let mut plan = EnvPlan::default();
     let mut set: Vec<(String, String)> = vec![("VICTORY_CONFIG".into(), toml.to_string())];
     let base = base_env(r);
@@ -386,16 +447,52 @@ pub fn game_env_for(r: &Reglages, s: &Settings, hw: &Hardware, toml: &str, skip:
     for (k, v) in &prof.env {
         put(&mut set, k, v.clone());
     }
+    // Low video memory mode: see « petite_vram » in reglages.json.
+    if s.bool("petite_vram") {
+        for (k, v) in &r.petite_vram.env {
+            put(&mut set, k, value_str(v));
+        }
+    }
+    // Frame generation: the player's choice, a card that has it, its files there (« framegen »).
+    let fg = &r.framegen;
+    let fg_on = s.bool("framegen") && !fg.kind(&hw.gpu_name).is_empty() && fg.files_ok(fg_dir);
+    let fg_path = fg_dir.display().to_string();
+    if fg_on {
+        for (k, v) in &fg.env {
+            put(&mut set, k, value_str(v));
+        }
+        for (k, cap) in &fg.plafonds {
+            let cap = cap.as_f64().unwrap_or(f64::MAX);
+            let now = set.iter().find(|(sk, _)| sk == k).and_then(|(_, v)| v.parse::<f64>().ok());
+            if now.is_none_or(|n| n > cap) {
+                put(&mut set, k, format!("{cap}"));
+            }
+        }
+        put(&mut set, &fg.variable_dossier, fg_path.clone());
+    }
     set.push((r.pipelines_sautees.variable.clone(), skip.to_string()));
     let d = &r.dlss;
     let mut remove = vec![d.variable_dossier.clone(), d.variable_mode.clone()];
-    let (dir, mode) = (s.str("dlss_dir"), s.str("dlss_mode"));
-    if prof.dlss && !mode.is_empty() && mode != "off" && r.dlss_dir_ok(&dir) {
+    let mode = s.str("dlss_mode");
+    // With frame generation on, Streamline is loaded once from VICTORY_DLSS_DIR, which must then hold both: the
+    // frame generation folder, if it has DLSS's files.
+    let dir = if fg_on {
+        if fg.fichiers_dlss.iter().all(|f| fg_dir.join(f).is_file()) { fg_path } else { String::new() }
+    } else {
+        Some(s.str("dlss_dir")).filter(|d| r.dlss_dir_ok(d)).unwrap_or_default()
+    };
+    if prof.dlss && !mode.is_empty() && mode != "off" && !dir.is_empty() {
         remove.clear();
         set.push((d.variable_dossier.clone(), dir));
         set.push((d.variable_mode.clone(), mode));
         set.retain(|(k, _)| !d.retire.contains(k));
         remove.extend(d.retire.iter().cloned());
+    } else if fg_on {
+        // The title's own upscaler: DLSS super resolution off, the folder serves frame generation only.
+        for (k, v) in &fg.sans_dlss {
+            put(&mut set, k, value_str(v));
+        }
+        remove = vec![d.variable_dossier.clone()];
     }
     plan.set = set;
     plan.remove = remove;
@@ -405,7 +502,12 @@ pub fn game_env_for(r: &Reglages, s: &Settings, hw: &Hardware, toml: &str, skip:
 /// Set-GameEnv: game_env_for with this repository's files and the Windows SDK folder in PATH.
 /// An inherited VICTORY_CACHE_DIR (or any other variable not named here) is left as it is.
 pub fn game_env(paths: &Paths, r: &Reglages, s: &Settings, hw: &Hardware) -> EnvPlan {
-    let mut plan = game_env_for(r, s, hw, &paths.toml.display().to_string(), &r.skip_value(&paths.root));
+    game_env_in(paths, r, s, hw, &framegen_dir(paths, r))
+}
+
+/// game_env with another frame generation folder (--print-env --framegen-dir).
+pub fn game_env_in(paths: &Paths, r: &Reglages, s: &Settings, hw: &Hardware, fg_dir: &Path) -> EnvPlan {
+    let mut plan = game_env_for(r, s, hw, &paths.toml.display().to_string(), &r.skip_value(&paths.root), fg_dir);
     if let Some(dir) = dxil_dir() {
         let path = std::env::var("PATH").unwrap_or_default();
         if !path.starts_with(&format!("{};", dir.display())) {

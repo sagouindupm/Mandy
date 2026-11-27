@@ -22,7 +22,7 @@ use jobs::{Jobs, Spec};
 use msg::Msg;
 use paths::Paths;
 use profile::{Hardware, Profile};
-use settings::{DlssMode, GameCheck, Reglages, Settings, game_env, shader_host_env, write_victory_toml};
+use settings::{DlssMode, GameCheck, Reglages, Settings, framegen_dir, game_env, game_env_in, shader_host_env, write_victory_toml};
 
 struct App {
     paths: Paths,
@@ -78,6 +78,25 @@ struct SettingsView {
     pipelines_import: String,
     /// The window's language, « langue » in lanceur.json: "en" (default) or "fr".
     langue: String,
+    /// The frame generation and low video memory options (« framegen », « petite_vram » in lanceur.json).
+    framegen: bool,
+    petite_vram: bool,
+}
+
+/// Frame generation on this PC (« framegen » in reglages.json).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FramegenView {
+    /// "fsr3" (RTX 20/30, GTX 16), "nvidia" (RTX 40/50) or "" (not offered on this card).
+    kind: String,
+    /// The frame generation folder and what it still lacks (NVIDIA's files, fetched by the "framegen" task).
+    dir: String,
+    files_ok: bool,
+    missing: Vec<String>,
+    /// dlssg-to-fsr3's files are in the package's fg folder (needed for "fsr3").
+    fsr3_ready: bool,
+    /// The variables it sets (the caps as caps).
+    env: Vec<(String, String)>,
 }
 
 #[derive(Serialize)]
@@ -138,6 +157,9 @@ struct Snapshot {
     low_ram_env: Vec<(String, String)>,
     dlss_note: String,
     dlss_modes: Vec<DlssMode>,
+    framegen: Option<FramegenView>,
+    /// The low video memory mode's variables (« petite_vram » in reglages.json).
+    low_vram_env: Vec<(String, String)>,
     /// The variables victory.exe gets now (the skip list summarised).
     applied: Vec<(String, String)>,
     running: Option<String>,
@@ -201,6 +223,8 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
             pipelines_liste: s.str("pipelines_liste"),
             pipelines_import: s.str("pipelines_import"),
             langue: lang_of(&s).to_string(),
+            framegen: s.bool("framegen"),
+            petite_vram: s.bool("petite_vram"),
         },
         game_ok: game_ready(p, &s),
         game_check: game_check(p, &s),
@@ -222,6 +246,8 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
         low_ram_env: Vec::new(),
         dlss_note: String::new(),
         dlss_modes: Vec::new(),
+        framegen: None,
+        low_vram_env: Vec::new(),
         applied: Vec::new(),
         running: app.jobs.running(),
         warm_done: sys::warm_done(),
@@ -248,6 +274,19 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
         snap.low_ram_env = kv(&r.petite_ram.env);
         snap.dlss_note = r.dlss.note.clone();
         snap.dlss_modes = r.dlss.modes.clone();
+        snap.low_vram_env = kv(&r.petite_vram.env);
+        let fg_dir = framegen_dir(p, r);
+        let missing = r.framegen.missing(&fg_dir);
+        let mut fg_env = kv(&r.framegen.env);
+        fg_env.extend(kv(&r.framegen.plafonds).into_iter().map(|(k, v)| (k, format!("≤{v}"))));
+        snap.framegen = Some(FramegenView {
+            kind: r.framegen.kind(&hw.gpu_name).to_string(),
+            dir: fg_dir.display().to_string(),
+            files_ok: missing.is_empty(),
+            missing,
+            fsr3_ready: fsr3_source(p, r).is_some(),
+            env: fg_env,
+        });
         let prof = settings::profile(r, &hw);
         let text = profile_text(&prof, &s, r, snap.dlss_ok);
         snap.hardware = Some(ProfileView { profile: prof, pending: facts.is_none(), text });
@@ -397,6 +436,65 @@ fn set_mode(app: State<'_, App>, mode: String) -> Res<()> {
     s.save(&app.paths)
 }
 
+/// The options of Settings, in lanceur.json: « framegen » (frame generation) and « petite_vram » (low video memory
+/// mode).
+#[tauri::command]
+fn set_option(app: State<'_, App>, name: String, on: bool) -> Res<()> {
+    if name != "framegen" && name != "petite_vram" {
+        return Err(format!("Unknown option: {name}"));
+    }
+    let mut s = Settings::load(&app.paths);
+    s.set(&name, on);
+    s.save(&app.paths)
+}
+
+// ------------------------------------------------------------------ frame generation: dlssg-to-fsr3 in place
+
+/// The package's fg folder when it holds every dlssg-to-fsr3 file (« framegen.fsr3 » in reglages.json).
+fn fsr3_source(p: &Paths, r: &Reglages) -> Option<PathBuf> {
+    let src = p.root.join(&r.framegen.fsr3.dossier_paquet);
+    r.framegen.fsr3.fichiers.iter().all(|f| src.join(f).is_file()).then_some(src)
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((std::fs::read(a), std::fs::read(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// dlssg-to-fsr3 next to victory.exe and in the frame generation folder for a session with frame generation on an
+/// RTX 20/30 or GTX 16 card (`on`), taken away otherwise: Streamline's sl.interposer.dll imports dbghelp.dll, the
+/// mod's loader, which must not stay there without frame generation or on RTX 40/50 (NVIDIA's own DLSS-G). Only
+/// copies of the package's files are taken away. The same as Sync-Fsr3 in series-s/reglages.ps1.
+fn place_fsr3(p: &Paths, r: &Reglages, on: bool) -> Res<()> {
+    let f = &r.framegen.fsr3;
+    let src_dir = p.root.join(&f.dossier_paquet);
+    let src = fsr3_source(p, r);
+    if on && src.is_none() {
+        return Err(Msg::new("err.noFsr3").with("dir", src_dir.display().to_string()).into());
+    }
+    let dirs: Vec<PathBuf> =
+        [p.exe.parent().map(Path::to_path_buf), Some(framegen_dir(p, r))].into_iter().flatten().filter(|d| d.is_dir()).collect();
+    for dir in dirs {
+        for name in &f.fichiers {
+            let (from, to) = (src_dir.join(name), dir.join(name));
+            if on {
+                if !same_file(&from, &to) {
+                    std::fs::copy(&from, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+                }
+            } else if to.is_file() {
+                let ours = if from.is_file() {
+                    same_file(&from, &to)
+                } else {
+                    name != "dbghelp.dll" || dir.join("dlssg_to_fsr3_amd_is_better.dll").is_file()
+                };
+                if ours {
+                    let _ = std::fs::remove_file(&to);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ language
 
 /// The window's language from lanceur.json: "fr", else "en" (absent or unknown).
@@ -494,6 +592,14 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
             game_env(p, &r, &s, &hardware(app)).apply(&mut cmd);
             Ok(Spec { kind: kind.into(), cmd, log: log("pipelines_import.txt"), game: false, capture_dir: None })
         }
+        // NVIDIA's Streamline files for frame generation (series-s/framegen.ps1: NVIDIA's release, SHA-256 checked).
+        "framegen" => {
+            let r = Reglages::load(p)?;
+            let script = p.root.join("series-s").join("framegen.ps1");
+            let mut cmd = sys::hidden("powershell.exe");
+            cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(&script).arg("-Dest").arg(framegen_dir(p, &r));
+            Ok(Spec { kind: kind.into(), cmd, log: log("framegen_fichiers.txt"), game: false, capture_dir: None })
+        }
         "warm" => {
             need_exe()?;
             let r = Reglages::load(p)?;
@@ -518,7 +624,12 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
                 log.display()
             ))
             .current_dir(p.root.join("series-s"));
-            game_env(p, &r, &s, &hardware(app)).apply(&mut cmd);
+            let hw = hardware(app);
+            let plan = game_env(p, &r, &s, &hw);
+            // dlssg-to-fsr3 in place for a session with frame generation on an RTX 20/30 or GTX 16 card, away otherwise.
+            let fg_on = plan.set.iter().any(|(k, v)| k == "VICTORY_FRAMEGEN" && v == "1");
+            place_fsr3(p, &r, fg_on && r.framegen.kind(&hw.gpu_name) == "fsr3")?;
+            plan.apply(&mut cmd);
             *app.last_game_log.lock().unwrap() = Some(log.clone());
             Ok(Spec { kind: kind.into(), cmd, log, game: true, capture_dir: Some(p.captures.clone()) })
         }
@@ -655,6 +766,11 @@ fn open(app: State<'_, App>, target: String) -> Res<()> {
         "rustup" => "https://rustup.rs".into(),
         "build_tools" => "https://visualstudio.microsoft.com/visual-cpp-build-tools/".into(),
         "repo" => p.root.display().to_string(),
+        "framegen" => {
+            let dir = framegen_dir(p, &Reglages::load(p)?);
+            let _ = std::fs::create_dir_all(&dir);
+            dir.display().to_string()
+        }
         "captures" => {
             let _ = std::fs::create_dir_all(&p.captures);
             p.captures.display().to_string()
@@ -722,6 +838,12 @@ fn profile_text(p: &Profile, s: &Settings, r: &Reglages, dlss_ok: bool) -> Strin
         .map(|m| format!("DLSS {}", m.id))
         .unwrap_or_else(|| "recommended (540p, game upscaler)".into());
     let mut lines = vec![format!("Detected profile: Series S · {}", p.label), format!("Mode: {mode}"), format!("Tiers: {}", p.tiers.join(", "))];
+    if s.bool("framegen") {
+        lines.push(format!("Frame generation: on ({})", if p.framegen.is_empty() { "not on this card" } else { p.framegen.as_str() }));
+    }
+    if s.bool("petite_vram") {
+        lines.push("Low video memory mode: on".into());
+    }
     lines.extend(p.warnings.iter().map(|m| format!("! {}", m.plain())));
     if !p.env.is_empty() {
         lines.push(format!("Changed: {}", p.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")));
@@ -806,15 +928,17 @@ fn preview_done(handle: AppHandle) {
 
 // ------------------------------------------------------------------ --print-env
 
-/// `--print-env <file> [--dlss <dir> <mode>] [--ram-gb N] [--vram-gb N] [--threads N] [--gpu <name>]`: writes the
-/// VICTORY_ variables and PATH the game would get (sorted, NAME=value), for comparing with series-s/reglages.ps1
-/// (scripts/check-profils.ps1). What is not given is read from this PC. The older form
-/// `<file> <dlss_dir> <dlss_mode> [<ram_gb>]` still works. No window.
+/// `--print-env <file> [--dlss <dir> <mode>] [--ram-gb N] [--vram-gb N] [--threads N] [--gpu <name>]
+/// [--framegen on|off] [--low-vram on|off] [--framegen-dir <dir>]`: writes the VICTORY_ variables and PATH the game
+/// would get (sorted, NAME=value), for comparing with series-s/reglages.ps1 (scripts/check-profils.ps1). What is
+/// not given is read from this PC and lanceur.json. The older form `<file> <dlss_dir> <dlss_mode> [<ram_gb>]` still
+/// works. No window.
 fn print_env(args: &[String]) -> Result<(), String> {
     let Some(file) = args.first() else { return Err("--print-env <file>".into()) };
     let paths = Paths::discover();
     let mut s = Settings::load(&paths);
     let (mut ram, mut vram, mut threads, mut gpu): (Option<u64>, Option<f64>, Option<usize>, Option<String>) = (None, None, None, None);
+    let mut fg_dir: Option<PathBuf> = None;
     let rest = &args[1..];
     if rest.first().is_some_and(|a| !a.starts_with("--")) {
         if let [dir, mode, ..] = rest {
@@ -835,6 +959,9 @@ fn print_env(args: &[String]) -> Result<(), String> {
                 "--vram-gb" => vram = next()?.parse().ok(),
                 "--threads" => threads = next()?.parse().ok(),
                 "--gpu" => gpu = Some(next()?),
+                "--framegen" => s.set("framegen", next()? == "on"),
+                "--low-vram" => s.set("petite_vram", next()? == "on"),
+                "--framegen-dir" => fg_dir = Some(PathBuf::from(next()?)),
                 other => return Err(format!("Unknown option: {other}")),
             }
         }
@@ -853,7 +980,8 @@ fn print_env(args: &[String]) -> Result<(), String> {
     if let Some(g) = gpu {
         hw.gpu_name = g;
     }
-    let plan = game_env(&paths, &Reglages::load(&paths)?, &s, &hw);
+    let r = Reglages::load(&paths)?;
+    let plan = game_env_in(&paths, &r, &s, &hw, &fg_dir.unwrap_or_else(|| framegen_dir(&paths, &r)));
     let mut env: std::collections::BTreeMap<String, String> =
         std::env::vars().filter(|(k, _)| k.starts_with("VICTORY_") || k.eq_ignore_ascii_case("PATH")).collect();
     if let Some(dir) = &plan.path_prepend {
@@ -910,6 +1038,7 @@ pub fn run() {
             pick_game,
             pick_dlss,
             set_mode,
+            set_option,
             set_lang,
             run_job,
             stop_job,

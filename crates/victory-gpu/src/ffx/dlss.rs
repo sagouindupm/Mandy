@@ -56,12 +56,21 @@ const FILES: [&str; 4] = [
 /// `VICTORY_FFX_DIR`. With a DLL missing it is off (said once), so the
 /// title's own FidelityFX DLLs stay in place instead of an upscaler that
 /// cannot answer.
+///
+/// `VICTORY_DLSS_MODE=off` leaves DLSS super resolution off with the folder
+/// set: the folder then only serves frame generation (`super::framegen`,
+/// `VICTORY_FRAMEGEN=1`), so that the title's own upscaler
+/// (`VICTORY_OWN_UPSCALER=1`) can run under it.
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
         let Some(dir) = std::env::var_os("VICTORY_DLSS_DIR") else {
             return false;
         };
+        if std::env::var("VICTORY_DLSS_MODE").is_ok_and(|m| m.trim().eq_ignore_ascii_case("off")) {
+            tracing::info!("dlss: VICTORY_DLSS_MODE=off: DLSS super resolution off, the title's own upscaler is used");
+            return false;
+        }
         let missing = missing_files(std::path::Path::new(&dir));
         if !missing.is_empty() {
             tracing::error!(
@@ -308,20 +317,20 @@ const PROVIDER_ID: u64 = 0x0D15_5000;
 /// `sl::StructType`: a GUID.
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct StructType(u32, u16, u16, [u8; 8]);
+pub(super) struct StructType(pub(super) u32, pub(super) u16, pub(super) u16, pub(super) [u8; 8]);
 
 /// `sl::BaseStructure`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct Base {
-    next: *mut c_void,
-    kind: StructType,
-    version: usize,
+pub(super) struct Base {
+    pub(super) next: *mut c_void,
+    pub(super) kind: StructType,
+    pub(super) version: usize,
 }
 const _: () = assert!(size_of::<Base>() == 32);
 
 impl Base {
-    const fn new(kind: StructType, version: usize) -> Self {
+    pub(super) const fn new(kind: StructType, version: usize) -> Self {
         Base {
             next: std::ptr::null_mut(),
             kind,
@@ -330,37 +339,37 @@ impl Base {
     }
 }
 
-const PREFERENCES: StructType = StructType(
+pub(super) const PREFERENCES: StructType = StructType(
     0x1ca1_0965,
     0xbf8e,
     0x432b,
     [0x8d, 0xa1, 0x67, 0x16, 0xd8, 0x79, 0xfb, 0x14],
 );
-const RESOURCE: StructType = StructType(
+pub(super) const RESOURCE: StructType = StructType(
     0x3a9d_70cf,
     0x2418,
     0x4b72,
     [0x83, 0x91, 0x13, 0xf8, 0x72, 0x1c, 0x72, 0x61],
 );
-const RESOURCE_TAG: StructType = StructType(
+pub(super) const RESOURCE_TAG: StructType = StructType(
     0x4c6a_5aad,
     0xb445,
     0x496c,
     [0x87, 0xff, 0x1a, 0xf3, 0x84, 0x5b, 0xe6, 0x53],
 );
-const VIEWPORT: StructType = StructType(
+pub(super) const VIEWPORT: StructType = StructType(
     0x171b_6435,
     0x9b3c,
     0x4fc8,
     [0x99, 0x94, 0xfb, 0xe5, 0x25, 0x69, 0xaa, 0xa4],
 );
-const CONSTANTS: StructType = StructType(
+pub(super) const CONSTANTS: StructType = StructType(
     0xdcd3_5ad7,
     0x4e4a,
     0x4bad,
     [0xa9, 0x0c, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe],
 );
-const DLSS_OPTIONS: StructType = StructType(
+pub(super) const DLSS_OPTIONS: StructType = StructType(
     0x6ac8_26e4,
     0x4c61,
     0x4101,
@@ -368,23 +377,23 @@ const DLSS_OPTIONS: StructType = StructType(
 );
 
 /// `sl::kSDKVersion` of the headers these structures follow (2.14.16).
-const SDK_VERSION: u64 = 2 << 48 | 14 << 32 | 16 << 16 | 0xfedc;
-const FEATURE_DLSS: u32 = 0;
+pub(super) const SDK_VERSION: u64 = 2 << 48 | 14 << 32 | 16 << 16 | 0xfedc;
+pub(super) const FEATURE_DLSS: u32 = 0;
 // `sl::PreferenceFlags`.
 const DISABLE_CL_STATE_TRACKING: u64 = 1 << 0;
 const USE_MANUAL_HOOKING: u64 = 1 << 2;
 const USE_FRAME_BASED_RESOURCE_TAGGING: u64 = 1 << 7;
 // `sl::BufferType`.
-const BUFFER_DEPTH: u32 = 0;
-const BUFFER_MOTION_VECTORS: u32 = 1;
+pub(super) const BUFFER_DEPTH: u32 = 0;
+pub(super) const BUFFER_MOTION_VECTORS: u32 = 1;
 const BUFFER_INPUT_COLOR: u32 = 3;
 const BUFFER_OUTPUT_COLOR: u32 = 4;
 const BUFFER_EXPOSURE: u32 = 13;
 /// `sl::ResourceLifecycle::eValidUntilEvaluate`.
 const VALID_UNTIL_EVALUATE: i32 = 2;
 // `sl::Boolean`.
-const FALSE: u8 = 0;
-const TRUE: u8 = 1;
+pub(super) const FALSE: u8 = 0;
+pub(super) const TRUE: u8 = 1;
 /// `sl::DLSSMode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -401,24 +410,24 @@ const HOST_NON_PIXEL_SHADER_RESOURCE: u32 = 0x40;
 
 /// `sl::Preferences`.
 #[repr(C)]
-struct Preferences {
-    base: Base,
-    show_console: bool,
-    log_level: u32,
-    paths_to_plugins: *const *const u16,
-    num_paths_to_plugins: u32,
-    path_to_logs_and_data: *const u16,
-    allocate_callback: *const c_void,
-    release_callback: *const c_void,
-    log_message_callback: Option<extern "C" fn(u32, *const c_char)>,
-    flags: u64,
-    features_to_load: *const u32,
-    num_features_to_load: u32,
-    application_id: u32,
-    engine: u32,
-    engine_version: *const c_char,
-    project_id: *const c_char,
-    render_api: u32,
+pub(super) struct Preferences {
+    pub(super) base: Base,
+    pub(super) show_console: bool,
+    pub(super) log_level: u32,
+    pub(super) paths_to_plugins: *const *const u16,
+    pub(super) num_paths_to_plugins: u32,
+    pub(super) path_to_logs_and_data: *const u16,
+    pub(super) allocate_callback: *const c_void,
+    pub(super) release_callback: *const c_void,
+    pub(super) log_message_callback: Option<extern "C" fn(u32, *const c_char)>,
+    pub(super) flags: u64,
+    pub(super) features_to_load: *const u32,
+    pub(super) num_features_to_load: u32,
+    pub(super) application_id: u32,
+    pub(super) engine: u32,
+    pub(super) engine_version: *const c_char,
+    pub(super) project_id: *const c_char,
+    pub(super) render_api: u32,
 }
 const _: () = assert!(size_of::<Preferences>() == 144);
 const _: () = assert!(std::mem::offset_of!(Preferences, flags) == 88);
@@ -426,23 +435,23 @@ const _: () = assert!(std::mem::offset_of!(Preferences, render_api) == 136);
 
 /// `sl::Resource`.
 #[repr(C)]
-struct Resource {
-    base: Base,
-    kind: u8,
-    native: *mut c_void,
-    memory: *mut c_void,
-    view: *mut c_void,
-    state: u32,
-    width: u32,
-    height: u32,
-    native_format: u32,
-    mip_levels: u32,
-    array_layers: u32,
-    gpu_virtual_address: u64,
-    flags: u32,
-    usage: u32,
-    internal_flags: u16,
-    reserved: u16,
+pub(super) struct Resource {
+    pub(super) base: Base,
+    pub(super) kind: u8,
+    pub(super) native: *mut c_void,
+    pub(super) memory: *mut c_void,
+    pub(super) view: *mut c_void,
+    pub(super) state: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) native_format: u32,
+    pub(super) mip_levels: u32,
+    pub(super) array_layers: u32,
+    pub(super) gpu_virtual_address: u64,
+    pub(super) flags: u32,
+    pub(super) usage: u32,
+    pub(super) internal_flags: u16,
+    pub(super) reserved: u16,
 }
 const _: () = assert!(size_of::<Resource>() == 112);
 const _: () = assert!(std::mem::offset_of!(Resource, native) == 40);
@@ -451,7 +460,7 @@ const _: () = assert!(std::mem::offset_of!(Resource, gpu_virtual_address) == 88)
 
 impl Resource {
     /// A 2D texture (`eTex2d`) in a D3D12 state.
-    fn texture(native: *mut c_void, state: u32) -> Self {
+    pub(super) fn texture(native: *mut c_void, state: u32) -> Self {
         Resource {
             base: Base::new(RESOURCE, 1),
             kind: 0,
@@ -476,30 +485,30 @@ impl Resource {
 /// `sl::Extent`: top, left, width, height.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-struct Extent([u32; 4]);
+pub(super) struct Extent(pub(super) [u32; 4]);
 
 /// `sl::ResourceTag`.
 #[repr(C)]
-struct ResourceTag {
-    base: Base,
-    resource: *mut Resource,
-    kind: u32,
-    lifecycle: i32,
-    extent: Extent,
+pub(super) struct ResourceTag {
+    pub(super) base: Base,
+    pub(super) resource: *mut Resource,
+    pub(super) kind: u32,
+    pub(super) lifecycle: i32,
+    pub(super) extent: Extent,
 }
 const _: () = assert!(size_of::<ResourceTag>() == 64);
 const _: () = assert!(std::mem::offset_of!(ResourceTag, extent) == 48);
 
 /// `sl::ViewportHandle`.
 #[repr(C)]
-struct Viewport {
-    base: Base,
-    value: u32,
+pub(super) struct Viewport {
+    pub(super) base: Base,
+    pub(super) value: u32,
 }
 const _: () = assert!(size_of::<Viewport>() == 40);
 
 impl Viewport {
-    fn new(value: u32) -> Self {
+    pub(super) fn new(value: u32) -> Self {
         Viewport {
             base: Base::new(VIEWPORT, 1),
             value,
@@ -509,33 +518,33 @@ impl Viewport {
 
 /// `sl::Constants` (version 2): matrices row-major, without jitter.
 #[repr(C)]
-struct Constants {
-    base: Base,
-    camera_view_to_clip: [f32; 16],
-    clip_to_camera_view: [f32; 16],
-    clip_to_lens_clip: [f32; 16],
-    clip_to_prev_clip: [f32; 16],
-    prev_clip_to_clip: [f32; 16],
-    jitter_offset: [f32; 2],
-    mvec_scale: [f32; 2],
-    camera_pinhole_offset: [f32; 2],
-    camera_pos: [f32; 3],
-    camera_up: [f32; 3],
-    camera_right: [f32; 3],
-    camera_fwd: [f32; 3],
-    camera_near: f32,
-    camera_far: f32,
-    camera_fov: f32,
-    camera_aspect_ratio: f32,
-    motion_vectors_invalid_value: f32,
-    depth_inverted: u8,
-    camera_motion_included: u8,
-    motion_vectors_3d: u8,
-    reset: u8,
-    orthographic_projection: u8,
-    motion_vectors_dilated: u8,
-    motion_vectors_jittered: u8,
-    min_relative_linear_depth_object_separation: f32,
+pub(super) struct Constants {
+    pub(super) base: Base,
+    pub(super) camera_view_to_clip: [f32; 16],
+    pub(super) clip_to_camera_view: [f32; 16],
+    pub(super) clip_to_lens_clip: [f32; 16],
+    pub(super) clip_to_prev_clip: [f32; 16],
+    pub(super) prev_clip_to_clip: [f32; 16],
+    pub(super) jitter_offset: [f32; 2],
+    pub(super) mvec_scale: [f32; 2],
+    pub(super) camera_pinhole_offset: [f32; 2],
+    pub(super) camera_pos: [f32; 3],
+    pub(super) camera_up: [f32; 3],
+    pub(super) camera_right: [f32; 3],
+    pub(super) camera_fwd: [f32; 3],
+    pub(super) camera_near: f32,
+    pub(super) camera_far: f32,
+    pub(super) camera_fov: f32,
+    pub(super) camera_aspect_ratio: f32,
+    pub(super) motion_vectors_invalid_value: f32,
+    pub(super) depth_inverted: u8,
+    pub(super) camera_motion_included: u8,
+    pub(super) motion_vectors_3d: u8,
+    pub(super) reset: u8,
+    pub(super) orthographic_projection: u8,
+    pub(super) motion_vectors_dilated: u8,
+    pub(super) motion_vectors_jittered: u8,
+    pub(super) min_relative_linear_depth_object_separation: f32,
 }
 const _: () = assert!(size_of::<Constants>() == 456);
 const _: () = assert!(std::mem::offset_of!(Constants, jitter_offset) == 352);
@@ -546,34 +555,34 @@ const _: () =
 
 /// `sl::DLSSOptions` (version 3).
 #[repr(C)]
-struct Options {
-    base: Base,
-    mode: u32,
-    output_width: u32,
-    output_height: u32,
-    sharpness: f32,
-    pre_exposure: f32,
-    exposure_scale: f32,
-    color_buffers_hdr: u8,
-    indicator_invert_x: u8,
-    indicator_invert_y: u8,
+pub(super) struct Options {
+    pub(super) base: Base,
+    pub(super) mode: u32,
+    pub(super) output_width: u32,
+    pub(super) output_height: u32,
+    pub(super) sharpness: f32,
+    pub(super) pre_exposure: f32,
+    pub(super) exposure_scale: f32,
+    pub(super) color_buffers_hdr: u8,
+    pub(super) indicator_invert_x: u8,
+    pub(super) indicator_invert_y: u8,
     /// DLAA, quality, balanced, performance, ultra performance and ultra
     /// quality presets; 0 is the default.
-    presets: [u32; 6],
-    use_auto_exposure: u8,
-    alpha_upscaling_enabled: u8,
+    pub(super) presets: [u32; 6],
+    pub(super) use_auto_exposure: u8,
+    pub(super) alpha_upscaling_enabled: u8,
 }
 const _: () = assert!(size_of::<Options>() == 88);
 const _: () = assert!(std::mem::offset_of!(Options, presets) == 60);
 const _: () = assert!(std::mem::offset_of!(Options, use_auto_exposure) == 84);
 
-type SlResult = i32;
+pub(super) type SlResult = i32;
 type Init = unsafe extern "C" fn(*const Preferences, u64) -> SlResult;
 type SetD3dDevice = unsafe extern "C" fn(*mut c_void) -> SlResult;
-type GetNewFrameToken = unsafe extern "C" fn(*mut *mut c_void, *const u32) -> SlResult;
-type SetConstants =
+pub(super) type GetNewFrameToken = unsafe extern "C" fn(*mut *mut c_void, *const u32) -> SlResult;
+pub(super) type SetConstants =
     unsafe extern "C" fn(*const Constants, *const c_void, *const Viewport) -> SlResult;
-type SetTagForFrame = unsafe extern "C" fn(
+pub(super) type SetTagForFrame = unsafe extern "C" fn(
     *const c_void,
     *const Viewport,
     *const ResourceTag,
@@ -583,17 +592,38 @@ type SetTagForFrame = unsafe extern "C" fn(
 type EvaluateFeature =
     unsafe extern "C" fn(u32, *const c_void, *const *const Base, u32, *mut c_void) -> SlResult;
 type FreeResources = unsafe extern "C" fn(u32, *const Viewport) -> SlResult;
-type GetFeatureFunction = unsafe extern "C" fn(u32, *const c_char, *mut *mut c_void) -> SlResult;
+pub(super) type GetFeatureFunction = unsafe extern "C" fn(u32, *const c_char, *mut *mut c_void) -> SlResult;
 type SetOptions = unsafe extern "C" fn(*const Viewport, *const Options) -> SlResult;
-type Farproc = unsafe extern "system" fn() -> isize;
+pub(super) type Farproc = unsafe extern "system" fn() -> isize;
+/// `slIsFeatureSupported(feature, const AdapterInfo*)`.
+pub(super) type IsFeatureSupported = unsafe extern "C" fn(u32, *const c_void) -> SlResult;
+/// `slGetFeatureRequirements(feature, FeatureRequirements*)`.
+pub(super) type GetFeatureRequirements = unsafe extern "C" fn(u32, *mut c_void) -> SlResult;
+/// `slUpgradeInterface(void** baseInterface)`.
+pub(super) type UpgradeInterface = unsafe extern "C" fn(*mut *mut c_void) -> SlResult;
+/// `slSetFeatureLoaded(feature, bool)`.
+pub(super) type SetFeatureLoaded = unsafe extern "C" fn(u32, bool) -> SlResult;
 
-struct Streamline {
-    get_new_frame_token: GetNewFrameToken,
-    set_constants: SetConstants,
-    set_tag_for_frame: SetTagForFrame,
-    evaluate_feature: EvaluateFeature,
-    free_resources: FreeResources,
-    set_options: SetOptions,
+/// The process's one Streamline: DLSS super resolution's and frame
+/// generation's (`super::framegen`), loaded once with the features both
+/// ask for.
+pub(super) struct Streamline {
+    pub(super) get_new_frame_token: GetNewFrameToken,
+    pub(super) set_constants: SetConstants,
+    pub(super) set_tag_for_frame: SetTagForFrame,
+    pub(super) evaluate_feature: EvaluateFeature,
+    pub(super) free_resources: FreeResources,
+    pub(super) get_feature_function: GetFeatureFunction,
+    pub(super) is_feature_supported: IsFeatureSupported,
+    pub(super) get_feature_requirements: Option<GetFeatureRequirements>,
+    pub(super) upgrade_interface: Option<UpgradeInterface>,
+    pub(super) set_feature_loaded: Option<SetFeatureLoaded>,
+    /// `slDLSSSetOptions`: none when DLSS super resolution was not asked
+    /// for or this GPU or driver does not have it.
+    pub(super) set_options: Option<SetOptions>,
+    /// Whether frame generation's features (DLSS-G, Reflex, PCL) were
+    /// asked for at `slInit`.
+    pub(super) framegen: bool,
 }
 
 /// Streamline's warnings and errors in VIctory's log.
@@ -605,9 +635,9 @@ extern "C" fn log_message(kind: u32, message: *const c_char) {
     let text = unsafe { std::ffi::CStr::from_ptr(message) }.to_string_lossy();
     let text = text.trim_end();
     match kind {
-        2 => tracing::error!("dlss: {text}"),
-        1 => tracing::warn!("dlss: {text}"),
-        _ => tracing::debug!("dlss: {text}"),
+        2 => tracing::error!("streamline: {text}"),
+        1 => tracing::warn!("streamline: {text}"),
+        _ => tracing::debug!("streamline: {text}"),
     }
 }
 
@@ -615,18 +645,48 @@ extern "C" fn log_message(kind: u32, message: *const c_char) {
 /// engine's project).
 const PROJECT_ID: &std::ffi::CStr = c"6f1c9d2a-4b7e-4a35-9d0e-5c2b8a71f364";
 
+/// The folder Streamline is loaded from: `VICTORY_DLSS_DIR` with DLSS
+/// super resolution on, else frame generation's (`super::framegen::dir`).
+pub(super) fn streamline_dir() -> Option<std::path::PathBuf> {
+    if enabled() {
+        std::env::var_os("VICTORY_DLSS_DIR").map(std::path::PathBuf::from)
+    } else {
+        super::framegen::dir()
+    }
+}
+
+static SL: OnceLock<Option<Streamline>> = OnceLock::new();
+
+/// Streamline if it was started ([`streamline`]).
+pub(super) fn started() -> Option<&'static Streamline> {
+    SL.get().and_then(|s| s.as_ref())
+}
+
 /// Streamline, initialised on first use for `device` (a host
-/// `ID3D12Device`). Later calls return the same, whatever the device.
-fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
-    static SL: OnceLock<Option<Streamline>> = OnceLock::new();
+/// `ID3D12Device`). Later calls return the same, whatever the device; a
+/// null `device` only looks ([`started`]).
+///
+/// Its features are DLSS (with [`enabled`]) and, when frame generation is
+/// asked for and its files are there (`super::framegen::files_ready`),
+/// DLSS-G, Reflex and PCL: `slInit` is called once a process, so whichever
+/// of the two comes first loads both.
+pub(super) fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
+    if device.is_null() {
+        return started();
+    }
     SL.get_or_init(|| {
-        let dir = std::path::PathBuf::from(std::env::var_os("VICTORY_DLSS_DIR")?);
+        let dlss = enabled();
+        let framegen = super::framegen::files_ready();
+        if !dlss && !framegen {
+            return None;
+        }
+        let dir = streamline_dir()?;
         let interposer = dir.join("sl.interposer.dll").as_os_str().encode_wide_nul();
         // SAFETY: a nul-terminated path.
         let Ok(module) = (unsafe { LoadLibraryW(PCWSTR(interposer.as_ptr())) }) else {
             tracing::error!(
                 ?dir,
-                "dlss: sl.interposer.dll not found; set VICTORY_DLSS_DIR to the Streamline SDK's bin/x64"
+                "streamline: sl.interposer.dll not found; set VICTORY_DLSS_DIR to the Streamline SDK's bin/x64"
             );
             return None;
         };
@@ -646,7 +706,13 @@ fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
         };
         let plugins = dir.as_os_str().encode_wide_nul();
         let paths = [plugins.as_ptr()];
-        let features = [FEATURE_DLSS];
+        let mut features = Vec::new();
+        if dlss {
+            features.push(FEATURE_DLSS);
+        }
+        if framegen {
+            features.extend(super::framegen::FEATURES);
+        }
         let preferences = Preferences {
             base: Base::new(PREFERENCES, 1),
             show_console: false,
@@ -662,7 +728,7 @@ fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
                 | DISABLE_CL_STATE_TRACKING
                 | USE_FRAME_BASED_RESOURCE_TAGGING,
             features_to_load: features.as_ptr(),
-            num_features_to_load: 1,
+            num_features_to_load: features.len() as u32,
             application_id: 0,
             // eCustom
             engine: 0,
@@ -674,13 +740,13 @@ fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
         // SAFETY: preferences that outlive the call.
         let r = unsafe { init(&preferences, SDK_VERSION) };
         if r != 0 {
-            tracing::error!(result = r, "dlss: slInit failed");
+            tracing::error!(result = r, ?features, "streamline: slInit failed");
             return None;
         }
         // SAFETY: the host device, alive for the process.
         let r = unsafe { set_device(device) };
         if r != 0 {
-            tracing::error!(result = r, "dlss: slSetD3DDevice failed");
+            tracing::error!(result = r, "streamline: slSetD3DDevice failed");
             return None;
         }
         let feature = |name: &[u8]| {
@@ -689,9 +755,14 @@ fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
             let r = unsafe { get_function(FEATURE_DLSS, name.as_ptr().cast(), &mut f) };
             (r == 0 && !f.is_null()).then_some(f)
         };
-        let Some(set_options) = feature(b"slDLSSSetOptions\0") else {
-            tracing::error!("dlss: DLSS is not available on this GPU or driver");
-            return None;
+        let set_options = if dlss {
+            let f = feature(b"slDLSSSetOptions\0");
+            if f.is_none() {
+                tracing::error!("dlss: DLSS is not available on this GPU or driver");
+            }
+            f
+        } else {
+            None
         };
         // SAFETY: Streamline's exports and DLSS's function, of these types.
         let sl = unsafe {
@@ -711,14 +782,27 @@ fn streamline(device: *mut c_void) -> Option<&'static Streamline> {
                 free_resources: std::mem::transmute::<Farproc, FreeResources>(get(
                     b"slFreeResources\0",
                 )?),
-                set_options: std::mem::transmute::<*mut c_void, SetOptions>(set_options),
+                get_feature_function: get_function,
+                is_feature_supported: std::mem::transmute::<Farproc, IsFeatureSupported>(get(
+                    b"slIsFeatureSupported\0",
+                )?),
+                get_feature_requirements: get(b"slGetFeatureRequirements\0")
+                    .map(|f| std::mem::transmute::<Farproc, GetFeatureRequirements>(f)),
+                upgrade_interface: get(b"slUpgradeInterface\0")
+                    .map(|f| std::mem::transmute::<Farproc, UpgradeInterface>(f)),
+                set_feature_loaded: get(b"slSetFeatureLoaded\0")
+                    .map(|f| std::mem::transmute::<Farproc, SetFeatureLoaded>(f)),
+                set_options: set_options
+                    .map(|f| std::mem::transmute::<*mut c_void, SetOptions>(f)),
+                framegen,
             }
         };
-        tracing::info!(?dir, "dlss: Streamline initialised on the host device");
+        tracing::info!(?dir, ?features, dlss, framegen, "streamline: initialised on the host device");
         Some(sl)
     })
     .as_ref()
 }
+
 
 /// One upscale context of the title: a Streamline viewport.
 pub(super) struct Context {
@@ -757,7 +841,7 @@ pub(super) fn create(
     device: *mut c_void,
     upscale: &CreateUpscale,
 ) -> ReturnCode {
-    if streamline(device).is_none() {
+    if streamline(device).is_none_or(|sl| sl.set_options.is_none()) {
         return ERROR;
     }
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -796,7 +880,7 @@ pub(super) fn destroy(context: *mut *mut c_void) -> ReturnCode {
     }
     // SAFETY: a context `create` made, given back once.
     let ctx = unsafe { Box::from_raw((*context).cast::<Context>()) };
-    if let Some(sl) = streamline(std::ptr::null_mut()) {
+    if let Some(sl) = started() {
         // SAFETY: a viewport of ours.
         unsafe { (sl.free_resources)(FEATURE_DLSS, &Viewport::new(ctx.viewport)) };
     }
@@ -894,7 +978,16 @@ fn frame(ctx: &Context, d: &DispatchUpscale) -> Frame {
 
 /// Records DLSS for a dispatch whose resources and command list are
 /// already the host's (see the module description).
-pub(super) fn dispatch(context: *mut *mut c_void, d: &DispatchUpscale) -> ReturnCode {
+///
+/// `title_frame`: with frame generation on, the title's frame this upscale
+/// belongs to (`super::framegen::frame_index`), so that DLSS and frame
+/// generation give Streamline the same frame numbers; otherwise the
+/// dispatches are numbered as they come.
+pub(super) fn dispatch(
+    context: *mut *mut c_void,
+    d: &DispatchUpscale,
+    title_frame: Option<u32>,
+) -> ReturnCode {
     // SAFETY: the title's context pointer, checked for null by the caller.
     let ctx = unsafe { *context }.cast::<Context>();
     if ctx.is_null() {
@@ -902,7 +995,7 @@ pub(super) fn dispatch(context: *mut *mut c_void, d: &DispatchUpscale) -> Return
     }
     // SAFETY: a context `create` made.
     let ctx = unsafe { &*ctx };
-    let Some(sl) = streamline(std::ptr::null_mut()) else {
+    let Some((sl, set_options)) = started().and_then(|sl| Some((sl, sl.set_options?))) else {
         return ERROR;
     };
     if d.resources[1].resource.is_null() || d.resources[2].resource.is_null() {
@@ -913,7 +1006,7 @@ pub(super) fn dispatch(context: *mut *mut c_void, d: &DispatchUpscale) -> Return
     // One frame of Streamline's at a time, numbered by dispatch.
     static FRAME: Mutex<u32> = Mutex::new(0);
     let mut index = FRAME.lock().unwrap_or_else(|e| e.into_inner());
-    *index = index.wrapping_add(1);
+    *index = title_frame.unwrap_or_else(|| index.wrapping_add(1));
     let mut token = std::ptr::null_mut();
     // SAFETY: Streamline's calls with structures that outlive them, on an
     // open host command list.
@@ -922,7 +1015,7 @@ pub(super) fn dispatch(context: *mut *mut c_void, d: &DispatchUpscale) -> Return
         if r != 0 {
             return report("slGetNewFrameToken", r);
         }
-        let r = (sl.set_options)(&viewport, &f.options);
+        let r = set_options(&viewport, &f.options);
         if r != 0 {
             return report("slDLSSSetOptions", r);
         }
@@ -1334,7 +1427,7 @@ mod tests {
                 d.pre_exposure = 1.0;
                 d.reset = true;
                 d.camera = [0.1, 1000.0, 1.0, 1.0];
-                assert_eq!(dispatch(&mut ctx, &d), OK);
+                assert_eq!(dispatch(&mut ctx, &d, None), OK);
 
                 let mut footprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT::default();
                 let mut total = 0;

@@ -81,6 +81,12 @@ machine from ~5 to ~10 frames per second. Each session also records the pipeline
 > **PC with 16 GB of RAM:** close your browser, Discord and other programs before playing. The profile adapts
 > on its own (part of the game's memory moves to the card; Resizable BAR is required).
 
+> [!TIP]
+> **6 GB card (or a black screen):** on a laptop, Windows Settings → System → Display → Graphics, add
+> `VIctory S.exe` and `engine\victory.exe` and set both to **High performance** (the NVIDIA card, not the chip
+> in the CPU); close your browser, Discord and OBS; turn on **Settings → Low video memory mode** (the launcher
+> recommends it on 6 GB cards).
+
 > [!WARNING]
 > This is a **preview**: expect modest frame rates, picture glitches at times, and crashes. Keep a copy of
 > your saves (the launcher's "Copy my saves" shortcut).
@@ -114,6 +120,7 @@ a row without a measurement is waiting for yours.
 | RTX 3050 8 GB, same PC | Boat driven in game, 7 minutes (base of 27 Nov) | **8.6 to 9.9 fps** on the water |
 | RTX 3050 8 GB, same PC | DLSS ultra performance (base of 27 Nov) | 90 ms per frame (11.2 fps), clean picture |
 | RTX 3050 8 GB, same PC | DLSS performance / quality (base of 27 Nov) | 102 ms / 176 ms per frame |
+| RTX 3050 8 GB, same PC | Frame generation (FSR 3 through dlssg-to-fsr3) with its memory settings (0.2) | 91 ms per real frame (~11 fps), **~22 frames shown**, characters textured |
 | GTX 1660 / RTX 2060 6 GB | 6 GB profile | *to measure: help us* |
 | RTX 3060 12 GB, RTX 4060 8 GB | 8 GB / 11 GB and more profile | *to measure: help us* |
 | RTX 4050 6 GB laptop, 16 GB of RAM | 6 GB, 16 GB profile | *to measure: help us* |
@@ -176,6 +183,44 @@ default the launcher stays on "Recommended" (540p and the game's upscaler).
 </details>
 
 <details>
+<summary><b>Frame generation?</b></summary>
+
+**Settings → Frame generation (FSR 3)**, off by default, on NVIDIA RTX 20/30/40/50 and GTX 16 cards (not offered
+on AMD and Intel yet). It shows about **twice the frames**; the game still reacts at the pace of the real frames
+(input lag unchanged), so it feels best above ~30 real fps; it uses ~1 GB of video memory, so the launcher lowers
+the card memory settings while it is on (measured: without that, objects went black).
+
+- **RTX 20/30, GTX 16**: AMD FSR 3 frame generation behind NVIDIA DLSS-G's calls, through
+  [dlssg-to-fsr3](https://github.com/Nukem9/dlssg-to-fsr3) (Nukem9, GPL-3.0), built from source and included in
+  the zip (`fg\`, with its licence and how it was built). The launcher puts it next to `engine\victory.exe` only
+  for a game with frame generation on.
+- **RTX 40/50**: NVIDIA's own DLSS Frame Generation.
+- NVIDIA's files (Streamline 2.14.16: `sl.interposer.dll`, `sl.dlss_g.dll`, `nvngx_dlssg.dll`...) are **fetched
+  from NVIDIA's own release** when you turn it on (or with "Get frame generation files"), each checked against
+  its SHA-256, into `%LOCALAPPDATA%\Sagouindupm\framegen`. NVIDIA's licence does not let us ship them.
+
+The game window's title then shows `11 fps · ~22 shown` (with dlssg-to-fsr3 the shown count is the multiplier,
+hence the `~`).
+</details>
+
+<details>
+<summary><b>6 GB card, black screen or black objects?</b></summary>
+
+The game needs nearly all of a 6 GB card's memory. On a laptop, Windows Settings → System → Display → Graphics:
+add `VIctory S.exe` and `engine\victory.exe`, both on **High performance**. Close your browser, Discord, OBS and
+overlays. Then **Settings → Low video memory mode** (smaller textures, fewer card buffers: a little less sharp),
+which the launcher recommends on cards with 6 GB or less but never turns on by itself.
+</details>
+
+<details>
+<summary><b>How do I send my log?</b></summary>
+
+**Logs folder** (left column of the launcher, or `%LOCALAPPDATA%\Sagouindupm\journaux`), take the **newest
+`partie_….log`** (sort by date): it is your last game's. Attach it to your
+[issue](https://github.com/sagouindupm/Mandy/issues) or feedback, with what you saw and when.
+</details>
+
+<details>
 <summary><b>I have 16 GB of RAM.</b></summary>
 
 The profile sees it and adapts: part of the game's memory moves into the card's (Resizable BAR is required,
@@ -220,7 +265,7 @@ glitches, screenshots) and send it yourself.
 <p align="center"><img src="docs/assets/launcher-aide.png" alt="The launcher's Help page and the &quot;Give feedback&quot; button" width="80%"></p>
 
 A crash or a specific bug: [open an issue](https://github.com/sagouindupm/Mandy/issues) with the session log
-(Settings → Logs).
+(Logs folder, the newest `partie_….log`).
 
 ## For developers
 
@@ -239,14 +284,17 @@ Or double-click `series-s\dev\Sagouindupm-Launcher.bat`, which installs what is 
 launcher; from a repository checkout, step 1 of the launcher compiles the engine.
 
 The download is made with `scripts\package-release.ps1` (engine and launcher for any x86-64 CPU with AVX2, no
-Visual C++ runtime to install; content check, zip in `dist\`). A `v<version>` tag publishes it to the Releases
-(`.github/workflows/release.yml`).
+Visual C++ runtime to install; content check, zip in `dist\`). Since 0.2 it also takes dlssg-to-fsr3 built from
+source (`-Fsr3Build <folder>`, steps in [scripts/release/fg-README.txt](scripts/release/fg-README.txt)); the
+release workflow does not build it yet and stops with that explanation, so releases are packaged locally and the
+zip attached to the release by hand. Changes per version: [CHANGELOG.md](CHANGELOG.md).
 </details>
 
 <details>
 <summary><b>The console launcher</b></summary>
 
-`series-s\dev\Sagouindupm.bat`: a menu in a console (prepare the shaders, play, build the pipelines, DLSS, saves).
+`series-s\dev\Sagouindupm.bat`: a menu in a console (prepare the shaders, play, build the pipelines, DLSS, saves,
+frame generation, low video memory mode).
 It reads the same settings (`series-s\reglages.json`, applied by `series-s\reglages.ps1`), computes the same
 profile and shares the graphical launcher's configuration (`%LOCALAPPDATA%\Sagouindupm`). The first time:
 **[2]** (translates the shaders and keeps along the way those named by the shared list), **[3]** (imports the
@@ -291,6 +339,10 @@ victory warm --used
   (the heat haze left out).
 - **[WASDeKeys/victory-low-end-pc](https://github.com/WASDeKeys/victory-low-end-pc)**, **[stellarr-studio/kelvaroq](https://github.com/stellarr-studio/kelvaroq)**
   (patches, including mesh draws launched by the card): measurements and methods for small cards.
+- Frame generation: trustno1-coder/VIctory-NVIDIA (the Streamline DLSS-G path) and
+  [pepezin-ai/VIctory-NVIDIA](https://github.com/pepezin-ai/VIctory-NVIDIA) (inputs from every upscale);
+  **[dlssg-to-fsr3](https://github.com/Nukem9/dlssg-to-fsr3)** by Nukem9 (FSR 3 behind DLSS-G, GPL-3.0, shipped in
+  `fg\`); NVIDIA Streamline, fetched from NVIDIA.
 - Developed with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Contributors

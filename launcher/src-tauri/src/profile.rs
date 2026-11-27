@@ -101,6 +101,11 @@ pub struct Profile {
     pub dlss: bool,
     /// The NVIDIA facts for « victory shaders » (waves of 32...).
     pub shaders_nvidia: bool,
+    /// Frame generation on this card (« framegen » in reglages.json, set by settings::profile): "fsr3" (RTX 20/30,
+    /// GTX 16: dlssg-to-fsr3), "nvidia" (RTX 40/50: NVIDIA's own DLSS-G) or "" (not offered).
+    pub framegen: String,
+    /// The low video memory mode is advised for this card (« petite_vram », set by settings::profile).
+    pub low_vram_advised: bool,
 }
 
 /// The vendor class from the card's name (same rules as Get-GpuVendor in reglages.ps1).
@@ -119,6 +124,39 @@ pub fn vendor_of(gpu_name: &str) -> &'static str {
     } else {
         "inconnu"
     }
+}
+
+/// Frame generation on a card from its name: "fsr3" when its series (« RTX 30 » for an RTX 3050) is in `fsr3`,
+/// "nvidia" when in `nvidia`, else "" (same rules as Get-FramegenKind in reglages.ps1).
+pub fn framegen_kind(gpu_name: &str, fsr3: &[String], nvidia: &[String]) -> &'static str {
+    let Some(series) = card_series(gpu_name) else { return "" };
+    if fsr3.contains(&series) {
+        "fsr3"
+    } else if nvidia.contains(&series) {
+        "nvidia"
+    } else {
+        ""
+    }
+}
+
+/// « RTX 30 » from « NVIDIA GeForce RTX 3050 Laptop GPU », « GTX 16 » from « GTX 1660 SUPER »: RTX or GTX as a
+/// word, spaces, then exactly four digits, of which the first two.
+fn card_series(gpu_name: &str) -> Option<String> {
+    let n = gpu_name.to_uppercase();
+    let b = n.as_bytes();
+    for family in ["RTX", "GTX"] {
+        for (i, _) in n.match_indices(family) {
+            if i > 0 && b[i - 1].is_ascii_alphanumeric() {
+                continue;
+            }
+            let rest = n[i + 3..].trim_start();
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if digits.len() == 4 {
+                return Some(format!("{family} {}", &digits[..2]));
+            }
+        }
+    }
+    None
 }
 
 /// "NVIDIA GeForce RTX 3050" -> "RTX 3050" (as shortGpu in the window).
@@ -314,7 +352,7 @@ mod tests {
     /// The variables the game gets (without DLSS, VICTORY_CONFIG, the skip list), as NAME=value.
     fn env_of(r: &Reglages, h: &Hardware) -> std::collections::BTreeMap<String, String> {
         let s = Settings(Map::new());
-        game_env_for(r, &s, h, "C:\\x\\victory.toml", "skip").set.into_iter().collect()
+        game_env_for(r, &s, h, "C:\\x\\victory.toml", "skip", std::path::Path::new("C:\\nowhere")).set.into_iter().collect()
     }
 
     fn get<'a>(e: &'a std::collections::BTreeMap<String, String>, k: &str) -> Option<&'a str> {
@@ -387,6 +425,101 @@ mod tests {
                 assert_ne!(get(&e, "VICTORY_CARD_BUFFERS_MB"), Some("2048"), "{}", p.label);
             }
         }
+    }
+
+    #[test]
+    fn frame_generation_by_card() {
+        let r = reglages();
+        for (gpu, kind) in [
+            ("NVIDIA GeForce RTX 3050", "fsr3"),
+            ("NVIDIA GeForce RTX 2060", "fsr3"),
+            ("NVIDIA GeForce RTX 3050 Ti Laptop GPU", "fsr3"),
+            ("NVIDIA GeForce GTX 1660 SUPER", "fsr3"),
+            ("NVIDIA GeForce RTX 4070", "nvidia"),
+            ("NVIDIA GeForce RTX 4060Ti", "nvidia"),
+            ("NVIDIA GeForce RTX 5090", "nvidia"),
+            ("NVIDIA GeForce GTX 1080", ""),
+            ("NVIDIA RTX A2000", ""),
+            ("AMD Radeon RX 6600", ""),
+            ("Intel(R) Arc(TM) A770 Graphics", ""),
+            ("", ""),
+        ] {
+            assert_eq!(r.framegen.kind(gpu), kind, "{gpu}");
+        }
+        let p = crate::settings::profile(&r, &hw("NVIDIA GeForce RTX 3050", 8, 12, 32));
+        assert_eq!((p.framegen.as_str(), p.low_vram_advised), ("fsr3", false));
+        let p = crate::settings::profile(&r, &hw("NVIDIA GeForce GTX 1660 SUPER", 6, 8, 16));
+        assert!(p.low_vram_advised);
+    }
+
+    /// The two options: what they change, and nothing when off or without the frame generation files.
+    #[test]
+    fn options_low_video_memory_and_frame_generation() {
+        let r = reglages();
+        let dir = std::env::temp_dir().join(format!("victory-s-fg-{}", std::process::id()));
+        let empty = std::env::temp_dir().join(format!("victory-s-fg-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&empty).unwrap();
+        for f in r.framegen.fichiers_requis.iter().chain(&r.framegen.fichiers_dlss) {
+            std::fs::write(dir.join(f), b"").unwrap();
+        }
+        let dir_s = dir.display().to_string();
+        let env = |h: &Hardware, fg: bool, low: bool, mode: &str, d: &std::path::Path| {
+            let mut s = Settings(Map::new());
+            s.set("framegen", fg);
+            s.set("petite_vram", low);
+            s.set("dlss_mode", mode);
+            let plan = game_env_for(&r, &s, h, "t", "skip", d);
+            (plan.set.into_iter().collect::<std::collections::BTreeMap<_, _>>(), plan.remove)
+        };
+        let rtx3050 = hw("NVIDIA GeForce RTX 3050", 8, 12, 32);
+        let (off, off_remove) = env(&rtx3050, false, false, "", &dir);
+        let (plain, plain_remove) = env(&rtx3050, false, false, "", &empty);
+        assert_eq!((&off, &off_remove), (&plain, &plain_remove), "both off: the folder changes nothing");
+        assert_eq!(off_remove, ["VICTORY_DLSS_DIR", "VICTORY_DLSS_MODE"]);
+
+        let (e, _) = env(&rtx3050, false, true, "", &dir);
+        assert_eq!(get(&e, "VICTORY_TEXTURE_MAX"), Some("1024"));
+        assert_eq!(get(&e, "VICTORY_CARD_BUFFERS_MB"), Some("512"));
+        assert_eq!(get(&e, "VICTORY_CARD_ROOM_FOR_TARGETS_MB"), Some("768"));
+        assert_eq!(get(&e, "VICTORY_FRAMEGEN"), None);
+
+        let (e, remove) = env(&rtx3050, true, false, "", &dir);
+        assert_eq!(get(&e, "VICTORY_FRAMEGEN"), Some("1"));
+        assert_eq!(get(&e, "VICTORY_FRAMEGEN_X"), Some("2"));
+        assert_eq!(get(&e, "VICTORY_TEXTURE_ROOM_PERCENT"), Some("90"));
+        assert_eq!(get(&e, "VICTORY_CARD_BUFFERS_MB"), Some("768"));
+        assert_eq!(get(&e, "VICTORY_FRAMEGEN_DIR"), Some(dir_s.as_str()));
+        assert_eq!(get(&e, "VICTORY_DLSS_MODE"), Some("off"));
+        assert_eq!(get(&e, "VICTORY_DLSS_DIR"), None);
+        assert_eq!(get(&e, "VICTORY_RENDER_SCALE"), Some("0.5"));
+        assert_eq!(get(&e, "VICTORY_TEXTURE_MAX"), None);
+        assert_eq!(remove, ["VICTORY_DLSS_DIR"]);
+
+        // Both: the lower card buffers stay.
+        let (e, _) = env(&rtx3050, true, true, "", &dir);
+        assert_eq!(get(&e, "VICTORY_CARD_BUFFERS_MB"), Some("512"));
+        assert_eq!(get(&e, "VICTORY_TEXTURE_ROOM_PERCENT"), Some("90"));
+
+        // With DLSS super resolution: Streamline from the frame generation folder.
+        let (e, remove) = env(&rtx3050, true, false, "performance", &dir);
+        assert_eq!(get(&e, "VICTORY_DLSS_DIR"), Some(dir_s.as_str()));
+        assert_eq!(get(&e, "VICTORY_DLSS_MODE"), Some("performance"));
+        assert_eq!(get(&e, "VICTORY_RENDER_SCALE"), None);
+        assert_eq!(remove, ["VICTORY_RENDER_SCALE", "VICTORY_OWN_UPSCALER"]);
+
+        // RTX 40: NVIDIA's own, the same variables; 2048 MB of buffers capped too.
+        let (e, _) = env(&hw("NVIDIA GeForce RTX 4070", 12, 20, 32), true, false, "", &dir);
+        assert_eq!(get(&e, "VICTORY_CARD_BUFFERS_MB"), Some("768"));
+
+        // Not on AMD, and not without the files.
+        let (e, _) = env(&hw("AMD Radeon RX 6600", 8, 12, 16), true, false, "", &dir);
+        assert_eq!(get(&e, "VICTORY_FRAMEGEN"), None);
+        let (e, _) = env(&rtx3050, true, false, "", &empty);
+        assert_eq!((get(&e, "VICTORY_FRAMEGEN"), get(&e, "VICTORY_CARD_BUFFERS_MB")), (None, Some("1024")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&empty);
     }
 
     /// Unknown card memory and threads: the groups' values stay.

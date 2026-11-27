@@ -11,6 +11,8 @@
 /target/
 # The downloadable package (scripts/package-release.ps1)
 /dist/
+# dlssg-to-fsr3 copied beside a checkout for testing frame generation (the package's fg\; never committed)
+/fg/
 /tests/fixtures/*/target/
 
 # Graphical launcher (launcher/): npm packages, build output, the icon drawn by build.rs

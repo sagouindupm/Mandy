@@ -8,6 +8,10 @@
 #
 # With -Launcher, each machine is also computed by the graphical launcher (--print-env) and the two environments
 # are compared variable by variable. Exit code 1 at the first difference.
+#
+# Then the two options of 0.2 (low video memory mode, frame generation, "petite_vram" and "framegen" in
+# reglages.json), on with a made-up frame generation folder (empty files): what they change, and with -Launcher the
+# same comparison. Off (the rows above, with this PC's lanceur.json), nothing of theirs is there.
 param([string]$Launcher = '')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\series-s\reglages.ps1')
@@ -75,6 +79,51 @@ if ($Launcher) {
     }
     Write-Host "Graphical launcher compared on $($rows.Count) machines."
 }
+
+# ------------------------------------------------------------------ options: low video memory, frame generation
+foreach ($k in @{ 'NVIDIA GeForce RTX 3050' = 'fsr3'; 'NVIDIA GeForce RTX 2060' = 'fsr3'; 'NVIDIA GeForce GTX 1660 SUPER' = 'fsr3'; 'NVIDIA GeForce RTX 3050 Ti Laptop GPU' = 'fsr3'
+        'NVIDIA GeForce RTX 4070' = 'nvidia'; 'NVIDIA GeForce RTX 5090' = 'nvidia'; 'NVIDIA GeForce GTX 1080' = ''; 'NVIDIA RTX A2000' = ''; 'AMD Radeon RX 6600' = '' }.GetEnumerator()) {
+    Test-Same "frame generation kind of $($k.Key)" (Get-FramegenKind $k.Key) $k.Value
+}
+Test-Same 'low video memory advised, 6 GB' (Get-HardwareProfile $rows[1].Pc).LowVramAdvised $true
+Test-Same 'low video memory advised, 8 GB' (Get-HardwareProfile $rows[0].Pc).LowVramAdvised $false
+
+$fgDir = Join-Path $env:TEMP 'victory-s-check-framegen'
+New-Item -ItemType Directory -Force $fgDir | Out-Null
+foreach ($f in @($Reglages.framegen.fichiers_requis) + @($Reglages.framegen.fichiers_dlss)) { Set-Content -LiteralPath (Join-Path $fgDir $f) '' }
+$emptyDir = Join-Path $env:TEMP 'victory-s-check-framegen-empty'
+New-Item -ItemType Directory -Force $emptyDir | Out-Null
+function New-Choice($fg, $low, $mode) { [pscustomobject]@{ dlss_mode = $mode; dlss_dir = ''; framegen = $fg; petite_vram = $low } }
+# Machine, frame generation, low video memory, DLSS mode, folder; then what the game gets ($null: absent).
+$cases = @(
+    @{ Pc = $rows[0].Pc; Fg = $false; Low = $true;  Mode = '';            Dir = $fgDir;    Want = @{ VICTORY_TEXTURE_MAX = '1024'; VICTORY_CARD_BUFFERS_MB = '512'; VICTORY_CARD_ROOM_FOR_TARGETS_MB = '768'; VICTORY_FRAMEGEN = $null } },
+    @{ Pc = $rows[0].Pc; Fg = $true;  Low = $false; Mode = '';            Dir = $fgDir;    Want = @{ VICTORY_FRAMEGEN = '1'; VICTORY_FRAMEGEN_X = '2'; VICTORY_TEXTURE_ROOM_PERCENT = '90'; VICTORY_CARD_BUFFERS_MB = '768'; VICTORY_FRAMEGEN_DIR = $fgDir; VICTORY_DLSS_MODE = 'off'; VICTORY_DLSS_DIR = $null; VICTORY_RENDER_SCALE = '0.5'; VICTORY_TEXTURE_MAX = $null } },
+    @{ Pc = $rows[0].Pc; Fg = $true;  Low = $true;  Mode = '';            Dir = $fgDir;    Want = @{ VICTORY_FRAMEGEN = '1'; VICTORY_CARD_BUFFERS_MB = '512'; VICTORY_TEXTURE_MAX = '1024'; VICTORY_TEXTURE_ROOM_PERCENT = '90' } },
+    @{ Pc = $rows[0].Pc; Fg = $true;  Low = $false; Mode = 'performance'; Dir = $fgDir;    Want = @{ VICTORY_FRAMEGEN = '1'; VICTORY_DLSS_DIR = $fgDir; VICTORY_DLSS_MODE = 'performance'; VICTORY_RENDER_SCALE = $null; VICTORY_OWN_UPSCALER = $null } },
+    @{ Pc = $rows[3].Pc; Fg = $true;  Low = $false; Mode = '';            Dir = $fgDir;    Want = @{ VICTORY_FRAMEGEN = '1'; VICTORY_CARD_BUFFERS_MB = '768' } },
+    @{ Pc = $rows[4].Pc; Fg = $true;  Low = $false; Mode = '';            Dir = $fgDir;    Want = @{ VICTORY_FRAMEGEN = $null; VICTORY_DLSS_MODE = $null } },
+    @{ Pc = $rows[0].Pc; Fg = $true;  Low = $false; Mode = '';            Dir = $emptyDir; Want = @{ VICTORY_FRAMEGEN = $null; VICTORY_TEXTURE_ROOM_PERCENT = $null; VICTORY_CARD_BUFFERS_MB = '1024' } }
+)
+foreach ($c in $cases) {
+    $map = Get-GameEnvMap (New-Choice $c.Fg $c.Low $c.Mode) $c.Pc $c.Dir
+    $what = "$($c.Pc.GpuName) framegen=$($c.Fg) low=$($c.Low) dlss='$($c.Mode)' dir=$(Split-Path -Leaf $c.Dir)"
+    foreach ($k in $c.Want.Keys) { Test-Same "$what $k" $(if ($map.Set.Contains($k)) { $map.Set[$k] } else { $null }) $c.Want[$k] }
+    if ($Launcher) {
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        $args_ = @('--print-env', "`"$tmp`"", '--ram-gb', [int]($c.Pc.RamBytes / $GB), '--vram-gb', [int]($c.Pc.VramBytes / $GB), '--threads', $c.Pc.Threads, '--gpu', "`"$($c.Pc.GpuName)`"", '--framegen-dir', "`"$($c.Dir)`"")
+        $args_ += @('--framegen', $(if ($c.Fg) { 'on' } else { 'off' }), '--low-vram', $(if ($c.Low) { 'on' } else { 'off' }))
+        if ($c.Mode) { $args_ += @('--dlss', '""', $c.Mode) } else { $args_ += @('--dlss', '""', 'off') }
+        Start-Process -FilePath $Launcher -ArgumentList $args_ -Wait -WindowStyle Hidden
+        if (-not (Test-Path $tmp)) { Write-Host "  MISMATCH: the launcher wrote nothing for $what" -ForegroundColor Red; $failed++; continue }
+        $rust = @{}
+        foreach ($line in Get-Content $tmp -Encoding UTF8) { $i = $line.IndexOf('='); if ($i -gt 0) { $rust[$line.Substring(0, $i)] = $line.Substring($i + 1) } }
+        foreach ($k in $map.Set.Keys) { Test-Same "launcher $what $k" $rust[$k] $map.Set[$k] }
+        foreach ($k in $map.Remove) { if ($rust.ContainsKey($k)) { Write-Host "  MISMATCH: $k should be removed ($what)" -ForegroundColor Red; $failed++ } }
+        foreach ($k in $rust.Keys) { if ($k -like 'VICTORY_*' -and -not $map.Set.Contains($k) -and -not (Test-Path "env:$k")) { Write-Host "  MISMATCH: $k extra in the launcher ($what)" -ForegroundColor Red; $failed++ } }
+    }
+}
+Remove-Item -Recurse -Force $fgDir, $emptyDir -ErrorAction SilentlyContinue
+Write-Host "Options (low video memory, frame generation) checked on $($cases.Count) cases$(if ($Launcher) { ', with the graphical launcher' })."
 
 if ($failed) { Write-Host "$failed mismatch(es)." -ForegroundColor Red; exit 1 }
 Write-Host 'Profiles match.' -ForegroundColor Green

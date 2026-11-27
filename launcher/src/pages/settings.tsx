@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { LANGS, type Lang, useI18n } from "@/i18n"
 
 function PathField({ value, empty }: { value: string; empty: string }) {
@@ -81,6 +82,109 @@ function ProfileCard({ ctx }: { ctx: Ctx }) {
           </code>
         ))}
       </div>
+    </Card>
+  )
+}
+
+function EnvChips({ env }: { env: [string, string][] }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {env.map(([k, v]) => (
+        <code key={k} className="rounded-sm border border-border bg-field px-2 py-1 font-mono text-[11px] text-white/80">
+          {k.replace(/^VICTORY_/, "")}={v}
+        </code>
+      ))}
+    </div>
+  )
+}
+
+/** Frame generation (« framegen » in series-s/reglages.json): NVIDIA cards that have it only, off by default. */
+function FramegenCard({ ctx }: { ctx: Ctx }) {
+  const { t } = useI18n()
+  const fg = ctx.snap.framegen
+  // Not offered on AMD, Intel or older NVIDIA cards (nor before the graphics card is checked).
+  if (!fg || fg.kind === "") return null
+  const on = ctx.snap.settings.framegen
+  const busy = ctx.running !== null
+  const ready = fg.filesOk && (fg.kind !== "fsr3" || fg.fsr3Ready)
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <CardTitle>{t("settings.framegen")}</CardTitle>
+            <StateBadge
+              level={!on ? "info" : ready ? "ok" : "warn"}
+              label={!on ? t("settings.option.off") : ready ? t("settings.option.on") : t("settings.framegen.notReady")}
+            />
+          </div>
+          <CardDescription>{fg.kind === "nvidia" ? t("settings.framegen.nvidia") : t("settings.framegen.fsr3")}</CardDescription>
+        </div>
+        <Switch
+          checked={on}
+          onCheckedChange={(v) => ctx.setOption("framegen", v)}
+          disabled={busy}
+          aria-label={t("settings.framegen")}
+        />
+      </div>
+      <p className="flex gap-2 text-[12.5px] leading-relaxed text-warning">
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
+        <span>{t("settings.framegen.warning")}</span>
+      </p>
+      <div className="flex flex-col gap-2">
+        <span className="label">{t("settings.framegen.files")}</span>
+        <span className="text-[12.5px] text-muted-foreground">
+          {fg.filesOk ? t("settings.framegen.filesOk") : t("settings.framegen.filesMissing", { files: fg.missing.join(", ") })}
+        </span>
+        {fg.kind === "fsr3" && !fg.fsr3Ready && <span className="text-[12.5px] text-warning">{t("settings.framegen.noFsr3")}</span>}
+        <div className="mt-1 flex items-center gap-4">
+          <Button variant="secondary" size="sm" onClick={ctx.getFramegenFiles} disabled={busy}>
+            <Download strokeWidth={2} />
+            {t("settings.framegen.get")}
+          </Button>
+          <Button variant="link" className="text-[12.5px]" onClick={() => ctx.open("framegen")}>
+            {t("common.openFolder")}
+          </Button>
+        </div>
+      </div>
+      <EnvChips env={fg.env} />
+    </Card>
+  )
+}
+
+/** Low video memory mode (« petite_vram » in series-s/reglages.json): advised, never forced, on 6 GB cards. */
+function LowVramCard({ ctx }: { ctx: Ctx }) {
+  const { t } = useI18n()
+  const on = ctx.snap.settings.petiteVram
+  const hw = ctx.snap.hardware
+  const advised = !!hw?.lowVramAdvised
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <CardTitle>{t("settings.lowVram")}</CardTitle>
+            <StateBadge
+              level={on ? "ok" : advised ? "warn" : "info"}
+              label={on ? t("settings.option.on") : advised ? t("settings.lowVram.recommended") : t("settings.option.off")}
+            />
+          </div>
+          <CardDescription>{t("settings.lowVram.desc")}</CardDescription>
+        </div>
+        <Switch
+          checked={on}
+          onCheckedChange={(v) => ctx.setOption("petite_vram", v)}
+          disabled={ctx.running === "play"}
+          aria-label={t("settings.lowVram")}
+        />
+      </div>
+      {advised && !on && (
+        <p className="flex gap-2 text-[12.5px] leading-relaxed text-white/80">
+          <Info className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
+          <span>{t("settings.lowVram.advised", { gb: hw?.vramGb ?? 0 })}</span>
+        </p>
+      )}
+      <EnvChips env={ctx.snap.lowVramEnv} />
     </Card>
   )
 }
@@ -223,6 +327,11 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
           </div>
           {snap.cacheInherited && <p className="text-[12.5px] text-muted-foreground">{t("settings.cache", { dir: snap.cacheDir })}</p>}
         </Card>
+      </div>
+
+      <div className="grid grid-cols-2 gap-6">
+        <FramegenCard ctx={ctx} />
+        <LowVramCard ctx={ctx} />
       </div>
 
       <LanguageCard />
