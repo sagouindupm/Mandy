@@ -75,7 +75,7 @@ function Fact({ label, value, note, level, action }: {
         <span className="label">{label}</span>
         {level === "warn" && <StateBadge level="warn" />}
       </div>
-      <span className="truncate text-[15px] font-bold">{value}</span>
+      <span className="text-[15px] leading-snug font-bold">{value}</span>
       <p className="text-[12.5px] leading-relaxed text-muted-foreground">{note}</p>
       {action}
     </div>
@@ -114,7 +114,9 @@ export function PreparePage({ ctx }: { ctx: Ctx }) {
                 ? `Étape ${preparing.done + 1} sur ${preparing.total}.`
                 : auto > 0
                   ? `${auto} étape${auto > 1 ? "s" : ""} automatique${auto > 1 ? "s" : ""}, dans l'ordre.`
-                  : "Les étapes restantes se règlent depuis leur carte."}
+                  : ok === steps.length
+                    ? "Tout est prêt."
+                    : "Les étapes restantes se règlent depuis leur carte."}
             </p>
           </div>
           {running && running !== "play" ? (
