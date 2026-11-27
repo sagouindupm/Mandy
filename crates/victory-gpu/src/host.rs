@@ -11317,8 +11317,9 @@ fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
     )
 }
 
-/// The title bar in GTA pink-violet with white text (Windows 11; older
-/// systems ignore the attributes). Once per window.
+/// The title bar in the sunset pink of the title's own art (#FF3C78) with a
+/// coral border (#FF6B35) and white text (Windows 11; older systems ignore
+/// the attributes). Once per window.
 fn paint_caption(hwnd: usize) {
     static PAINTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     if PAINTED.swap(hwnd, Ordering::Relaxed) == hwnd {
@@ -11329,8 +11330,8 @@ fn paint_caption(hwnd: usize) {
         fn DwmSetWindowAttribute(hwnd: isize, attribute: u32, value: *const core::ffi::c_void, size: u32) -> i32;
     }
     // COLORREF is 0x00BBGGRR.
-    const CAPTION: u32 = 0x0080_2A8E; // #8E2A80
-    const BORDER: u32 = 0x00B4_4BD9; // #D94BB4
+    const CAPTION: u32 = 0x0078_3CFF; // #FF3C78
+    const BORDER: u32 = 0x0035_6BFF; // #FF6B35
     const TEXT: u32 = 0x00FF_FFFF;
     for (attribute, colour) in [(35u32, CAPTION), (34, BORDER), (36, TEXT)] {
         // SAFETY: a window handle and a 4-byte value.
