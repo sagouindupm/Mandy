@@ -6,13 +6,8 @@
 # Pas 'Stop' : sous Windows PowerShell 5.1, chaque ligne que le jeu écrit sur sa sortie d'erreur
 # devient une erreur, et le lanceur s'arrêtait à la première ligne du journal.
 $ErrorActionPreference = 'Continue'
-$Root   = Split-Path -Parent $PSScriptRoot
-$Exe    = Join-Path $Root 'target\release\victory.exe'
-$Home_  = Join-Path $env:LOCALAPPDATA 'Sagouindupm'
-$Conf   = Join-Path $Home_ 'lanceur.json'
-$Toml   = Join-Path $Home_ 'victory.toml'
-$Logs   = Join-Path $Home_ 'journaux'
-New-Item -ItemType Directory -Force $Home_, $Logs | Out-Null
+# Chemins, lanceur.json, réglages Series S, ray tracing, règle des 24 Go, DLSS : series-s\reglages.ps1
+. (Join-Path $PSScriptRoot 'reglages.ps1')
 
 function Show-Title {
     Clear-Host
@@ -23,19 +18,6 @@ function Show-Title {
     Write-Host ''
 }
 
-function Get-Settings {
-    if (Test-Path $Conf) { return Get-Content $Conf -Raw | ConvertFrom-Json }
-    [pscustomobject]@{ game_exe = ''; shaders_dir = ''; shaders_ready = $false; parties = 0 }
-}
-# Réglages ajoutés après la première version du lanceur : présents même dans un ancien lanceur.json.
-function Complete-Settings($s) {
-    foreach ($k in 'dlss_dir', 'dlss_mode') {
-        if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue '' }
-    }
-    $s
-}
-function Save-Settings($s) { $s | ConvertTo-Json | Set-Content -Encoding utf8 $Conf }
-
 function Initialize-Game($s) {
     while (-not ($s.game_exe -and (Test-Path $s.game_exe))) {
         Write-Host "Premier lancement : où est le jeu ?" -ForegroundColor Yellow
@@ -43,57 +25,7 @@ function Initialize-Game($s) {
         $p = (Read-Host 'Chemin').Trim('"', ' ')
         if ($p -and (Test-Path $p) -and $p.EndsWith('.exe')) { $s.game_exe = $p } else { Write-Host 'Fichier introuvable, réessayez.' -ForegroundColor Red }
     }
-    $dir = (Split-Path -Parent $s.game_exe) -replace "'", "''"
-    "[paths]`ngame_dir = '$dir'`ntest_titles = []`n" | Set-Content -Encoding utf8 $Toml
-    Save-Settings $s
-}
-
-# Réglages Series S (base trustno1-coder/VIctory-NVIDIA réglée pour RTX 3060 par Maykzera), mesurés ici sur
-# RTX 3050 8 Go + i5-12400F : ~84 ms par image (11,8 fps) dans la cinématique du bateau, eau et visages fidèles.
-$SeriesS = @{
-    # Série rapide (avatarmanz/trustno1)
-    VICTORY_TEXTURE_NO_WAIT = '1'; VICTORY_RELAY = '2'; VICTORY_CARD_STEPS = '2'
-    VICTORY_WIDE_BACK = '1'; VICTORY_CARD_REHASH_RUNS = '1'; VICTORY_JOIN_COPIES = '1'
-    VICTORY_INDIRECT_WINDOW = '1'; VICTORY_RELAY_COPY = '1'; VICTORY_INDIRECT_BATCH = '2'
-    VICTORY_MAP_THREADS = '1'; VICTORY_TITLE_PRIORITIES = '0'; VICTORY_CARD_AWAKE = '1'
-    VICTORY_SHOW_AFTER = '1'; VICTORY_THIN = '1'; VICTORY_UPLOAD_AHEAD = '1'
-    # Processeur 6 cœurs / 12 fils (Maykzera) : moins de fils auxiliaires, 16 soumissions préparées ensemble ;
-    # 4 fils de traduction des listes et pas 5 (Maykzera, 2 mesures ; ici 87 ms contre 93, pire image 178 ms)
-    VICTORY_THIN_THREADS = '4'; VICTORY_UNDER_THREADS = '3'; VICTORY_VIEW_THREADS = '3'
-    VICTORY_PIPELINE_WORKERS = '4'; VICTORY_PIPELINE_LOWEST = '1'
-    VICTORY_JOIN_PARTS = '16'; VICTORY_JOIN_LISTS = '96'
-    # Une pipeline pas prête : 150 ms d'attente au plus (10 000 gelait l'image 12 s, avatarmanz #143)
-    VICTORY_PIPELINE_WAIT_MS = '150'
-    # Image : lumière de remplacement du ray tracing, NaN effacés, 540p + upscaler du jeu, interface Series S
-    VICTORY_AMBIENT = '0.8'; VICTORY_AMBIENT_AIR = '1.5'; VICTORY_AMBIENT_MOST = '2'
-    VICTORY_NAN_SCRUB = '1'; VICTORY_BVH_MISS = '1'; VICTORY_DYNAMIC_SLOTS = '524288'
-    VICTORY_RENDER_SCALE = '0.5'; VICTORY_OWN_UPSCALER = '1'; VICTORY_COMPOSE = '1'
-    VICTORY_CARD_BUFFERS_MIN_MB = '1'; VICTORY_CARD_BUFFERS_MB = '1536'
-    # Chaque partie note les pipelines créées, pour [3]
-    VICTORY_PIPELINE_BOOK = '1'
-}
-function Set-GameEnv {
-    $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\dxil.dll' -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
-    if ($sdk) { $env:PATH = "$($sdk.DirectoryName);$env:PATH" }
-    $env:VICTORY_CONFIG = $Toml
-    foreach ($k in $SeriesS.Keys) { Set-Item "env:$k" $SeriesS[$k] }
-    # Ray tracing : les ~1 000 passes de résolution sont sautées (pas de structure de rayons sur NVIDIA).
-    $rt = Join-Path $Root 'scripts\rt_off_hashes.txt'
-    # + la brume de chaleur 731a39171b568298 (foxhound : elle étale des blocs de pixels, aussi sur l'eau) :
-    #   84 ms contre 93 sur RTX 3050, image propre.
-    $skip = @('731a39171b568298')
-    if (Test-Path $rt) { $skip = @((Get-Content $rt -Raw).Trim()) + $skip }
-    $env:VICTORY_SKIP_PIPELINES = $skip -join ','
-    # PC à moins de 24 Go : fenêtres de mémoire du jeu dans la mémoire de la carte (évite le plantage 0x8007000E).
-    $ram = try { (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory } catch { 0 }
-    if ($ram -gt 0 -and $ram -lt 24GB) { $env:VICTORY_WINDOWS_BAR_MB = '3072' }
-    # DLSS (cartes RTX) à la place de l'upscaler du jeu, si le dossier de Streamline est donné ([6]).
-    # Mesuré sur RTX 3050 : ultra performance 90 ms (image propre), performance 102 ms, qualité 176 ms.
-    Remove-Item env:VICTORY_DLSS_DIR, env:VICTORY_DLSS_MODE -ErrorAction SilentlyContinue
-    if ($s.dlss_mode -and $s.dlss_mode -ne 'off' -and $s.dlss_dir -and (Test-Path (Join-Path $s.dlss_dir 'sl.interposer.dll'))) {
-        $env:VICTORY_DLSS_DIR = $s.dlss_dir; $env:VICTORY_DLSS_MODE = $s.dlss_mode
-        Remove-Item env:VICTORY_RENDER_SCALE, env:VICTORY_OWN_UPSCALER -ErrorAction SilentlyContinue
-    }
+    Write-VictoryToml $s
 }
 
 function Set-Dlss($s) {
@@ -114,7 +46,7 @@ function Set-Dlss($s) {
 }
 
 function Start-Game($s) {
-    Set-GameEnv
+    Set-GameEnv $s
     if (-not $s.shaders_ready) {
         Write-Host 'Shaders pas encore préparés : les premières minutes seront lentes. Conseil : [2] d''abord.' -ForegroundColor Yellow
     }
@@ -135,19 +67,21 @@ function Initialize-Shaders($s) {
         if (-not $p -or -not (Test-Path $p)) { Write-Host 'Annulé.'; return }
         $s.shaders_dir = $p; Save-Settings $s
     }
-    Set-GameEnv
+    Set-GameEnv $s
     # Les faits de la carte (NVIDIA : vagues de 32, 1 000 000 de vues) : sans eux le cache ne sert à rien en jeu.
-    $env:VICTORY_HOST_WAVE = '32'; $env:VICTORY_HOST_ROVS = '1'; $env:VICTORY_VIEW_LIMIT = '999999'
+    $hostEnv = Get-ShaderHostEnv; foreach ($k in $hostEnv.Keys) { Set-Item "env:$k" $hostEnv[$k] }
     Write-Host "`nTraduction de tous les shaders (15 à 30 minutes, le PC sera très occupé)..." -ForegroundColor Magenta
-    & $Exe shaders $s.shaders_dir --jobs ([Math]::Max(2, [Environment]::ProcessorCount - 2)) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt') | Select-Object -Last 3
+    & $Exe shaders $s.shaders_dir --jobs (Get-ShaderJobs) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt') | Select-Object -Last 3
     if ($LASTEXITCODE -eq 0) { $s.shaders_ready = $true; Save-Settings $s; Write-Host 'Shaders prêts !' -ForegroundColor Green }
     else { Write-Host "La traduction s'est arrêtée (code $LASTEXITCODE), voir $Logs." -ForegroundColor Red }
 }
 
 function Initialize-Pipelines {
-    Set-GameEnv
+    Set-GameEnv $s
     Write-Host "`nConstruction des pipelines notées pendant vos parties (quelques minutes)..." -ForegroundColor Magenta
     & $Exe warm --used | Tee-Object -FilePath (Join-Path $Logs 'pipelines_warm.txt') | Select-Object -Last 2
+    # Repère lu par le lanceur graphique : pipelines construites à ce nombre de parties.
+    if ($LASTEXITCODE -eq 0) { $s.pipelines_parties = $s.parties; Save-Settings $s }
     Write-Host 'Pipelines prêtes : la prochaine partie démarre sans à-coups.' -ForegroundColor Green
 }
 

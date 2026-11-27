@@ -62,7 +62,7 @@ start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` (12 s freezes); 
 | `crates/victory-gpu/src/texture.rs`, `resource.rs` | textures, uploads, format stand-ins |
 | `crates/victory-gpu/src/list/thin.rs`, `host/card_steps.rs`, `land.rs` | the avatarmanz architecture: list calls translated by our threads (`VICTORY_THIN`), reads of title memory under flights done on the card (`VICTORY_CARD_STEPS`), landing on helper threads |
 | `crates/victory-gpu/src/pipeline/known.rs`, `apps/victory/src/warm.rs` | the pipeline book (`VICTORY_PIPELINE_BOOK=1`) and `victory warm` |
-| `series-s/` | the launchers and every setting we ship |
+| `series-s/` | the launchers and every setting we ship: `reglages.ps1` (the one place for the Series S settings), `Sagouindupm.ps1` (console), `Sagouindupm-Launcher.ps1` (graphical, for novices) |
 | `scripts/bench/` | the measuring scripts |
 
 Big files: don't read `host.rs`, `shadow.rs` or `draw.rs` whole. `grep -n` for the switch or the
