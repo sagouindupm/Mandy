@@ -29,6 +29,21 @@ Series S. Le détail des essais (gardés, rejetés, à faire) est dans **[docs/e
 
 ## Lancer
 
+### Débutant : le lanceur graphique
+
+Double-cliquer sur **`series-s\Sagouindupm-Launcher.bat`** (rien à installer pour le lanceur lui-même).
+
+1. Onglet **Installation** → **« Tout préparer pour moi »** : il installe ce qui manque (Rust, outils C++
+   de Microsoft : Windows demande l'autorisation), compile VIctory, trouve le jeu
+   (`game_scarlett_master.exe` de votre copie) et traduit les shaders (15-30 min, une seule fois).
+   Chaque point est une tuile (vert prêt, orange à vérifier, rouge à faire) : un clic la répare ou
+   explique quoi faire (cache de shaders NVIDIA, alimentation, mémoire virtuelle, Resizable BAR, RAM, DLSS).
+2. Onglet **Jouer** → **JOUER**. Cette première partie note les pipelines que le jeu crée.
+3. Après la partie : **« Construire les pipelines »** (quelques minutes). La suivante n'a plus d'à-coups
+   ni de dessins manquants : c'est ce qui fait passer de ~5 à ~10 fps ici.
+
+### Utilisateurs avancés : le lanceur console
+
 1. Compiler : `cargo build --release --locked -p victory` (chaîne Rust de `rust-toolchain.toml`, outils
    MSVC et Windows SDK).
 2. Double-cliquer sur **`series-s\Sagouindupm.bat`**. Au premier lancement il demande où est
@@ -37,7 +52,11 @@ Series S. Le détail des essais (gardés, rejetés, à faire) est dans **[docs/e
    - **[2] Préparer les shaders** : traduit tous les shaders une fois (15-30 min). Indispensable.
    - **[1] Jouer** : chaque partie note les pipelines que le jeu crée.
    - **[3] Construire les pipelines** (quelques minutes) : la partie suivante n'a plus d'à-coups ni de
-     dessins manquants. C'est ce qui fait passer de ~5 à ~10 fps ici.
+     dessins manquants.
+
+Les deux lanceurs lisent les mêmes réglages mesurés, dans **`series-s\reglages.ps1`**, et la même
+configuration (`%LOCALAPPDATA%\Sagouindupm`). Les scripts de mesure (`scripts\bench`) appellent `victory.exe`
+directement.
 
 **Cartes NVIDIA** : réglez la **taille du cache de shaders sur « Illimitée »** (Panneau de configuration
 NVIDIA → Gérer les paramètres 3D). PC à moins de 24 Go de RAM : le lanceur place tout seul une partie de la
