@@ -90,6 +90,9 @@ mod diff_tests;
 mod intersect_tests;
 #[cfg(all(windows, any(test, feature = "host")))]
 pub mod host;
+#[cfg(all(test, windows))]
+mod lane_order_tests;
+mod lds;
 mod lower;
 mod own_bits;
 #[cfg(all(test, windows))]
@@ -149,6 +152,27 @@ pub fn loop_limit() -> u32 {
     })
 }
 
+thread_local! {
+    /// The loop limit of the translation running on this thread, if its
+    /// caller named one ([`with_loop_limit`]).
+    static LIMIT_HERE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` (a translation) with every loop of it stopped after `limit`
+/// iterations per entry, whatever the stage, where `limit` is given; else
+/// with [`loop_limit`]'s. The caller keys its cache of translations on it.
+pub fn with_loop_limit<R>(limit: Option<u32>, f: impl FnOnce() -> R) -> R {
+    let was = LIMIT_HERE.with(|l| l.replace(limit));
+    let out = f();
+    LIMIT_HERE.with(|l| l.set(was));
+    out
+}
+
+/// The loop limit the translation on this thread uses ([`with_loop_limit`]).
+pub(crate) fn loop_limit_here() -> u32 {
+    LIMIT_HERE.with(std::cell::Cell::get).unwrap_or_else(loop_limit)
+}
+
 /// Whether a pixel shader's helper lane reads its own value where the console reads the first
 /// lane's (`lower.rs` `first_lane`); on unless `VICTORY_HELPER_OWN=0`. Part of the translation:
 /// the shader cache keys on it.
@@ -164,7 +188,10 @@ pub fn helper_own() -> bool {
 /// thread: the group stands until Windows resets the card. (The console's
 /// barrier is the wave's, whatever lanes are live, and a wave that ended
 /// is not waited for.) `VICTORY_GROUP_SYNC`:
-/// - unset or `2`: every barrier waits, as before.
+/// - unset or `auto`: on hosts narrower than the console wave, the title's
+///   divergent barriers retain their memory fences but do not wait. Other
+///   hosts and uniform barriers keep their group sync.
+/// - `2`: every barrier waits, as before.
 /// - `1`: the title's `s_barrier` waits only in a block every lane runs,
 ///   in a program no lane can be cut out of at the iteration limit.
 /// - `0`: no barrier waits, neither the title's nor the ones the
@@ -176,12 +203,26 @@ pub fn helper_own() -> bool {
 /// Part of the translation: the shader cache keys on it (`victory-gpu`'s
 /// does).
 pub fn group_sync() -> u8 {
+    #[cfg(test)]
+    if let Some(mode) = TEST_GROUP_SYNC.get() {
+        return mode;
+    }
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| match std::env::var("VICTORY_GROUP_SYNC").ok().as_deref().map(str::trim) {
+    *MODE.get_or_init(|| parse_group_sync(std::env::var("VICTORY_GROUP_SYNC").ok().as_deref()))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_GROUP_SYNC: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
+}
+
+fn parse_group_sync(value: Option<&str>) -> u8 {
+    match value.map(str::trim) {
         Some("0") => 0,
         Some("1") => 1,
-        _ => 2,
-    })
+        Some("2") => 2,
+        _ => 3,
+    }
 }
 
 /// Whether buffer atomics of the ray-tracing structure builder stand between
@@ -214,13 +255,39 @@ pub fn builder_bounds() -> bool {
 ///   32 a first-lane read of two host waves without the round that asks
 ///   which half has a lane (where every lane has one).
 ///   64 the dwords of one console load read by one call for every four
-///   (not on unless asked: `127` is every pass with it).
+///   (not on unless asked), 128 pure loop-invariant code motion, 256 adjacent
+///   redundant barrier elimination (`511` is every pass with wide loads;
+///   `447` is the default without wide loads).
 ///
 /// Part of the translation: the shader cache keys on it (`victory-gpu`'s
 /// does).
 pub fn shader_opt() -> u32 {
+    #[cfg(test)]
+    if let Some(passes) = TEST_SHADER_OPT.with(std::cell::Cell::get) {
+        return passes & bitcode::opt::ALL;
+    }
     static PASSES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *PASSES.get_or_init(|| parse_shader_opt(std::env::var("VICTORY_SHADER_OPT").ok().as_deref()))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SHADER_OPT: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with `shader_opt()` overridden to `passes` on the current thread
+/// (tests only; restores the previous override on unwind).
+#[cfg(test)]
+pub(crate) fn with_shader_opt<R>(passes: u32, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<u32>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_SHADER_OPT.with(|c| c.set(self.0));
+        }
+    }
+    let prev = TEST_SHADER_OPT.with(|c| c.replace(Some(passes)));
+    let _guard = Reset(prev);
+    f()
 }
 
 /// On a host whose shaders run on the console's own kind of hardware (AMD
@@ -242,6 +309,18 @@ pub fn rdna_float() -> u32 {
     *BITS.get_or_init(|| {
         let value = std::env::var("VICTORY_RDNA_FLOAT").ok();
         parse_set(value.as_deref(), rdna::ALL, rdna::ALL)
+    })
+}
+
+/// Fast float lowering on non-RDNA (NVIDIA/Intel) hosts (`VICTORY_NV_FLOAT`,
+/// bitmask of [`rdna`] bits: 1 MAX_MIN, 2 LEGACY, 4 MED3, 8 FRACT; 0 when unset
+/// so strict IEEE signed-zero tests stay exact). Part of [`lower::host_rdna`],
+/// so the shader cache keys on it automatically.
+pub fn nv_float() -> u32 {
+    static BITS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *BITS.get_or_init(|| {
+        let value = std::env::var("VICTORY_NV_FLOAT").ok();
+        parse_set(value.as_deref(), 0, rdna::ALL)
     })
 }
 
@@ -526,7 +605,24 @@ pub fn emit(
         // lost the card in a submission of two programs that had just moved to it
         // (`ptfx_CS_lightAtlas_Sprite` and `_Trail`). The 32-lane programs' form below, which
         // has no barrier, stays on.
-        let wide_on = std::env::var_os("VICTORY_WAVE_WIDE").is_some_and(|v| v == "1");
+        let wide_option = std::env::var_os("VICTORY_WAVE_WIDE");
+        // Both archived kernels use one logical wave per group and have
+        // validated wave32 PSOs on RTX. Explicit policy wins.
+        let scene_kernel = matches!(native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 64)
+            && matches!(
+                c.digest,
+                [0x58, 0x1d, 0xab, 0x2c, 0xd8, 0xbc, 0xf2, 0x2e, 0x5c, 0x96, 0x4b, 0x98, 0xe9, 0x03, 0x48, 0xd1]
+                    | [0x24, 0x31, 0xbb, 0xe7, 0xdc, 0x15, 0x4a, 0xd7, 0x59, 0xd2, 0x0b, 0xc9, 0x54, 0x82, 0x9c, 0x1c]
+            );
+        let wide_on = wide_option.as_ref().map_or(scene_kernel, |v| v == "1");
+        // A single guest wave can iterate an active-lane loop until both host
+        // halves have finished. The precise latch and convergence conditions
+        // for the driver compute route are checked by widen().
+        let driver_loop = wide_option.is_none()
+            && c.part(FourCC::DXIL).is_none()
+            && c.part(FourCC::ACCC).is_some()
+            && matches!(&original, Err(ShaderError::Unsupported { what, .. })
+                if *what == lower::DIVERGENT_MASK_EXCHANGE);
         // exact first: each host wave on its own where that is exact (the idiom, every
         // form; no barriers), then the other exact forms; then approximate
         for exact in [true, false] {
@@ -548,7 +644,7 @@ pub fn emit(
                 // Still stopped where not every lane runs: the per-lane branches around
                 // those places taken as the console takes them, by the whole wave at once
                 // ([`widen`]), at two group barriers per such branch.
-                if wide_on {
+                if wide_on || driver_loop {
                     let bases = [
                         deep.as_ref().map(|f| &f.0),
                         forms[1].1.as_ref().map(|f| &f.0),
@@ -556,7 +652,7 @@ pub fn emit(
                         Some(p),
                     ];
                     if let Some(base) = bases.into_iter().flatten().next() {
-                        let again = widen(c, native, base, why);
+                        let again = widen(c, native, base, why, driver_loop);
                         report("wave-wide branches", &again);
                         if done(&again) {
                             return again.map(|(shader, _)| shader);
@@ -618,7 +714,7 @@ pub fn emit(
                 && what == lower::LANE_MASK
                 && std::env::var_os("VICTORY_WAVE_WIDE").is_none_or(|v| v != "0") =>
         {
-            let again = widen(c, native, p, std::env::var_os("VICTORY_WAVE_WHY").is_some());
+            let again = widen(c, native, p, std::env::var_os("VICTORY_WAVE_WHY").is_some(), false);
             match again {
                 Ok(_) => again,
                 Err(_) => emit_program(c, native, p, st, io, res),
@@ -655,6 +751,7 @@ fn widen(
     native: &NativeProgram,
     p: &ir::Program,
     why: bool,
+    active_loop_only: bool,
 ) -> Result<(HostShader, Option<u32>), ShaderError> {
     const NOT: ShaderError = ShaderError::Unsupported {
         offset: 0,
@@ -663,13 +760,10 @@ fn widen(
     match native.io {
         // (a program whose waves are the host's meets no one: no barrier, any group)
         crate::native::StageIo::Cs(_) if !(native.wave64 && lower::host_max_wave() == 32) => {}
-        crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 64 => {}
-        crate::native::StageIo::Cs(cs) => {
-            if why {
-                eprintln!("WAVE64-WIDE not tried: thread groups of {:?}", cs.threads);
-            }
-            return Err(NOT);
-        }
+        // Any group of console waves: a wave-wide decision covers the whole group now
+        // (`Lower::wave_wide` ORs every console wave's exchange pair), so the branches taken
+        // this way are entered by every thread and the barriers inside them are reached.
+        crate::native::StageIo::Cs(_) => {}
         _ => return Err(NOT),
     }
     let mut wide = std::collections::HashSet::new();
@@ -684,23 +778,72 @@ fn widen(
         // every lane runs, whose blocks the lowering names too)
         let stuck = matches!(&r, Err(ShaderError::Unsupported { what, .. })
                 if lower::needs_every_lane(what) || *what == lower::LANE_MASK && !needs.is_empty())
-            || matches!(&r, Ok((_, Some(64)))) && !needs.is_empty();
+            || r.is_ok() && !needs.is_empty();
         if !stuck {
             if why {
                 eprintln!("WAVE64-WIDE {} branches taken wave-wide", wide.len());
             }
             return r;
         }
-        let more: Vec<usize> = lower::branches_around(&st, &needs)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|b| !wide.contains(b))
-            .collect();
+        let Some((around, unsafe_loop)) = lower::branches_around(&st, &needs) else {
+            // Not followed (an indirect exit): emitting the program as it stands could put a
+            // barrier where one of the two host waves never comes.
+            return Err(ShaderError::Unsupported {
+                offset: 0,
+                what: "a barrier in a loop the two host waves cannot leave together",
+            });
+        };
+        if unsafe_loop {
+            return Err(ShaderError::Unsupported {
+                offset: 0,
+                what: "a barrier in a loop the two host waves cannot leave together",
+            });
+        }
+        let more: Vec<usize> = around.into_iter().filter(|b| !wide.contains(b)).collect();
         if more.is_empty() {
             if why {
                 eprintln!("WAVE64-WIDE stopped with {} branches wave-wide: a branch around it cannot be", wide.len());
             }
-            return r;
+            // Nothing is left to widen and a barrier still stands where not every lane runs:
+            // the program is refused rather than emitted, because such a barrier hangs the
+            // group (0x887A0006, measured 2026-11-26).
+            return Err(ShaderError::Unsupported {
+                offset: 0,
+                what: "a barrier where not every lane runs, and no branch left to widen",
+            });
+        }
+        if active_loop_only {
+            // Only a single backward branch on the SCC just set by
+            // s_andn2_wrexec_b64. This instruction restricts EXEC to the
+            // unfinished lanes. The guest repeats the loop if *either*
+            // half still has work, while individual vector writes retain
+            // their EXEC predicates.
+            let [latch] = more.as_slice() else {
+                return Err(ShaderError::Unsupported {
+                    offset: 0,
+                    what: "a barrier where not every lane runs, and no branch left to widen",
+                });
+            };
+            let block = &p.blocks[*latch];
+            let [.., update, branch] = block.insts.as_slice() else {
+                return Err(ShaderError::Unsupported {
+                    offset: 0,
+                    what: "a barrier where not every lane runs, and no branch left to widen",
+                });
+            };
+            if !wide.is_empty()
+                || update.name() != "s_andn2_wrexec_b64"
+                || branch.name() != "s_cbranch_scc1"
+                || !matches!(
+                    block.exit,
+                    ir::Exit::Branch { taken, not_taken } if taken <= *latch && not_taken > *latch
+                )
+            {
+                return Err(ShaderError::Unsupported {
+                    offset: 0,
+                    what: "a barrier where not every lane runs, and no branch left to widen",
+                });
+            }
         }
         wide.extend(more);
     }
@@ -1097,14 +1240,24 @@ mod tests {
     }
 
     #[test]
+    fn group_sync_defaults_to_auto_and_keeps_explicit_overrides() {
+        for value in [None, Some("auto"), Some(""), Some("invalid")] {
+            assert_eq!(super::parse_group_sync(value), 3);
+        }
+        for (value, mode) in [("0", 0), (" 1 ", 1), ("2", 2)] {
+            assert_eq!(super::parse_group_sync(Some(value)), mode);
+        }
+    }
+
+    #[test]
     fn the_clean_up_switch_parses_or_runs_every_pass() {
         let (all, usual) = (super::bitcode::opt::ALL, super::bitcode::opt::DEFAULT);
-        assert_eq!(usual, 63, "the passes of the builds before the wide loads");
+        assert_eq!(usual, 447, "all passes except opt-in wide loads");
         assert_eq!(parse_shader_opt(None), usual);
         assert_eq!(parse_shader_opt(Some("0")), 0);
         assert_eq!(parse_shader_opt(Some(" 1 ")), 1);
         assert_eq!(parse_shader_opt(Some("0x1")), 1);
-        assert_eq!(parse_shader_opt(Some("127")), all);
+        assert_eq!(parse_shader_opt(Some("511")), all);
         assert_eq!(parse_shader_opt(Some("0xffffffff")), all);
         assert_eq!(parse_shader_opt(Some("on")), usual);
     }
@@ -2974,5 +3127,91 @@ mod barycentric_tests {
         let [e0, e1] = exp_mrt0(4);
         let words = [0xC812_0000, e0, e1, S_ENDPGM];
         assert!(pixel(&words, PERSP_CENTER).is_err());
+    }
+
+    /// A loop limit named for one translation holds on its thread for that
+    /// translation only, and comes back to the stage limits after it.
+    #[test]
+    fn a_named_loop_limit_holds_for_its_translation_only() {
+        let normal = super::loop_limit_here();
+        assert_eq!(super::with_loop_limit(Some(512), super::loop_limit_here), 512);
+        assert_eq!(super::with_loop_limit(None, super::loop_limit_here), normal);
+        assert_eq!(super::with_loop_limit(Some(7), || super::with_loop_limit(Some(9), super::loop_limit_here)), 9);
+        assert_eq!(super::loop_limit_here(), normal);
+        // Another thread is not told.
+        super::with_loop_limit(Some(33), || {
+            assert_eq!(std::thread::spawn(super::loop_limit_here).join().unwrap(), normal);
+        });
+    }
+
+    /// A pixel program the console tests depth for before it runs
+    /// (`DB_SHADER_CONTROL` 0x1050: DEPTH_BEFORE_SHADER, early Z, kill, as
+    /// the title's glass prepass has it) declares ForceEarlyDepthStencil:
+    /// the module differs from the same program without the bit only by that
+    /// flag, and the validator, where there is one, accepts it. With a depth
+    /// output the bit is not declared (the host cannot test before a shader
+    /// that writes the depth).
+    #[test]
+    fn a_pixel_program_tested_before_it_runs_declares_early_depth() {
+        // v_mov_b32 v0, 1.0; exp mrt0 v0, v0, v0, v0 done vm; s_endpgm
+        let color = [0x7E00_02F2u32, 0xF800_180F, 0x0000_0000, 0xBF81_0000];
+        // v_mov_b32 v0, 1.0; exp mrtz v0, off, off, off done vm; s_endpgm
+        let depth = [0x7E00_02F2u32, 0xF800_1881, 0x0000_0000, 0xBF81_0000];
+        let el = |name: &str, kind, cols| SigElement {
+            name: name.into(),
+            index: 0,
+            kind,
+            comp: 9,
+            interp: 0,
+            row: (kind == 16).then_some(0),
+            col: 0,
+            cols,
+            usage: (1 << cols) - 1,
+            half: false,
+        };
+        let emitted = |words: &[u32], out: SigElement, db: u32| {
+            let native = NativeProgram {
+                stage: HwStage::Ps,
+                wave64: false,
+                vgprs: 1,
+                layout: vec![],
+                used: vec![],
+                io: StageIo::Ps {
+                    inputs: vec![],
+                    input_addr: 0,
+                    db_shader_control: db,
+                    patches: vec![],
+                },
+                code: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+            };
+            let osg1 = container::signature(&[out], false);
+            let bytes = crate::dxbc::build(&[(FourCC::OSG1, &osg1)]);
+            let c = Container::parse(&bytes).unwrap();
+            let p = ir::build(&native.patched_code(), native.wave64, native.vgprs).unwrap();
+            let st = structure::structure(&p).unwrap();
+            let res = resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
+            let io = io::raise(&p, &native).unwrap();
+            emit(&c, &native, &p, &st, &io, &res).unwrap().dxil
+        };
+        let late = emitted(&color, el("SV_Target", 16, 4), 0x50);
+        let early = emitted(&color, el("SV_Target", 16, 4), 0x1050);
+        assert_ne!(late, early, "the early-depth flag changed nothing");
+        #[cfg(windows)]
+        if let Ok(mut v) = super::validator::Validator::load(
+            super::validator::Validator::default_path().as_deref(),
+        ) {
+            v.validate(&mut early.clone()).unwrap();
+        }
+        let late = emitted(&depth, el("SV_Depth", 17, 1), 0x51);
+        let early = emitted(&depth, el("SV_Depth", 17, 1), 0x1051);
+        assert_eq!(late, early, "early depth declared for a depth export");
+        let ps = |db| StageIo::Ps { inputs: vec![], input_addr: 0, db_shader_control: db, patches: vec![] };
+        assert!(lower::early_depth(&ps(0x1450), &[]));
+        assert!(lower::early_depth(&ps(0x1010), &[]));
+        assert!(!lower::early_depth(&ps(0x0450), &[]));
+        assert!(!lower::early_depth(&ps(0x1012), &[]));
+        assert!(!lower::early_depth(&ps(0x1150), &[]));
+        assert!(!lower::early_depth(&ps(0x1050), &[el("SV_StencilRef", 20, 1)]));
+        assert!(!lower::early_depth(&StageIo::None, &[]));
     }
 }

@@ -141,7 +141,7 @@ pub(crate) enum Launch {
 /// stage's parameters are at `roots`. False, with nothing recorded, if the
 /// list has no budget for a record.
 pub(crate) fn record(list: &HostList, roots: [u32; 3], what: Launch) -> bool {
-    let Ok(l6) = windows::core::Interface::cast::<ID3D12GraphicsCommandList6>(&list.list) else {
+    let Ok(l6) = windows::core::Interface::cast::<ID3D12GraphicsCommandList6>(&*list.list) else {
         return false;
     };
     let budget = list.budget();
@@ -229,7 +229,7 @@ pub(crate) mod tests {
 
     /// Runs `launch` in `list` for the tests of `crate::pipeline::host`.
     pub(crate) fn launch_in(list: &HostList, roots: [u32; 3], direct: u32, record: u64, budget: u64) {
-        let l6 = windows::core::Interface::cast::<ID3D12GraphicsCommandList6>(&list.list).expect("a mesh list");
+        let l6 = windows::core::Interface::cast::<ID3D12GraphicsCommandList6>(&*list.list).expect("a mesh list");
         launch(&list.list, &l6, roots, (direct, record, budget));
     }
 

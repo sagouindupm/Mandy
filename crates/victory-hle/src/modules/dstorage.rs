@@ -227,11 +227,20 @@ extern "system" fn create_queue(
     )
 }
 
-/// The title asks for 32 MiB and stops if this fails.
+/// The title asks for 32 MiB and stops if this fails. Give PC worker threads
+/// enough staging headroom (default 256 MiB) so multi-MB RPF chunks don't
+/// starve the remaining cores.
 extern "system" fn set_staging_buffer_size(_: Factory, size: u32) -> HRESULT {
-    tracing::info!(size, "dstorage: staging buffer size");
+    static FLOOR_MB: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let floor = *FLOOR_MB.get_or_init(|| {
+        std::env::var("VICTORY_DSTORAGE_STAGING_MB")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(256)
+    }) << 20;
+    tracing::info!(size, floor, "dstorage: staging buffer size");
     if let Some(scheduler) = scheduler() {
-        scheduler.lock().staging = u64::from(size);
+        scheduler.lock().staging = u64::from(size).max(floor);
     }
     S_OK
 }
@@ -591,6 +600,90 @@ struct Job {
 // SAFETY: as for `Lane`.
 unsafe impl Send for Job {}
 
+/// How many storage workers run at once. The pool reads, inflates and unpacks
+/// in parallel, so the useful count is the PC's **physical** cores: logical
+/// processors count SMT twins, which add little to a pool that already
+/// oversubscribes the cores the submitting thread and the copies need. One
+/// 8-core/16-thread laptop ran 16 workers and had the submitting thread
+/// waiting behind them; 8 measured `copying back` at 2.4-3.5 ms/MB against
+/// 5.7 ms/MB with 16. `VICTORY_DSTORAGE_WORKERS` sets the count outright.
+fn worker_count() -> usize {
+    static COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *COUNT.get_or_init(|| {
+        if let Some(n) = std::env::var("VICTORY_DSTORAGE_WORKERS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| (1..=64).contains(n))
+        {
+            return n;
+        }
+        let logical = std::thread::available_parallelism().map_or(4, |n| n.get());
+        match physical_cores() {
+            Some(cores) => {
+                tracing::info!(cores, logical, "dstorage: physical cores, from the system");
+                cores.clamp(1, 32)
+            }
+            None => {
+                // The query failed or said nothing useful: halve the logical
+                // count, which is what an SMT machine needs and what every
+                // machine got before this existed.
+                tracing::info!(logical, "dstorage: physical cores unknown, using logical/2");
+                (logical / 2).max(2).clamp(1, 32)
+            }
+        }
+    })
+}
+
+/// The PC's physical cores, if the system will say so (`RelationProcessorCore`
+/// returns one record per core, whatever its SMT twins are).
+#[cfg(windows)]
+fn physical_cores() -> Option<usize> {
+    use windows_sys::Win32::System::SystemInformation::{
+        GetLogicalProcessorInformationEx, RelationProcessorCore,
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
+    };
+    let mut len: u32 = 0;
+    // SAFETY: a null buffer asks for the size; the call fails with
+    // ERROR_INSUFFICIENT_BUFFER and fills `len`.
+    unsafe { GetLogicalProcessorInformationEx(RelationProcessorCore, std::ptr::null_mut(), &mut len) };
+    if len == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; len as usize];
+    // SAFETY: the buffer is `len` bytes and the call writes at most that.
+    let ok = unsafe {
+        GetLogicalProcessorInformationEx(
+            RelationProcessorCore,
+            buf.as_mut_ptr().cast::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(),
+            &mut len,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let mut at = 0usize;
+    let mut cores = 0usize;
+    while at + 8 <= buf.len() {
+        // SAFETY: the record's own header; `Size` is its first field.
+        let size = unsafe {
+            std::ptr::read_unaligned(buf.as_ptr().add(at).add(std::mem::offset_of!(
+                SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
+                Size
+            )).cast::<u32>())
+        } as usize;
+        if size < 8 || at + size > buf.len() {
+            break;
+        }
+        cores += 1;
+        at += size;
+    }
+    (cores > 0).then_some(cores)
+}
+
+#[cfg(not(windows))]
+fn physical_cores() -> Option<usize> {
+    None
+}
 /// The scheduler, with its workers started on first use; `None` if not
 /// even one worker could start.
 fn scheduler() -> Option<&'static Scheduler> {
@@ -620,7 +713,7 @@ fn scheduler() -> Option<&'static Scheduler> {
         })
         .as_ref()?;
     STARTED.call_once(|| {
-        let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let workers = worker_count();
         let started = (0..workers)
             .filter(|i| {
                 std::thread::Builder::new()
@@ -765,12 +858,20 @@ pub(crate) mod stream_log {
 
 /// A worker: runs the next read of the most deserving queue.
 fn work(scheduler: &'static Scheduler) {
+    #[cfg(windows)]
+    victory_gpu::cores::keep_on_slow_cores("dstorage");
+    #[cfg(windows)]
+    let mut wide = false;
     let mut lanes = scheduler.lock();
     loop {
         let Some(job) = lanes.start() else {
             lanes = scheduler.work.wait(lanes).unwrap_or_else(|e| e.into_inner());
             continue;
         };
+        #[cfg(windows)]
+        if let Some(now) = victory_gpu::cores::disk_cores_for_backlog(lanes.waiting(), wide) {
+            wide = now;
+        }
         drop(lanes);
         let started = std::time::Instant::now();
         let traced = Traced::start(&job);
@@ -824,6 +925,11 @@ impl Lanes {
             self.bcpack = Default::default();
             self.since = None;
         }
+    }
+
+    /// Reads submitted and not started, over all queues.
+    fn waiting(&self) -> usize {
+        self.lanes.values().map(|l| l.reads.len()).sum()
     }
 
     /// Starts the next read of the class with the least virtual time, from
