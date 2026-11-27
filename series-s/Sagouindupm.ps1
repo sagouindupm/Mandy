@@ -6,7 +6,8 @@
 # Pas 'Stop' : sous Windows PowerShell 5.1, chaque ligne que le jeu écrit sur sa sortie d'erreur
 # devient une erreur, et le lanceur s'arrêtait à la première ligne du journal.
 $ErrorActionPreference = 'Continue'
-# Chemins, lanceur.json, réglages Series S, ray tracing, règle des 24 Go, DLSS : series-s\reglages.ps1
+# Chemins et lanceur.json : series-s\reglages.ps1, qui applique series-s\reglages.json (réglages Series S,
+# ray tracing, règle des 24 Go, DLSS ; les mêmes que pour le lanceur graphique).
 . (Join-Path $PSScriptRoot 'reglages.ps1')
 
 function Show-Title {

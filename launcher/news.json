@@ -1,0 +1,22 @@
+[
+  {
+    "date": "27/11/2026",
+    "titre": "Nouveau lanceur",
+    "texte": "Une fenêtre Sagouindupm | VIctory remplace le lanceur PowerShell : préparation pas à pas, réglages et journaux au même endroit."
+  },
+  {
+    "date": "27/11/2026",
+    "titre": "Les arbres sont de retour",
+    "texte": "Le repli LDS (#27) rend traduisibles des programmes refusés jusqu'ici. Les arbres restent ; l'eau volumétrique, coûteuse, reste sautée."
+  },
+  {
+    "date": "27/11/2026",
+    "titre": "~10 images/s sur RTX 3050",
+    "texte": "Base trustno1-coder/VIctory-NVIDIA réglée par Maykzera : 98 à 103 ms par image sur le bateau, shaders et pipelines préparés."
+  },
+  {
+    "date": "27/11/2026",
+    "titre": "DLSS en option",
+    "texte": "Sur carte RTX, avec les DLL Streamline de NVIDIA : ultra performance mesuré à 90 ms par image sur RTX 3050, image propre."
+  }
+]

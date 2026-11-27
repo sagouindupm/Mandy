@@ -1,0 +1,122 @@
+{
+  "a_lire": [
+    "Sagouindupm | VIctory : la seule source des réglages Series S.",
+    "Lu par series-s/reglages.ps1 (lanceur console Sagouindupm.ps1) et par le lanceur graphique (launcher/) :",
+    "un réglage changé ici vaut pour les deux. Les scripts de mesure (scripts/bench) appellent victory.exe",
+    "directement et ne lisent pas ce fichier. Les « note » expliquent chaque groupe ; seuls les « env » comptent."
+  ],
+  "profil": "Base trustno1-coder/VIctory-NVIDIA réglée pour RTX 3060 par Maykzera, mesurée ici sur RTX 3050 8 Go + i5-12400F : ~84 ms par image (11,8 fps) dans la cinématique du bateau, eau et visages fidèles.",
+  "groupes": [
+    {
+      "titre": "Série rapide",
+      "note": "avatarmanz/trustno1",
+      "env": {
+        "VICTORY_TEXTURE_NO_WAIT": "1",
+        "VICTORY_RELAY": "2",
+        "VICTORY_CARD_STEPS": "2",
+        "VICTORY_WIDE_BACK": "1",
+        "VICTORY_CARD_REHASH_RUNS": "1",
+        "VICTORY_JOIN_COPIES": "1",
+        "VICTORY_INDIRECT_WINDOW": "1",
+        "VICTORY_RELAY_COPY": "1",
+        "VICTORY_INDIRECT_BATCH": "2",
+        "VICTORY_MAP_THREADS": "1",
+        "VICTORY_TITLE_PRIORITIES": "0",
+        "VICTORY_CARD_AWAKE": "1",
+        "VICTORY_SHOW_AFTER": "1",
+        "VICTORY_THIN": "1",
+        "VICTORY_UPLOAD_AHEAD": "1"
+      }
+    },
+    {
+      "titre": "Processeur 6 cœurs / 12 fils",
+      "note": "Maykzera : moins de fils auxiliaires, 16 soumissions préparées ensemble ; 4 fils de traduction des listes et pas 5 (Maykzera, 2 mesures ; ici 87 ms contre 93, pire image 178 ms).",
+      "env": {
+        "VICTORY_THIN_THREADS": "4",
+        "VICTORY_UNDER_THREADS": "3",
+        "VICTORY_VIEW_THREADS": "3",
+        "VICTORY_PIPELINE_WORKERS": "4",
+        "VICTORY_PIPELINE_LOWEST": "1",
+        "VICTORY_JOIN_PARTS": "16",
+        "VICTORY_JOIN_LISTS": "96"
+      }
+    },
+    {
+      "titre": "Attente des pipelines",
+      "note": "Une pipeline pas prête : 150 ms d'attente au plus (10 000 gelait l'image 12 s, avatarmanz #143).",
+      "env": {
+        "VICTORY_PIPELINE_WAIT_MS": "150"
+      }
+    },
+    {
+      "titre": "Image",
+      "note": "Lumière de remplacement du ray tracing, NaN effacés, 540p + upscaler du jeu, interface Series S.",
+      "env": {
+        "VICTORY_AMBIENT": "0.8",
+        "VICTORY_AMBIENT_AIR": "1.5",
+        "VICTORY_AMBIENT_MOST": "2",
+        "VICTORY_NAN_SCRUB": "1",
+        "VICTORY_BVH_MISS": "1",
+        "VICTORY_DYNAMIC_SLOTS": "524288",
+        "VICTORY_RENDER_SCALE": "0.5",
+        "VICTORY_OWN_UPSCALER": "1",
+        "VICTORY_COMPOSE": "1",
+        "VICTORY_CARD_BUFFERS_MIN_MB": "1",
+        "VICTORY_CARD_BUFFERS_MB": "1536"
+      }
+    },
+    {
+      "titre": "Carnet des pipelines",
+      "note": "Chaque partie note les pipelines créées, pour « Construire les pipelines » (victory warm --used).",
+      "env": {
+        "VICTORY_PIPELINE_BOOK": "1"
+      }
+    }
+  ],
+  "pipelines_sautees": {
+    "variable": "VICTORY_SKIP_PIPELINES",
+    "note": "Les ~1 000 passes de résolution du ray tracing (pas de structure de rayons sur NVIDIA, fichier ci-dessous, relatif à la racine du dépôt), puis la brume de chaleur 731a39171b568298 (foxhound : elle étale des blocs de pixels, aussi sur l'eau) : 84 ms contre 93 sur RTX 3050, image propre. Puis les programmes que le repli LDS (#27) rend traduisibles mais qui coûtent ~30 ms sans les arbres (volumétrie de l'eau 5dc3/6f22, sous l'eau 926c, transmission 1f1f, 21f7, 7c9a) ; les arbres restent.",
+    "fichier": "scripts/rt_off_hashes.txt",
+    "en_plus": [
+      "731a39171b568298",
+      "5dc3b25986622949",
+      "6f225b641c5b0708",
+      "926c46bab3b86bd6",
+      "1f1fbd86759b3da2",
+      "21f7ad7863620328",
+      "7c9a6a83826cdfac"
+    ]
+  },
+  "petite_ram": {
+    "note": "PC à moins de 24 Go : fenêtres de mémoire du jeu dans la mémoire de la carte (évite le plantage 0x8007000E).",
+    "moins_de_go": 24,
+    "env": {
+      "VICTORY_WINDOWS_BAR_MB": "3072"
+    }
+  },
+  "dlss": {
+    "note": "DLSS (cartes RTX) à la place de l'upscaler du jeu, si le dossier de Streamline est donné et le mode n'est pas « off ». Mesuré sur RTX 3050 : ultra performance 90 ms (image propre), performance 102 ms, qualité 176 ms.",
+    "fichier_requis": "sl.interposer.dll",
+    "variable_dossier": "VICTORY_DLSS_DIR",
+    "variable_mode": "VICTORY_DLSS_MODE",
+    "retire": [
+      "VICTORY_RENDER_SCALE",
+      "VICTORY_OWN_UPSCALER"
+    ],
+    "modes": [
+      { "id": "ultra", "nom": "DLSS ultra performance", "mesure": "90 ms par image sur RTX 3050, image propre" },
+      { "id": "performance", "nom": "DLSS performance", "mesure": "102 ms par image sur RTX 3050" },
+      { "id": "quality", "nom": "DLSS qualité", "mesure": "176 ms par image sur RTX 3050" }
+    ]
+  },
+  "shaders": {
+    "note": "Les faits de la carte pour la traduction des shaders (NVIDIA : vagues de 32, 1 000 000 de vues) : sans eux le cache ne sert à rien en jeu. Threads : tous les cœurs logiques sauf deux (au moins 2).",
+    "env_nvidia": {
+      "VICTORY_HOST_WAVE": "32",
+      "VICTORY_HOST_ROVS": "1",
+      "VICTORY_VIEW_LIMIT": "999999"
+    },
+    "threads_laisses_libres": 2,
+    "threads_min": 2
+  }
+}

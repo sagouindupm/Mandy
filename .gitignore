@@ -11,6 +11,14 @@
 /target/
 /tests/fixtures/*/target/
 
+# Graphical launcher (launcher/): npm packages, build output, the icon drawn by build.rs
+/launcher/node_modules/
+/launcher/dist/
+/launcher/src-tauri/target/
+/launcher/src-tauri/gen/
+/launcher/src-tauri/icons/
+/launcher-preview*.png
+
 # Local configuration (contains paths to YOUR files)
 /victory.toml
 

@@ -31,16 +31,22 @@ Series S. Le détail des essais (gardés, rejetés, à faire) est dans **[docs/e
 
 ### Débutant : le lanceur graphique
 
-Double-cliquer sur **`series-s\Sagouindupm-Launcher.bat`** (rien à installer pour le lanceur lui-même).
+Double-cliquer sur **`series-s\Sagouindupm-Launcher.bat`**. La première fois, il construit la fenêtre du
+lanceur (dossier `launcher\`, 5 à 10 minutes) : il faut Node.js, Rust et les outils C++ de Microsoft, et le
+fichier propose de les installer avec winget s'ils manquent. Ensuite la fenêtre s'ouvre directement.
 
-1. Onglet **Installation** → **« Tout préparer pour moi »** : il installe ce qui manque (Rust, outils C++
-   de Microsoft : Windows demande l'autorisation), compile VIctory, trouve le jeu
-   (`game_scarlett_master.exe` de votre copie) et traduit les shaders (15-30 min, une seule fois).
-   Chaque point est une tuile (vert prêt, orange à vérifier, rouge à faire) : un clic la répare ou
-   explique quoi faire (cache de shaders NVIDIA, alimentation, mémoire virtuelle, Resizable BAR, RAM, DLSS).
-2. Onglet **Jouer** → **JOUER**. Cette première partie note les pipelines que le jeu crée.
-3. Après la partie : **« Construire les pipelines »** (quelques minutes). La suivante n'a plus d'à-coups
-   ni de dessins manquants : c'est ce qui fait passer de ~5 à ~10 fps ici.
+1. **Préparation** → **« Tout préparer »** : compile VIctory, trouve le jeu (`game_scarlett_master.exe` de
+   votre copie) et traduit les shaders (15-30 min, une seule fois). Six étapes, chacune avec son état et son
+   bouton : moteur, jeu, shaders, pipelines, cache de shaders NVIDIA, alimentation ; en dessous, « Ce PC »
+   (carte, RAM, mémoire virtuelle, Resizable BAR).
+2. **Jouer** → **JOUER**. Le profil (Recommandé ou un mode DLSS) se choisit à gauche. Cette première partie
+   note les pipelines que le jeu crée, et une capture d'écran est prise au bout de 3 minutes : vos captures
+   (`%LOCALAPPDATA%\Sagouindupm\captures`) deviennent le fond de l'accueil.
+3. Après la partie : **Préparation** → étape 4, **« Construire »** (quelques minutes). La suivante n'a plus
+   d'à-coups ni de dessins manquants : c'est ce qui fait passer de ~5 à ~10 fps ici.
+
+Pour le construire à la main : `cd launcher`, `npm ci`, `npm run tauri build -- --no-bundle`
+(résultat : `launcher\src-tauri\target\release\sagouindupm-launcher.exe`).
 
 ### Utilisateurs avancés : le lanceur console
 
@@ -54,7 +60,7 @@ Double-cliquer sur **`series-s\Sagouindupm-Launcher.bat`** (rien à installer po
    - **[3] Construire les pipelines** (quelques minutes) : la partie suivante n'a plus d'à-coups ni de
      dessins manquants.
 
-Les deux lanceurs lisent les mêmes réglages mesurés, dans **`series-s\reglages.ps1`**, et la même
+Les deux lanceurs lisent les mêmes réglages mesurés, dans **`series-s\reglages.json`**, et la même
 configuration (`%LOCALAPPDATA%\Sagouindupm`). Les scripts de mesure (`scripts\bench`) appellent `victory.exe`
 directement.
 
