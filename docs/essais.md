@@ -25,6 +25,18 @@ partagé entre builds. Leur architecture (fils de traduction des listes, soumiss
 lectures faites sur la carte) prépare une image en 34-62 ms contre 100-130 ms pour notre ancienne base :
 d'où le changement de base. Notre ancienne branche reste en historique.
 
+Suite de la nuit (même méthode, nouvelle base) :
+
+| Essai | Résultat | Décision |
+|---|---|---|
+| Sans le module XCL (notre émulation des instructions AMD) | 104 / 103 ms contre 103 / 98 ms avec | gardé (PR #19) |
+| Dessins mesh lancés par la carte (kelvaroq 0041, porté) | 103 / 94 ms (p90 130) ; l'étage ne sert qu'aux appels sans tampon de compte (~1 par image ici) | gardé ; à étendre aux appels avec tampon de compte |
+| Souris : périphérique souris (trustno1 #9, superboynick) + clic = capture, Alt/Échap = libère, X = marcher | 98 ms, passage complet ; une 1re version qui recentrait le curseur sans le focus arrêtait le jeu vers 285 s | gardé |
+| DLSS (Streamline) en mode performance | écran noir, puis plantage : le FSR4 du jeu refuse une taille de rendu maximale de 960x540 (1280x720 ou 1920x1080 seulement) | à corriger |
+| `VICTORY_WINDOWS_BAR_MB=3072` sur 32 Go | 100 ms, RAM au pic inchangée (20,3 Go), VRAM +550 Mo | automatique sous 24 Go seulement |
+| Bateau piloté en jeu (7 min, `VICTORY_KEYS` tenu) | 8,6-9,9 fps sur l'eau ; W n'accélère pas avec cette disposition, A tourne | à suivre |
+| Ce qui limite maintenant | la carte : « the card about 80-91% busy », fil de soumission ~90 ms par image | pistes : optimisations DXIL (PastiiJay/klbf-lab #41), barrières (avatarmanz #143) |
+
 ## Comment on mesure
 
 - Machine de référence : **RTX 3050 8 Go, i5-12400F, 32 Go de RAM, Windows 11**, `--console series-s`,
