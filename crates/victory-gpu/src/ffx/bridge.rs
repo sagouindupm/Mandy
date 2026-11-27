@@ -11,6 +11,14 @@
 //! when that can take it. The first dispatches, and every reason one is
 //! not evaluated, are logged.
 //!
+//! With the title's list calls written down (`VICTORY_THIN=1`) its list
+//! has no host list at the call: the evaluation is written down in the
+//! list's stream instead (`crate::list::thin::defer`) and done by the
+//! thread that translates the stream, at that point, on its list of ours
+//! ([`Deferred`]). FSR cannot stand in then (its own dispatch would have
+//! had to be recorded at the call), so a dispatch that cannot be evaluated
+//! there is said, and that frame not upscaled.
+//!
 //! The title's FSR4 is a fixed-resolution build: of maximum render sizes it
 //! takes only 2/3 of the output ("tight", 1280x720 for 1920x1080) or the
 //! output itself ("legacy"), and of per-frame render sizes only the tight
@@ -257,11 +265,81 @@ extern "C" fn ffxQuery(context: *mut *mut c_void, desc: *mut Header) -> ReturnCo
     }
 }
 
+/// The textures a DLSS evaluation needs: colour, depth, motion, output.
+const NEEDED: [usize; 4] = [0, 1, 2, OUTPUT];
+
+/// A DLSS evaluation written down in a title list's stream: the title's
+/// description as it was at the call (its objects live until the list has
+/// run) and our DLSS context.
+struct Deferred {
+    d: DispatchUpscale,
+    ours: usize,
+}
+
+// SAFETY: plain data and the title's objects, used by one thread at a time.
+unsafe impl Send for Deferred {}
+
+impl Deferred {
+    /// Evaluates on `back`, the list of ours the stream is translated on.
+    fn run(mut self, back: crate::object::This) {
+        static COUNT: AtomicU32 = AtomicU32::new(0);
+        let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        self.d.command_list = back.cast_mut().cast();
+        let mut slot = self.ours as *mut c_void;
+        // SAFETY: a description of ours; DLSS records on the host list
+        // behind our list, at this point of the title's.
+        let r = unsafe {
+            record_on_host((&raw const self.d).cast(), &NEEDED, |d| {
+                dlss::dispatch(&mut slot, d)
+            })
+        };
+        match r {
+            Ok(OK) => {
+                if n <= LOGGED {
+                    tracing::info!(n, "dlss: upscale dispatch evaluated by DLSS (where the list was translated)");
+                }
+            }
+            Ok(_) => skipped(n, "DLSS failed (see the dlss: error above)", Some((self.d.render_size, [0, 0]))),
+            Err(why) => skipped(n, why, Some((self.d.render_size, [0, 0]))),
+        }
+    }
+}
+
+/// Writes the evaluation down in the title list's stream when its calls
+/// are written down (`VICTORY_THIN=1`); false when they are not, or there
+/// is nothing DLSS could evaluate (no DLSS context, a texture missing).
+fn written_down(e: Option<Entry>, desc: *const Header, n: u32) -> bool {
+    let Some(Entry { ours, .. }) = e.filter(|e| e.ours != 0) else {
+        return false;
+    };
+    // SAFETY: the title's description, read by its type (null checked).
+    if desc.is_null() || unsafe { (*desc).kind } != DISPATCH_UPSCALE {
+        return false;
+    }
+    // SAFETY: as above.
+    let d = unsafe { *desc.cast::<DispatchUpscale>() };
+    if NEEDED.iter().any(|&i| d.resources[i].resource.is_null()) {
+        return false;
+    }
+    let list = d.command_list as crate::object::This;
+    let job = Deferred { d, ours };
+    if crate::list::thin::defer(list, Box::new(move |back| job.run(back))).is_err() {
+        return false;
+    }
+    if n <= LOGGED {
+        tracing::info!(n, "dlss: upscale dispatch written down; DLSS evaluates it where the list is translated");
+    }
+    true
+}
+
 extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> ReturnCode {
     let Some(real) = REAL.get() else { return ERROR };
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let e = entry(context);
+    if written_down(e, desc, n) {
+        return OK;
+    }
     let evaluated = match e {
         _ if desc.is_null() => Err("no description"),
         None => Err("not a context made through DLSS's bridge"),
@@ -271,7 +349,7 @@ extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> Ret
             // SAFETY: the title's non-null description; DLSS records on
             // the host list the swap gives it.
             unsafe {
-                record_on_host(desc, &[0, 1, 2, OUTPUT], |d| {
+                record_on_host(desc, &NEEDED, |d| {
                     dlss::dispatch(&mut slot, d)
                 })
             }
@@ -320,6 +398,12 @@ fn skipped(n: u32, why: &'static str, refused: Option<([u32; 2], [u32; 2])>) {
         return;
     }
     match refused {
+        Some((render, [0, 0])) => tracing::error!(
+            n,
+            why,
+            ?render,
+            "dlss: upscale dispatch written down but not evaluated where the list was translated: frame not upscaled"
+        ),
         Some((render, fsr)) => tracing::error!(
             n,
             why,
