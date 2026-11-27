@@ -186,3 +186,21 @@ Take a row and open an *issue* "[in progress] …" so nobody does the same thing
 | 12 | **Other machines** | we only know the RTX 3050 | measurements on AMD, 12 GB, other CPUs: very useful | S |
 | 12b | **Validate the automatic profiles** (`materiel` in `series-s/reglages.json`) | the steps off the reference (6 GB: 768 MB buffers and `TEXTURE_MAX=2048`; 11 GB and more: 2048 MB; 8 threads: 3/2/2/3; 16 threads: 6/4/4/6; 16 GB of RAM: one step lower and 1024 MB) are reasoned choices, **not measured yet**; only the reference PC is (settings unchanged, checked by `scripts/check-profils.ps1`) | "Give feedback" reports from the launcher (`feedback` form); adjusting a step = one line in `reglages.json` | S |
 | 13 | edupode/cold-project-vi ports (off by default in code; launcher defaults below once measured) | measured on the RTX 3050 (clean runs, 27/11): see Kept | `VICTORY_WAVE_WIDE_DIGESTS`, `VICTORY_VRAM_RESERVE`, `VICTORY_TEXTURE_MAX` (less sharp, for 6 GB), `VICTORY_POOL_FULLEST`; write watch searches its ranges instead of scanning them (no switch, same answers) | S |
+
+### Ported picture fixes (to verify on the prologue)
+
+Ported 2026-11-27 from other forks (see `git log`), **not built or run yet**. Rows marked T change the shader
+translator: one retranslation (`victory translate ... --warm`) covers them all. Check each with a before/after
+screenshot, then move it to Kept or Rejected.
+
+| What | Commits (source) | Where to look | T |
+|---|---|---|---|
+| Rainbow arms and faces: `v_nop`/`v_pipeflush`/`v_clrexcp` take no literal; A4B4G4R4 (191) is 2 bytes a texel | 54d736c0, b1a67794 (avatarmanz PR #431, LeonardoS11, from ZigZagBoi1/ScarlettPort) | opening cell and corridor, several runs (it was intermittent) | T |
+| Level query on array textures takes no slice: three alpha-clip programs validate again | d1a4e229 (avatarmanz, after upstream 13091f6e) | alpha-tested surfaces (foliage, fences, decals) present; fewer refusals in the `victory shaders` log | T |
+| Compute `ds_swizzle` from an inactive lane reads 0; unused image-query extents read 0 | f3023908, 122e23f9 (Dathinel PR #7, #8) | no visible change expected; watch for regressions | T |
+| Comparison sampler keeps its min/max reduction; heap anisotropic samplers keep point mips | 4e4ae2d0 (Vice-Tay, rayane-creato1r), 48f59c1a (Flare, upstream #2031) | faces and hair sharpness (oz saw a blur once with the point-mip half) | T (first) |
+| SDWA WORD_0 sign extension | a4a8e0e6 (write_half part of fx 58de9bf4c, upstream #3124) | 16-bit packed data; no visible change expected | T |
+| POPS collision id seeded with wave id 1: no spin in the ordered-section wait | 7247fbec (after Marvisak 7ac1f54d8, VastyViz #2395) | skin (`PS_PedTex*`), hair; frame time of close-ups | T |
+| Transmission tile allocation on wave32 (container f5d10cde..., our shader 1aa247ed3653b616, not skipped) | dff5bba2 (trustno1 PR #45, xss3009) | dark rectangles on the water: bridge approach, open sea, first boat | T |
+| A big compare's first slice is compared | 5aa3de06 (after fx 81d54b06f, PiloteCode #1407) | stale bytes after big copies; no visible change expected | |
+| NaN scrub skips image stores through integer texture UAVs | 1cafcbfb (ours; idea from Vice-Tay 6f179dd10) | with `VICTORY_NAN_SCRUB=1`: nothing should change but integer images (IDs, masks) | T |
