@@ -1,0 +1,115 @@
+name: Donner mon avis (retour d'expérience)
+description: Comment VIctory S tourne sur votre PC. Le bouton « Donner mon avis » du lanceur remplit déjà votre configuration.
+title: "[retour] "
+labels: ["retour"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci ! Chaque retour sur une autre machine nous aide à régler les profils automatiques.
+        **Ne joignez aucun fichier du jeu** (ni exécutable, ni archive, ni extrait). Les captures d'écran de vos
+        problèmes sont bienvenues.
+
+  - type: input
+    id: gpu
+    attributes:
+      label: Carte graphique
+      placeholder: NVIDIA GeForce RTX 3050
+    validations:
+      required: true
+  - type: input
+    id: vram
+    attributes:
+      label: Mémoire de la carte
+      placeholder: 8 Go
+  - type: input
+    id: cpu
+    attributes:
+      label: Processeur
+      placeholder: Intel Core i5-12400F (12 fils)
+    validations:
+      required: true
+  - type: input
+    id: ram
+    attributes:
+      label: Mémoire vive
+      placeholder: 32 Go
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      placeholder: Windows 11 Professionnel (10.0.26200)
+  - type: input
+    id: version
+    attributes:
+      label: Version du lanceur
+      description: En bas à gauche de la fenêtre (« © VIctory S 0.1.0 »).
+      placeholder: VIctory S 0.1.0 (version téléchargée)
+  - type: textarea
+    id: profil
+    attributes:
+      label: Profil détecté
+      description: Lanceur, onglet Réglages, « Profil détecté », bouton « Copier ».
+      render: text
+
+  - type: dropdown
+    id: fps_cinematique
+    attributes:
+      label: Images par seconde ressenties, cinématiques
+      description: La ligne « … images/s » sous le bouton JOUER pendant la partie.
+      options:
+        - Moins de 5
+        - 5 à 8
+        - 8 à 12
+        - 12 à 20
+        - Plus de 20
+        - Je ne sais pas
+  - type: dropdown
+    id: fps_jeu
+    attributes:
+      label: Images par seconde ressenties, en jeu
+      options:
+        - Moins de 5
+        - 5 à 8
+        - 8 à 12
+        - 12 à 20
+        - Plus de 20
+        - Je ne sais pas
+  - type: dropdown
+    id: saccades
+    attributes:
+      label: Saccades (à-coups, gels)
+      options:
+        - Aucune
+        - Quelques-unes, au premier lancement seulement
+        - Quelques-unes, à chaque partie
+        - Beaucoup
+    validations:
+      required: true
+  - type: checkboxes
+    id: preparation
+    attributes:
+      label: Préparation faite
+      options:
+        - label: Shaders traduits (étape 3)
+        - label: Pipelines construites après une première partie (étape 4)
+        - label: Cache de shaders NVIDIA sur « Illimitée » (cartes NVIDIA)
+  - type: textarea
+    id: bugs
+    attributes:
+      label: Bugs visuels
+      description: Visages noirs, eau blanche, carrés dans le ciel, objets manquants… Où, et à quel moment ?
+  - type: textarea
+    id: captures
+    attributes:
+      label: Captures et journal
+      description: |
+        Glissez ici vos captures d'écran et le journal de la partie (Réglages, Journaux : partie_….log).
+        Pas de fichier du jeu.
+  - type: textarea
+    id: commentaire
+    attributes:
+      label: Commentaire
+      description: Tout le reste : ce qui marche bien, ce qui gêne, une idée.
