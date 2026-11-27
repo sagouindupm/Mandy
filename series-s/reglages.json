@@ -240,6 +240,44 @@
       { "id": "quality", "nom": "DLSS qualité", "mesure": "176 ms par image sur RTX 3050" }
     ]
   },
+  "petite_vram": {
+    "note": "Low video memory mode (an option of both launchers, off by default), for 6 GB cards or black screens: smaller textures, fewer card buffers and less room for render targets, applied over the card's profile. Recommended, not forced, when the card has less than conseille_sous_go GB (6 GB or less).",
+    "conseille_sous_go": 7,
+    "env": {
+      "VICTORY_TEXTURE_MAX": "1024",
+      "VICTORY_CARD_BUFFERS_MB": "512",
+      "VICTORY_CARD_ROOM_FOR_TARGETS_MB": "768"
+    }
+  },
+  "framegen": {
+    "note": "Frame generation (an option of both launchers, off by default): about twice the frames shown, the input lag of the real ones. NVIDIA's DLSS-G through Streamline (crates/victory-gpu/src/ffx/framegen.rs): on RTX 40/50 NVIDIA's own, on RTX 20/30 and GTX 16 FSR 3 behind DLSS-G's calls (dlssg-to-fsr3, Nukem9, GPL-3.0, the fg folder of the downloadable package); not offered on other cards yet. Applied after the card's profile and the low video memory mode, when the folder (dossier, under %LOCALAPPDATA%\\Sagouindupm) holds the files frame generation needs (fichiers_requis): env, the caps (plafonds: the lower of the value so far and the cap), the folder in variable_dossier, and without DLSS super resolution sans_dlss. With DLSS super resolution Streamline is loaded once from VICTORY_DLSS_DIR, which must then hold both: the folder replaces the DLSS folder (if it holds fichiers_dlss). Measured on RTX 3050 8 GB, boat mission: frame generation alone 85 ms per real frame but 189 card refusals ('no room', black objects); with CARD_BUFFERS_MB=768 and TEXTURE_ROOM_PERCENT=90 91 ms, 7 refusals, characters textured (kept). TEXTURE_MAX=2048 on top: 89 ms, 2 refusals but a 5.9 s hitch (not kept). POOL_FULLEST alone: 105 ms against 88 (rejected).",
+    "env": {
+      "VICTORY_FRAMEGEN": "1",
+      "VICTORY_FRAMEGEN_X": "2",
+      "VICTORY_TEXTURE_ROOM_PERCENT": "90"
+    },
+    "plafonds": { "VICTORY_CARD_BUFFERS_MB": 768 },
+    "variable_dossier": "VICTORY_FRAMEGEN_DIR",
+    "sans_dlss": { "VICTORY_DLSS_MODE": "off" },
+    "dossier": "framegen",
+    "cartes_fsr3": ["RTX 20", "RTX 30", "GTX 16"],
+    "cartes_nvidia": ["RTX 40", "RTX 50"],
+    "fichiers_requis": ["sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "nvngx_dlssg.dll", "sl.reflex.dll", "sl.pcl.dll"],
+    "fichiers_dlss": ["sl.dlss.dll", "nvngx_dlss.dll"],
+    "streamline": {
+      "note": "NVIDIA Streamline, fetched by series-s/framegen.ps1 from NVIDIA's own release on GitHub (only the files below are taken out of the archive), each DLL checked against its SHA-256. NVIDIA's licence does not let us ship them: never in the repository or the package.",
+      "version": "v2.14.16",
+      "url": "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip",
+      "fichiers": ["sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "sl.reflex.dll", "sl.pcl.dll", "nvngx_dlssg.dll", "sl.dlss.dll", "nvngx_dlss.dll"],
+      "licences": ["license.txt", "nvngx_dlss.license.txt", "reflex.license.txt"],
+      "sha256": {}
+    },
+    "fsr3": {
+      "note": "dlssg-to-fsr3 (Nukem9, GPL-3.0), built from source (commit 0e253f63) into the fg folder of the downloadable package. Copied next to engine\\victory.exe and into the folder before a session with frame generation on an RTX 20/30 or GTX 16 card (Streamline's sl.interposer.dll imports dbghelp.dll, the mod's loader), and taken away otherwise.",
+      "dossier_paquet": "fg",
+      "fichiers": ["dbghelp.dll", "dlssg_to_fsr3_amd_is_better.dll", "dlssg_to_fsr3.ini"]
+    }
+  },
   "shaders": {
     "note": "The card's facts for the shader translation (NVIDIA: waves of 32, 1,000,000 views): without them the cache is useless in game. Threads: all logical cores but two (at least 2).",
     "env_nvidia": {
