@@ -39,6 +39,57 @@ std::arch::global_asm!(
     "mov rsi, r10",
     "mov rdi, r11",
     "ret",
+    ".globl victory_safe_stream",
+    ".globl victory_safe_stream_at",
+    ".globl victory_safe_stream_after",
+    ".globl victory_safe_stream_failed",
+    // As victory_safe_copy, the destination written with streaming stores:
+    // bytes up to its next 32-byte boundary, then blocks of 32, then the
+    // rest, each part as the one before left the registers; fenced.
+    "victory_safe_stream:",
+    "mov r10, rsi",
+    "mov r11, rdi",
+    "mov rdi, rcx",
+    "mov rsi, rdx",
+    "mov rcx, rdi",
+    "neg rcx",
+    "and rcx, 31",
+    "cmp rcx, r8",
+    "jbe 2f",
+    "mov rcx, r8",
+    "2:",
+    "sub r8, rcx",
+    "victory_safe_stream_at:",
+    "rep movsb",
+    "mov r9, r8",
+    "shr r9, 5",
+    "and r8, 31",
+    "test r9, r9",
+    "jz 4f",
+    "3:",
+    "vmovdqu ymm0, ymmword ptr [rsi]",
+    "vmovntdq ymmword ptr [rdi], ymm0",
+    "add rsi, 32",
+    "add rdi, 32",
+    "dec r9",
+    "jnz 3b",
+    "4:",
+    "mov rcx, r8",
+    "rep movsb",
+    "victory_safe_stream_after:",
+    "sfence",
+    "vzeroupper",
+    "mov eax, 1",
+    "mov rsi, r10",
+    "mov rdi, r11",
+    "ret",
+    "victory_safe_stream_failed:",
+    "sfence",
+    "vzeroupper",
+    "xor eax, eax",
+    "mov rsi, r10",
+    "mov rdi, r11",
+    "ret",
     ".globl victory_safe_put",
     ".globl victory_safe_put_at",
     ".globl victory_safe_put_after",
@@ -134,6 +185,43 @@ std::arch::global_asm!(
     "mov qword ptr [rax + 8], r11",
     "mov rax, r9",
     "ret",
+    ".globl victory_safe_changed",
+    ".globl victory_safe_changed_at",
+    ".globl victory_safe_changed_after",
+    ".globl victory_safe_changed_failed",
+    // rcx title memory, rdx what was last seen there, r8 records of 32
+    // bytes, r9 a bit per record (zeroed by the caller): each record of
+    // title memory is read once; where it differs from the one last seen it
+    // goes over that one, and then its bit is set. eax: whether all could
+    // be read (where one could not, those before it are done).
+    "victory_safe_changed:",
+    "xor r10d, r10d",
+    "test r8, r8",
+    "jz 3f",
+    "2:",
+    "victory_safe_changed_at:",
+    "vmovdqu ymm0, ymmword ptr [rcx]",
+    "victory_safe_changed_after:",
+    "vpcmpeqb ymm1, ymm0, ymmword ptr [rdx]",
+    "vpmovmskb eax, ymm1",
+    "cmp eax, -1",
+    "je 4f",
+    "vmovdqu ymmword ptr [rdx], ymm0",
+    "bts qword ptr [r9], r10",
+    "4:",
+    "add rcx, 32",
+    "add rdx, 32",
+    "inc r10",
+    "cmp r10, r8",
+    "jb 2b",
+    "3:",
+    "vzeroupper",
+    "mov eax, 1",
+    "ret",
+    "victory_safe_changed_failed:",
+    "vzeroupper",
+    "xor eax, eax",
+    "ret",
 );
 
 unsafe extern "system" {
@@ -141,6 +229,10 @@ unsafe extern "system" {
     fn victory_safe_copy_at();
     fn victory_safe_copy_after();
     fn victory_safe_copy_failed();
+    fn victory_safe_stream(dst: *mut u8, src: *const u8, len: usize) -> u32;
+    fn victory_safe_stream_at();
+    fn victory_safe_stream_after();
+    fn victory_safe_stream_failed();
     fn victory_safe_put(dst: *mut u8, was: *const u8, now: *const u8, blocks: usize) -> u32;
     fn victory_safe_put_at();
     fn victory_safe_put_after();
@@ -149,6 +241,27 @@ unsafe extern "system" {
     fn victory_safe_merge_at();
     fn victory_safe_merge_after();
     fn victory_safe_merge_failed();
+    fn victory_safe_changed(title: *const u8, seen: *mut u8, records: usize, bits: *mut u64) -> u32;
+    fn victory_safe_changed_at();
+    fn victory_safe_changed_after();
+    fn victory_safe_changed_failed();
+}
+
+/// The records of 32 bytes at `title` (`records` of them) that differ from
+/// those in `seen`: each is read once, goes over the one in `seen`, and gets
+/// its bit in `bits` (record n: bit n % 64 of word n / 64). False if a page
+/// of title memory could not be read: then the records before it are done,
+/// and the others are as they were.
+///
+/// # Safety
+/// `seen` holds `records * 32` bytes of ours that nothing else reads or
+/// writes meanwhile, and `bits` at least `records.div_ceil(64)` words, all
+/// 0; `title` is as [`copy`]'s source. [`on`] must have been asked.
+pub(crate) unsafe fn changed(title: *const u8, seen: *mut u8, records: usize, bits: &mut [u64]) -> bool {
+    assert!(bits.len() >= records.div_ceil(64));
+    // SAFETY: a fault reading title memory leaves through the failing exit
+    // ([`failing_exit`]); the rest is the caller's.
+    unsafe { victory_safe_changed(title, seen, records, bits.as_mut_ptr()) != 0 }
 }
 
 /// What [`merge`] did.
@@ -343,6 +456,19 @@ pub(crate) unsafe fn copy(dst: *mut u8, src: *const u8, len: usize) -> bool {
     unsafe { victory_safe_copy(dst, src, len) != 0 }
 }
 
+/// [`copy`], the destination written with streaming stores: for many bytes
+/// that the CPU does not read again soon (a host copy refreshed from title
+/// memory, which the card reads). On this PC a plain copy (`rep movsb`, as
+/// `memcpy`) moved 14-15 GB/s on one thread and no more on several, this one
+/// 24 GB/s: the plain one reads each destination line before writing it.
+///
+/// # Safety
+/// As [`copy`].
+pub(crate) unsafe fn copy_streaming(dst: *mut u8, src: *const u8, len: usize) -> bool {
+    // SAFETY: as [`copy`]'s.
+    unsafe { victory_safe_stream(dst, src, len) != 0 }
+}
+
 /// For the fault handler: where a fault at instruction `at` is to go on, if
 /// it is [`copy`]'s.
 pub(crate) fn failing_exit(at: usize) -> Option<usize> {
@@ -350,9 +476,17 @@ pub(crate) fn failing_exit(at: usize) -> Option<usize> {
     if (from..to).contains(&at) {
         return Some(victory_safe_copy_failed as *const () as usize);
     }
+    let (from, to) = (victory_safe_stream_at as *const () as usize, victory_safe_stream_after as *const () as usize);
+    if (from..to).contains(&at) {
+        return Some(victory_safe_stream_failed as *const () as usize);
+    }
     let (from, to) = (victory_safe_put_at as *const () as usize, victory_safe_put_after as *const () as usize);
     if (from..to).contains(&at) {
         return Some(victory_safe_put_failed as *const () as usize);
+    }
+    let (from, to) = (victory_safe_changed_at as *const () as usize, victory_safe_changed_after as *const () as usize);
+    if (from..to).contains(&at) {
+        return Some(victory_safe_changed_failed as *const () as usize);
     }
     let (from, to) = (victory_safe_merge_at as *const () as usize, victory_safe_merge_after as *const () as usize);
     (from..to).contains(&at).then_some(victory_safe_merge_failed as *const () as usize)
@@ -404,6 +538,102 @@ mod tests {
                     let (to, from) = (std::slice::from_raw_parts(b.0, b.1), std::slice::from_raw_parts(a.0, a.1));
                     assert_eq!(to[da..da + len], from[sa..sa + len]);
                     assert!(to[..da].iter().chain(&to[da + len..]).all(|&x| x == 0xEE));
+                }
+            }
+        }
+    }
+
+    /// The records that differ get their bits and go over those last seen;
+    /// a page that is not there fails, with the records before it done.
+    #[test]
+    fn changed_records_are_found_and_taken() {
+        assert!(on());
+        let pages = Pages::new(3 << 12);
+        pages.fill();
+        let records: usize = (3 << 12) / 32;
+        // SAFETY: inside the allocation.
+        let title = unsafe { std::slice::from_raw_parts(pages.0, pages.1) }.to_vec();
+        let mut seen = title.clone();
+        let mut differ = Vec::new();
+        for n in [0usize, 1, 63, 64, 65, 200, 383] {
+            seen[n * 32 + n % 32] ^= 0x11;
+            differ.push(n);
+        }
+        let mut bits = vec![0u64; records.div_ceil(64)];
+        // SAFETY: inside the allocation; `seen` and `bits` are ours.
+        assert!(unsafe { changed(pages.0, seen.as_mut_ptr(), records, &mut bits) });
+        let found: Vec<usize> = (0..records).filter(|n| bits[n / 64] >> (n % 64) & 1 != 0).collect();
+        assert_eq!(found, differ);
+        assert_eq!(seen, title);
+        bits.fill(0);
+        // SAFETY: as above.
+        assert!(unsafe { changed(pages.0, seen.as_mut_ptr(), records, &mut bits) });
+        assert!(bits.iter().all(|&b| b == 0));
+        // The second page is not there: records 0 and 200 (on the third) differ.
+        for n in [0usize, 200] {
+            seen[n * 32] ^= 0x22;
+        }
+        // SAFETY: a page of our allocation.
+        unsafe { VirtualFree(pages.0.add(4096).cast(), 4096, MEM_DECOMMIT) };
+        let mut bits = vec![0u64; records.div_ceil(64)];
+        // SAFETY: as above; the page that is not there fails the call.
+        assert!(!unsafe { changed(pages.0, seen.as_mut_ptr(), records, &mut bits) });
+        let found: Vec<usize> = (0..records).filter(|n| bits[n / 64] >> (n % 64) & 1 != 0).collect();
+        assert_eq!(found, [0]);
+        assert_eq!(seen[..32], title[..32]);
+        assert_ne!(seen[200 * 32..201 * 32], title[200 * 32..201 * 32]);
+    }
+
+    /// The streaming copy as [`copies_every_length_and_alignment`]: the
+    /// head, the blocks and the tail, with either side unaligned.
+    #[test]
+    fn streams_every_length_and_alignment() {
+        assert!(on());
+        let (a, b) = (Pages::new(1 << 17), Pages::new(1 << 17));
+        a.fill();
+        for len in [0usize, 1, 3, 31, 32, 33, 64, 95, 4095, 4096, 4097, 60_000, 100_003] {
+            for (da, sa) in [(0usize, 0usize), (1, 0), (0, 3), (5, 2), (31, 31), (32, 7), (17, 64)] {
+                // SAFETY: inside the two allocations.
+                unsafe {
+                    std::ptr::write_bytes(b.0, 0xEE, b.1);
+                    assert!(copy_streaming(b.0.add(da), a.0.add(sa), len));
+                    let (to, from) = (std::slice::from_raw_parts(b.0, b.1), std::slice::from_raw_parts(a.0, a.1));
+                    assert!(to[da..da + len] == from[sa..sa + len], "len {len} at {da} from {sa}");
+                    assert!(to[..da].iter().chain(&to[da + len..]).all(|&x| x == 0xEE), "len {len} at {da} from {sa}");
+                }
+            }
+        }
+    }
+
+    /// A source page that is not there, or not readable, fails the
+    /// streaming copy wherever it falls (in the head, the blocks or the
+    /// tail), and the same copy works once the page is back.
+    #[test]
+    fn a_stream_from_missing_memory_fails() {
+        assert!(on());
+        let (a, b) = (Pages::new(4 << 12), Pages::new(4 << 12));
+        a.fill();
+        let mut old = 0;
+        // (Where the copy starts, how long it is): the missing second page
+        // is met in the blocks, in the tail, in the head.
+        for (from, len) in [(0usize, 3 * 4096usize), (4096 - 100, 120), (4096 - 5, 10), (4090, 40)] {
+            for missing in [true, false] {
+                // SAFETY: our allocations; the second page of `a` is put back.
+                unsafe {
+                    std::ptr::write_bytes(b.0, 0xEE, b.1);
+                    if missing {
+                        VirtualFree(a.0.add(4096).cast(), 4096, MEM_DECOMMIT);
+                    } else {
+                        VirtualProtect(a.0.add(4096).cast(), 4096, PAGE_NOACCESS, &mut old);
+                    }
+                    let done = copy_streaming(b.0.add(from), a.0.add(from), len);
+                    VirtualAlloc(a.0.add(4096).cast(), 4096, MEM_COMMIT, PAGE_READWRITE);
+                    VirtualProtect(a.0.add(4096).cast(), 4096, PAGE_READWRITE, &mut old);
+                    assert!(!done, "from {from} len {len} missing {missing}");
+                    a.fill();
+                    assert!(copy_streaming(b.0.add(from), a.0.add(from), len));
+                    let (to, src) = (std::slice::from_raw_parts(b.0, b.1), std::slice::from_raw_parts(a.0, a.1));
+                    assert!(to[from..from + len] == src[from..from + len]);
                 }
             }
         }

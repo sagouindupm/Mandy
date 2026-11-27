@@ -1739,8 +1739,6 @@ mod tests {
             // Replay onto a second host list, exercising `State::replay`.
             let list = host.new_list().unwrap();
             state.replay(&list);
-            let rtv = host.rtv(Some(&color), None);
-            let dsv = host.dsv(&depth, None);
             let vp = D3D12_VIEWPORT {
                 TopLeftX: 0.0,
                 TopLeftY: 0.0,
@@ -1757,9 +1755,13 @@ mod tests {
             };
             // SAFETY: open command list, live resources and views.
             unsafe {
-                list.list.ClearRenderTargetView(rtv, &[0.0; 4], None);
-                list.list.ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.5, 0, None);
-                list.list.OMSetRenderTargets(1, Some(&rtv), false, Some(&dsv));
+                host.output_views(|views| {
+                    let rtv = views.rtv(Some(&color), None);
+                    let dsv = views.dsv(&depth, None);
+                    list.list.ClearRenderTargetView(rtv, &[0.0; 4], None);
+                    list.list.ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.5, 0, None);
+                    list.list.OMSetRenderTargets(1, Some(&rtv), false, Some(&dsv));
+                });
                 list.list.RSSetViewports(&[vp]);
                 list.list.RSSetScissorRects(&[rect]);
                 list.list.SetGraphicsRootSignature(&root);

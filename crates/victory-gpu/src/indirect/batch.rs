@@ -261,26 +261,41 @@ impl Table {
 /// which is in state `before` and left in `INDIRECT_ARGUMENT`: after every
 /// earlier shader write (the title's argument passes), before what reads
 /// the clamped records.
+#[cfg(test)]
 pub(super) fn record(
+    c: &Clamp,
+    l: &ID3D12GraphicsCommandList,
+    dst: (&ID3D12Resource, D3D12_RESOURCE_STATES),
+    budget: u64,
+    sources: [u64; SOURCES],
+    jobs: u64,
+) {
+    record_uav(c, l, dst, budget, sources, jobs, true);
+}
+
+pub(super) fn record_uav(
     c: &Clamp,
     l: &ID3D12GraphicsCommandList,
     (dst, before): (&ID3D12Resource, D3D12_RESOURCE_STATES),
     budget: u64,
     sources: [u64; SOURCES],
     jobs: u64,
+    need_uav: bool,
 ) {
     let after = transition(
         dst,
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,
     );
+    let move_dst = transition(dst, before, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     // SAFETY: an open list; our root signature and pipeline; live buffers:
     // the sources and the table are read in the common state (promoted).
     unsafe {
-        l.ResourceBarrier(&[
-            uav_barrier(),
-            transition(dst, before, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-        ]);
+        if need_uav {
+            l.ResourceBarrier(&[uav_barrier(), move_dst]);
+        } else {
+            l.ResourceBarrier(&[move_dst]);
+        }
         l.SetComputeRootSignature(&c.root);
         l.SetPipelineState(&c.pso);
         for (i, source) in sources.into_iter().enumerate() {

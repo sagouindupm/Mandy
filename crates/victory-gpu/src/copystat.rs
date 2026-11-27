@@ -52,6 +52,14 @@ pub(crate) enum C {
     DynamicAsked,
     DynamicRefused,
     DynamicNs,
+    /// Table bindings whose title slots lie past a host heap capped below
+    /// the title's count: each is made afresh in the dynamic pool.
+    TablesPastCap,
+    /// The fewest free dynamic slots seen at a refusal, and the tables and
+    /// slots of the ones past the cap (diagnostics).
+    DyFreeLeast,
+    DyPastCap,
+    DyPastCapSlots,
     /// Marker texts for device-removed data (`HostList::note`).
     NoteNs,
     /// Ranges given to shaders (steps), their snapshots, and the bytes
@@ -129,8 +137,20 @@ pub(crate) enum C {
     WaitsForGroups,
     WaitsForBuffers,
     IndirectBounded,
+    /// Shader views of placed textures read as the texture the host writes
+    /// there (`crate::resource::read_cast`), and copies made into placed
+    /// views instead (`crate::texture::alias`).
+    AliasCast,
+    AliasCopies,
+    /// Reader waits on the mapping lock (title memory read in place) since
+    /// the last line: ranged, or unranged (the whole address space), by count
+    /// and by the microseconds waited.
+    ReadWaitsRanged,
+    ReadWaitsRangedUs,
+    ReadWaitsWhole,
+    ReadWaitsWholeUs,
 }
-const COUNTERS: usize = 80;
+const COUNTERS: usize = 88;
 /// One of some sets of counters, each in lines of the processor's memory of
 /// its own: a set for all threads had them wait for each other's lines at
 /// every list call (what counts here is summed up for the log alone).
@@ -213,6 +233,50 @@ static WAITS_BY_WORK: Mutex<Option<HashMap<String, (u64, u64)>>> = Mutex::new(No
 /// line by what they ran (a pipeline, or the kind of command): how many,
 /// their microseconds, and the longest one's.
 static COMMANDS_BY_WORK: Mutex<Option<HashMap<String, (u64, u64, u64)>>> = Mutex::new(None);
+
+/// What a list of a submission is, for a timing run's sums by list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Timed {
+    /// A run's prelude: refreshes of the copies its commands read.
+    Prelude,
+    /// The title's list, the run of that place in the submission.
+    Title(usize),
+    /// Ours in front of the lists, the steps done on the card.
+    Steps,
+    /// The compare of copies in the card's memory, behind the lists.
+    Compare,
+    /// Another of ours (the timeline's stamps).
+    Other,
+}
+
+impl Timed {
+    fn index(self) -> usize {
+        match self {
+            Timed::Prelude => 0,
+            Timed::Title(_) => 1,
+            Timed::Steps => 2,
+            Timed::Compare => 3,
+            Timed::Other => 4,
+        }
+    }
+}
+
+/// With `VICTORY_GPU_TIMING`, per kind of list ([`Timed`]): lists, their
+/// microseconds from sending to the card's signal, and the microseconds of
+/// the commands noted in them; then the least time of any list (what a
+/// submission of nothing costs, about).
+static LISTS_TIMED: Mutex<([[u64; 3]; 5], u64)> = Mutex::new(([[0; 3]; 5], u64::MAX));
+
+/// A list of kind `kind` took `wall` microseconds from its sending to the
+/// card's signal, `noted` of them in its noted commands (timing run).
+pub(crate) fn list_took(kind: Timed, wall: u64, noted: u64) {
+    let mut t = LISTS_TIMED.lock().unwrap_or_else(|e| e.into_inner());
+    let e = &mut t.0[kind.index()];
+    e[0] += 1;
+    e[1] += wall;
+    e[2] += noted;
+    t.1 = t.1.min(wall);
+}
 
 /// A command took `ms` on the card (timing run). `op` is its note: the
 /// kind and size first, then the pipeline in brackets, then what it binds.
@@ -1162,7 +1226,10 @@ pub(crate) fn log(frames: f64) {
     static FAULTS: AtomicU64 = AtomicU64::new(0);
     let faults = page_faults();
     let faults = faults - FAULTS.swap(faults, Relaxed).min(faults);
-    let c: Vec<f64> = (0..COUNTERS).map(|i| taken(i) as f64 / frames).collect();
+    let mut c: Vec<f64> = (0..COUNTERS).map(|i| taken(i) as f64 / frames).collect();
+    c[C::DyFreeLeast as usize] = f64::from(
+        crate::descriptor::host::DYNAMIC_FREE_LEAST.swap(u32::MAX, Relaxed),
+    );
     let mb = |v: f64| v / 1e6;
     let ms = |v: f64| v / 1e3;
     tracing::info!(
@@ -1199,7 +1266,8 @@ pub(crate) fn log(frames: f64) {
     tracing::info!(
         "recording per frame ({frames:.0} frames): {:.0} list calls {:.1} ms (all recording \
          threads); {:.1} ms waiting for pipelines; dynamic slots: {:.0} tables asked, {:.0} \
-         refused, {:.1} ms searching; notes {:.1} ms; shader-written ranges: {:.0} steps in \
+         refused, {:.1} ms searching (the fewest free {:.0}, {:.0} tables past the cap in \
+         {:.0} slots); notes {:.1} ms; shader-written ranges: {:.0} steps in \
          {:.1} submissions, snapshots {:.1} ms, {:.1} MB compared back; sparse reads {:.1} ms; \
          guards {:.1} ms; {:.1} MB copied whole (memory not watched); {:.1} frame waits \
          sleeping {:.1} ms (all threads); ranges of shaders that cannot store to buffers: \
@@ -1210,6 +1278,9 @@ pub(crate) fn log(frames: f64) {
         c[C::DynamicAsked as usize],
         c[C::DynamicRefused as usize],
         c[C::DynamicNs as usize] / 1e6,
+        c[C::DyFreeLeast as usize],
+        c[C::DyPastCap as usize],
+        c[C::DyPastCapSlots as usize],
         c[C::NoteNs as usize] / 1e6,
         c[C::GpuWrites as usize],
         c[C::BackSubmissions as usize],
@@ -1222,6 +1293,15 @@ pub(crate) fn log(frames: f64) {
         ms(c[C::PaceUs as usize]),
         c[C::GpuWritesLeftOut as usize],
         mb(c[C::GpuWritesLeftOutBytes as usize]),
+    );
+    tracing::info!(
+        "reader waits on the mapping lock per frame (VICTORY_MAP_LOCK_FINE={}): \
+         ranged {:.2} waits {:.3} ms; unranged {:.2} waits {:.3} ms",
+        u8::from(crate::watch::fine::on()),
+        c[C::ReadWaitsRanged as usize],
+        ms(c[C::ReadWaitsRangedUs as usize]),
+        c[C::ReadWaitsWhole as usize],
+        ms(c[C::ReadWaitsWholeUs as usize]),
     );
     let [together, written, mapped] =
         [0, 1, 2].map(|n| crate::watch::ALIASES[n].load(std::sync::atomic::Ordering::Relaxed));
@@ -1327,6 +1407,39 @@ pub(crate) fn log(frames: f64) {
             what.chars().take(700).collect::<String>()
         );
     }
+    // The lists of a timing run by kind: the title's, what of their time
+    // their commands account for, and ours.
+    let (timed, least) = std::mem::replace(&mut *LISTS_TIMED.lock().unwrap_or_else(|e| e.into_inner()), ([[0; 3]; 5], u64::MAX));
+    if timed.iter().any(|t| t[0] > 0) {
+        let per = |us: u64| us as f64 / 1e3 / frames;
+        let n = |c: u64| c as f64 / frames;
+        let all: u64 = timed.iter().map(|t| t[1]).sum();
+        let lists: u64 = timed.iter().map(|t| t[0]).sum();
+        let [prelude, title, steps, compare, other] = timed;
+        tracing::info!(
+            "  the card's time by list (timing run), per frame, from sending to the signal: {:.1} ms in {:.0} lists; the \
+             title's {:.1} ms in {:.0} (their noted commands {:.1}, the rest {:.1}: what of ours is recorded among them, \
+             barriers, and the sending); preludes {:.1} ms in {:.0} (refreshes of copies); steps on the card {:.1} ms in \
+             {:.0}; compares of copies in the card's memory {:.1} ms in {:.0}; others of ours {:.1} ms in {:.0}; the least \
+             a list took {:.0} us ({:.1} ms a frame at that for every list)",
+            per(all),
+            n(lists),
+            per(title[1]),
+            n(title[0]),
+            per(title[2]),
+            per(title[1].saturating_sub(title[2])),
+            per(prelude[1]),
+            n(prelude[0]),
+            per(steps[1]),
+            n(steps[0]),
+            per(compare[1]),
+            n(compare[0]),
+            per(other[1]),
+            n(other[0]),
+            if least == u64::MAX { 0 } else { least },
+            if least == u64::MAX { 0.0 } else { per(least * lists) },
+        );
+    }
     let by = COMMANDS_BY_WORK.lock().unwrap_or_else(|e| e.into_inner()).take();
     let mut by: Vec<_> = by.into_iter().flatten().collect();
     by.sort_by_key(|&(_, (_, us, _))| std::cmp::Reverse(us));
@@ -1370,6 +1483,11 @@ pub(crate) fn log(frames: f64) {
         c[C::WaitsForBuffers as usize],
         c[C::IndirectBounded as usize],
         barrier_test()
+    );
+    tracing::info!(
+        "  placed views of R9G9B9E5 over textures the host writes, per frame: {:.1} read as that texture (VICTORY_ALIAS_CAST), {:.1} copies into them",
+        c[C::AliasCast as usize],
+        c[C::AliasCopies as usize],
     );
     // What is compared after submissions, largest first, and how much of
     // it shaders had written.

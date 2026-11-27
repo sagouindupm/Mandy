@@ -84,12 +84,32 @@ pub(super) trait Work: Send {
     }
     /// Does it. `forced`: its wait was not met.
     fn go(self, forced: bool);
+    /// Renderer port #7 (`crate::port_journal`): a mark taken when an entry is
+    /// put in the line: the round of the heaps' records begun after that. 0: none.
+    fn mark_now() -> u64 {
+        0
+    }
+    /// A mark taken when a wait goes or is taken along (on our thread): a
+    /// round that begins after.
+    fn mark_later() -> u64 {
+        0
+    }
+    /// Whether what its queue has behind this wait may have been written only
+    /// just before the wait was met (by the CPU).
+    fn raises(&self) -> bool {
+        true
+    }
+    /// Told just before [`Work::go`] of a submission: the highest mark of
+    /// what it is made of and of the waits its queue went past.
+    fn marked(&mut self, _mark: u64) {}
 }
 
 struct Entry<W> {
     number: u64,
     queue: usize,
     what: W,
+    /// [`Work::mark_now`] when it was put in the line.
+    mark: u64,
 }
 
 struct State<W> {
@@ -107,6 +127,21 @@ struct State<W> {
     /// Presents and submissions in the line or being done.
     presents: usize,
     runs: usize,
+    /// Per queue, the highest [`Work::mark_later`] of the waits it went past.
+    floors: Vec<(usize, u64)>,
+}
+
+impl<W> State<W> {
+    fn floor(&self, queue: usize) -> u64 {
+        self.floors.iter().find(|f| f.0 == queue).map_or(0, |f| f.1)
+    }
+
+    fn raise(&mut self, queue: usize, mark: u64) {
+        match self.floors.iter_mut().find(|f| f.0 == queue) {
+            Some(f) => f.1 = f.1.max(mark),
+            None => self.floors.push((queue, mark)),
+        }
+    }
 }
 
 /// See the module's text.
@@ -129,6 +164,7 @@ impl<W: Work> Lane<W> {
                 served: 0,
                 presents: 0,
                 runs: 0,
+                floors: Vec::new(),
             }),
             work: Condvar::new(),
             moved: Condvar::new(),
@@ -139,19 +175,21 @@ impl<W: Work> Lane<W> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn put(state: &mut State<W>, queue: usize, what: W) {
+    fn put(state: &mut State<W>, queue: usize, what: W, mark: u64) {
         state.presents += usize::from(what.shows());
         state.runs += usize::from(what.runs());
         let number = state.next;
         state.next += 1;
-        state.items.push_back(Entry { number, queue, what });
+        state.items.push_back(Entry { number, queue, what, mark });
     }
 
     /// Adds to the end of the line, and has it looked at.
     pub(super) fn push(&self, queue: usize, what: impl IntoIterator<Item = W>) {
+        let what: Vec<W> = what.into_iter().collect();
+        let mark = if what.iter().any(W::runs) { W::mark_now() } else { 0 };
         let mut state = self.lock();
         for what in what {
-            Self::put(&mut state, queue, what);
+            Self::put(&mut state, queue, what, mark);
         }
         state.asked += 1;
         drop(state);
@@ -164,7 +202,7 @@ impl<W: Work> Lane<W> {
     pub(super) fn push_behind(&self, queue: usize, always: bool, what: W, now: impl FnOnce()) {
         let mut state = self.lock();
         if always || state.running == Some(queue) || state.items.iter().any(|e| e.queue == queue) {
-            Self::put(&mut state, queue, what);
+            Self::put(&mut state, queue, what, 0);
         } else {
             now();
         }
@@ -255,12 +293,12 @@ impl<W: Work> Lane<W> {
 
     /// The parts of `entry`, which stands for them, in place `at`.
     fn unfold(state: &mut State<W>, at: usize, entry: Entry<W>) {
-        let (number, queue, runs) = (entry.number, entry.queue, usize::from(entry.what.runs()));
+        let (number, queue, runs, mark) = (entry.number, entry.queue, usize::from(entry.what.runs()), entry.mark);
         let parts = entry.what.unfold();
         state.runs -= runs;
         state.runs += parts.iter().filter(|p| p.runs()).count();
         for (i, what) in parts.into_iter().enumerate() {
-            state.items.insert(at + i, Entry { number, queue, what });
+            state.items.insert(at + i, Entry { number, queue, what, mark });
         }
     }
 
@@ -317,6 +355,12 @@ impl<W: Work> Lane<W> {
             entry
         };
         let (shows, mut runs) = (entry.what.shows(), usize::from(entry.what.runs()));
+        // The highest mark of what it is made of (renderer port #7).
+        let mut mark = entry.mark;
+        if entry.what.ask().is_some() && !entry.what.folded() && entry.what.raises() {
+            let later = W::mark_later();
+            self.lock().raise(entry.queue, later);
+        }
         if entry.what.folded() {
             // Its parts take its place: behind everything before it, before
             // everything after it (they share its number; the first of them
@@ -351,14 +395,26 @@ impl<W: Work> Lane<W> {
                 state.items.insert(at, next);
                 break;
             }
-            let Entry { number, queue, what } = next;
+            let Entry { number, queue, what, mark: theirs } = next;
+            let waits = what.ask().is_some() && what.raises();
             match entry.what.take_along(what) {
-                Ok(run) => runs += usize::from(run),
+                Ok(run) => {
+                    runs += usize::from(run);
+                    mark = mark.max(theirs);
+                    if waits {
+                        let later = W::mark_later();
+                        self.lock().raise(queue, later);
+                    }
+                }
                 Err(what) => {
-                    self.lock().items.insert(at, Entry { number, queue, what });
+                    self.lock().items.insert(at, Entry { number, queue, what, mark: theirs });
                     break;
                 }
             }
+        }
+        if runs > 0 {
+            let floor = self.lock().floor(entry.queue);
+            entry.what.marked(mark.max(floor));
         }
         entry.what.go(forced);
         {
@@ -440,6 +496,28 @@ impl Work for Job {
         if let Ask::Lists(recordings) = ask {
             recordings.iter().for_each(|r| r.wait());
         }
+    }
+
+    fn mark_now() -> u64 {
+        if crate::port_journal::on() { crate::descriptor::round_after_now() } else { 0 }
+    }
+
+    fn mark_later() -> u64 {
+        if crate::port_journal::on() { crate::descriptor::round_after_now() } else { 0 }
+    }
+
+    fn raises(&self) -> bool {
+        if !crate::port_journal::on() {
+            return true;
+        }
+        match self {
+            Job::Value(wait) => wait.met(),
+            _ => true,
+        }
+    }
+
+    fn marked(&mut self, mark: u64) {
+        crate::port_journal::set_mark(mark);
     }
 
     fn met(ask: &Ask) -> bool {
@@ -579,6 +657,8 @@ impl Work for Job {
                 QUEUED.fetch_sub(1, Relaxed);
             }
         }
+        // (The mark was this submission's alone.)
+        crate::port_journal::set_mark(0);
         STATS[BUSY].fetch_add(began.elapsed().as_micros() as u64, Relaxed);
     }
 }
