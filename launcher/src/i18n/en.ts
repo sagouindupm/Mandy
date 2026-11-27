@@ -320,7 +320,7 @@ export const en = {
   "help.what.p1":
     "It runs your copy of an Xbox Series game on PC, with the Series S profile and settings measured on an 8 GB card, a 6-core processor and 32 GB of RAM, adjusted to your PC automatically (Settings, “Detected profile”).",
   "help.what.p2":
-    "Nothing from the game is provided or modified. The settings come from series-s\\reglages.json, as for the console launcher (series-s\dev\Sagouindupm.bat).",
+    "Nothing from the game is provided or modified. The settings come from series-s\\reglages.json, as for the console launcher (series-s\\dev\\Sagouindupm.bat).",
   "help.perf": "Performance",
   "help.perf.p1":
     "About 10 frames per second on an RTX 3050 in the boat mission. The console shares one memory between processor and graphics card; a PC has two, which VIctory keeps in sync constantly.",
