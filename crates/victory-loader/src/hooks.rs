@@ -127,9 +127,14 @@ const FSR_SCALE_PADDING: usize = 0x28ef6e4;
 /// - FSR's scale (a load of 2/3 on Series S) pointed at a constant equal to
 ///   `scale`: the build's own when it has one, else `scale` written into the
 ///   method's padding (as the PC upscaler port's `VICTORY_FFX_SCALE` did);
-///   and its maximum size made the scaled size (vtable slot 11 → slot 10's
-///   function).
-fn render_scale_patches(base: usize, scale: f32, fsr: bool) -> Vec<OwnedPatch> {
+///   and, with `fsr_max`, its maximum size made the scaled size (vtable
+///   slot 11 → slot 10's function).
+///
+/// Without `fsr_max` the maximum stays the title's own: its FSR4 takes no
+/// other (a context of 960x540 is refused, "maxRenderSize must be 1280x720
+/// ... or 1920x1080", and the title then divides by zero). DLSS, which
+/// answers the upscales then, renders below that maximum.
+fn render_scale_patches(base: usize, scale: f32, fsr: bool, fsr_max: bool) -> Vec<OwnedPatch> {
     let mut patches = vec![
         OwnedPatch {
             what: "render scale: own upscaler minimum",
@@ -174,6 +179,9 @@ fn render_scale_patches(base: usize, scale: f32, fsr: bool) -> Vec<OwnedPatch> {
             });
             patches.push(load(FSR_SCALE_PADDING, true));
         }
+    }
+    if !fsr_max {
+        return patches;
     }
     patches.push(OwnedPatch {
         what: "render scale: FSR maximum = scaled size",
@@ -225,7 +233,9 @@ pub(crate) unsafe fn resolution_levers(base: usize, hash: &blake3::Hash) -> usiz
             Some(scale) => {
                 // With the own upscaler forced, FSR is left as it is.
                 let mut previous = false;
-                for p in render_scale_patches(base, scale, !own) {
+                // With a host upscaler (DLSS) the title's FSR context keeps
+                // the maximum size its FSR4 takes.
+                for p in render_scale_patches(base, scale, !own, host.is_none()) {
                     if p.after_previous && !previous {
                         continue;
                     }
@@ -299,7 +309,7 @@ mod tests {
     #[test]
     fn half_scale_patches_both_upscalers() {
         let base = 0x7ff0_0000_0000;
-        let p = render_scale_patches(base, 0.5, true);
+        let p = render_scale_patches(base, 0.5, true, true);
         assert_eq!(p.len(), 4);
         assert_eq!(p[0].new, 0.5f32.to_le_bytes());
         // The FSR load now reads 0.5 at 0x5fc6edc: disp from the next instruction.
@@ -310,13 +320,17 @@ mod tests {
 
     #[test]
     fn own_upscaler_scales_patch_only_the_own_upscaler() {
-        assert_eq!(render_scale_patches(0, 0.6, false).len(), 2);
-        assert_eq!(render_scale_patches(0, 0.5, false).len(), 2);
+        assert_eq!(render_scale_patches(0, 0.6, false, true).len(), 2);
+        assert_eq!(render_scale_patches(0, 0.5, false, true).len(), 2);
+        // A host upscaler: FSR's scale, not its maximum.
+        let p = render_scale_patches(0, 0.5, true, false);
+        assert_eq!(p.len(), 3);
+        assert!(p.iter().all(|p| p.rva != 0x6300ba8));
     }
 
     #[test]
     fn odd_fsr_scales_keep_their_constant_in_the_padding() {
-        let p = render_scale_patches(0, 1.0 / 1.7, true);
+        let p = render_scale_patches(0, 1.0 / 1.7, true, true);
         assert_eq!(p.len(), 5);
         assert_eq!(p[2].rva, FSR_SCALE_PADDING);
         assert_eq!(p[2].expect, [0xCC; 4]);
