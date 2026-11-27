@@ -1300,6 +1300,12 @@ mod tests {
             eprintln!("no host depth bounds support; skipped");
             return;
         }
+        // GitHub's Windows runners have no GPU: their adapter says it supports the
+        // depth bounds test but draws as if it were off. Run on a real card only.
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            eprintln!("depth bounds not applied by the CI's software adapter; skipped");
+            return;
+        }
         let Some(dxc) = dxc() else {
             eprintln!("no PC dxc.exe; skipped");
             return;
