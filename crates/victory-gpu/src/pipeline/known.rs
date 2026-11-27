@@ -16,7 +16,8 @@
 //! off): `known-shaders.bin` (stage, hash, length, container) and
 //! `known-pipelines.bin` (length, then the key, the shaders' stages and
 //! hashes, and the graphics state). They hold the title's own code: they stay
-//! in the cache folder.
+//! in the cache folder. What can be shared is a list of the pipelines without
+//! the containers ([`list`]): a player's own files give them back.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
@@ -30,6 +31,8 @@ use windows::core::PCSTR;
 
 use super::Shader;
 use super::host::{GraphicsState, HostPipeline};
+
+pub mod list;
 
 const SHADERS: &str = "known-shaders.bin";
 const PIPELINES: &str = "known-pipelines.bin";
@@ -195,6 +198,24 @@ pub fn keys(dir: &Path) -> Vec<String> {
         all.push(e.get(..16).unwrap_or_default().iter().map(|b| format!("{b:02x}")).collect());
     });
     all
+}
+
+/// The numbers of the pipelines known in `dir` whose containers are not all
+/// in `known-shaders.bin` (a list imported before the player's own files gave
+/// them, `list::Keeper`): `victory warm` leaves them for later.
+pub fn lacking(dir: &Path) -> HashSet<usize> {
+    let mut there = HashSet::new();
+    walk_shaders(dir, |_, hash, _, _| {
+        there.insert(hash);
+    });
+    let mut lacking = HashSet::new();
+    walk_pipelines(dir, |n, entry| {
+        let whole = list::Pipeline::of_entry(entry).is_some_and(|p| p.shaders.iter().all(|(_, h)| there.contains(h)));
+        if !whole {
+            lacking.insert(n);
+        }
+    });
+    lacking
 }
 
 /// What a driver's cached pipelines depend on besides the title's: the

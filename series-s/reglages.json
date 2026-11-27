@@ -1,0 +1,253 @@
+{
+  "a_lire": [
+    "Sagouindupm | VIctory: the single source of the Series S settings.",
+    "Read by series-s/reglages.ps1 (console launcher Sagouindupm.ps1) and by the graphical launcher (launcher/):",
+    "a setting changed here applies to both. The measuring scripts (scripts/bench) call victory.exe directly",
+    "and do not read this file. The notes explain each group; only the env values count.",
+    "The texts the launchers show (titre, note of the groups, nom, avertissement, conseil, sans_avx2, profil,",
+    "mesure, the notes of petite_ram and dlss) stay in French here: they are the French window's texts. The",
+    "English ones live in the graphical launcher and in reglages.ps1, matched by id. The other notes are in English."
+  ],
+  "profil": "Base trustno1-coder/VIctory-NVIDIA réglée pour RTX 3060 par Maykzera, mesurée ici sur RTX 3050 8 Go + i5-12400F : ~84 ms par image (11,8 fps) dans la cinématique du bateau, eau et visages fidèles.",
+  "groupes": [
+    {
+      "id": "serie_rapide",
+      "titre": "Série rapide",
+      "note": "avatarmanz/trustno1",
+      "env": {
+        "VICTORY_TEXTURE_NO_WAIT": "1",
+        "VICTORY_RELAY": "2",
+        "VICTORY_CARD_STEPS": "2",
+        "VICTORY_WIDE_BACK": "1",
+        "VICTORY_CARD_REHASH_RUNS": "1",
+        "VICTORY_JOIN_COPIES": "1",
+        "VICTORY_INDIRECT_WINDOW": "1",
+        "VICTORY_RELAY_COPY": "1",
+        "VICTORY_INDIRECT_BATCH": "2",
+        "VICTORY_MAP_THREADS": "1",
+        "VICTORY_TITLE_PRIORITIES": "0",
+        "VICTORY_CARD_AWAKE": "1",
+        "VICTORY_SHOW_AFTER": "1",
+        "VICTORY_THIN": "1",
+        "VICTORY_UPLOAD_AHEAD": "1"
+      }
+    },
+    {
+      "id": "processeur",
+      "titre": "Processeur 6 cœurs / 12 fils",
+      "note": "Maykzera : moins de fils auxiliaires, 16 soumissions préparées ensemble ; 4 fils de traduction des listes et pas 5 (Maykzera, 2 mesures ; ici 87 ms contre 93, pire image 178 ms).",
+      "env": {
+        "VICTORY_THIN_THREADS": "4",
+        "VICTORY_UNDER_THREADS": "3",
+        "VICTORY_VIEW_THREADS": "3",
+        "VICTORY_PIPELINE_WORKERS": "4",
+        "VICTORY_PIPELINE_LOWEST": "1",
+        "VICTORY_JOIN_PARTS": "16",
+        "VICTORY_JOIN_LISTS": "96"
+      }
+    },
+    {
+      "id": "attente_pipelines",
+      "titre": "Attente des pipelines",
+      "note": "Une pipeline pas prête : 150 ms d'attente au plus (10 000 gelait l'image 12 s, avatarmanz #143).",
+      "env": {
+        "VICTORY_PIPELINE_WAIT_MS": "150"
+      }
+    },
+    {
+      "id": "image",
+      "titre": "Image",
+      "note": "Lumière de remplacement du ray tracing, NaN effacés, 540p + upscaler du jeu, interface Series S.",
+      "env": {
+        "VICTORY_AMBIENT": "0.8",
+        "VICTORY_AMBIENT_AIR": "1.5",
+        "VICTORY_AMBIENT_MOST": "2",
+        "VICTORY_NAN_SCRUB": "1",
+        "VICTORY_BVH_MISS": "1",
+        "VICTORY_DYNAMIC_SLOTS": "524288",
+        "VICTORY_RENDER_SCALE": "0.5",
+        "VICTORY_OWN_UPSCALER": "1",
+        "VICTORY_COMPOSE": "1",
+        "VICTORY_CARD_BUFFERS_MIN_KB": "64",
+        "VICTORY_CARD_BUFFERS_MB": "1024",
+        "VICTORY_CARD_ROOM_FOR_TARGETS_MB": "1280",
+        "VICTORY_WAVE_WIDE_DIGESTS": "7099a57fded142613b44f410463d6be6",
+        "VICTORY_VRAM_RESERVE": "max",
+        "VICTORY_AMBIENT_SETTLE": "250,3"
+      }
+    },
+    {
+      "id": "carnet_pipelines",
+      "titre": "Carnet des pipelines",
+      "note": "Chaque partie note les pipelines créées, pour « Construire les pipelines » (victory warm --used).",
+      "env": {
+        "VICTORY_PIPELINE_BOOK": "1"
+      }
+    }
+  ],
+  "pipelines_sautees": {
+    "variable": "VICTORY_SKIP_PIPELINES",
+    "note": "The ~1,000 ray tracing resolve passes (no ray structure on NVIDIA, file below, relative to the repository root), then the heat haze 731a39171b568298 (foxhound: it smears blocks of pixels, on the water too): 84 ms against 93 on an RTX 3050, clean picture. Then the programs that the LDS fallback (#27) makes translatable but that cost ~30 ms without the trees (water volumetrics 5dc3, underwater 926c, transmission 1f1f, 21f7, 7c9a); the trees stay. Then 43 ray-tracing-only work passes (bvh skinning, Primary_GatherCopy; Dathinel/victory-4gb issue #4, also in Proudnoob4's rt_work_off_hashes.txt): 88-89 ms against 91-92 in two clean A/B rounds, same picture. The water local-lights volumetrics 6f22 runs again, wave-wide (VICTORY_WAVE_WIDE_DIGESTS, from edupode): 92 ms against 103, clean water.",
+    "fichier": "scripts/rt_off_hashes.txt",
+    "en_plus": [
+      "731a39171b568298",
+      "5dc3b25986622949",
+      "926c46bab3b86bd6",
+      "1f1fbd86759b3da2",
+      "21f7ad7863620328",
+      "7c9a6a83826cdfac",
+      "6b39336022e5e663",
+      "81dc252c4d183e30",
+      "ced45910ad577dcb",
+      "2cb480030989538a",
+      "207bf7d2f14a87e6",
+      "3cf39f4495b908d0",
+      "c7aef9c89f12051f",
+      "cb90a66c7fe122aa",
+      "96d1ef386a0ddcfb",
+      "ca2c77616107b128",
+      "822e62ded676ef45",
+      "c7213dc64c67638b",
+      "d28b4922384831fe",
+      "cd34b8dd52ee5c0c",
+      "9db486cee396e315",
+      "82a2ad6d07417d36",
+      "827b309e779552d7",
+      "90a0692af4320129",
+      "9ffcaff533995118",
+      "904e7a51e3fab26c",
+      "b8e420aac4197681",
+      "dd24ff46af3ae6ee",
+      "60b09004fef7f2f1",
+      "8f9eb68d0c6dd5cf",
+      "71ab19b0a4669299",
+      "d3022ba8427bc72c",
+      "77edaab306206e9a",
+      "4518151afe8c6c09",
+      "c968414adaaeb93d",
+      "e06a21f3cea46973",
+      "b5a672a450b321e2",
+      "f16876929fa64f9f",
+      "878933b499cfa14d",
+      "75bd00da58a1615c",
+      "023439f44041b689",
+      "aff8936db59182b7",
+      "a567b9ef845fb680",
+      "409e2cddc90b6d0d",
+      "952fd529dd779b27",
+      "1a77e876755eff12",
+      "64fe9fa3cb71d57f",
+      "ce33eeaaf36bce05",
+      "cfd83392ec9ae408"
+    ]
+  },
+  "pipelines_partagees": {
+    "note": "The shared pipeline list (keys, shader hashes, states: no game code), relative to the root. Both launchers import it before the shader translation (victory pipelines import <list>: the translation keeps along the way the shaders it names), or after it with --shaders <the player's shaders>, then victory warm --used: the first session no longer stutters until after the boat mission. The \"name:size\" mark in lanceur.json (pipelines_liste) says which list was built.",
+    "fichier": "series-s/pipelines/series-s-rtx.txt"
+  },
+  "petite_ram": {
+    "note": "PC à moins de 24 Go : fenêtres de mémoire du jeu dans la mémoire de la carte (évite le plantage 0x8007000E).",
+    "moins_de_go": 24,
+    "env": {
+      "VICTORY_WINDOWS_BAR_MB": "3072"
+    }
+  },
+  "jeu": {
+    "note": "A complete copy of the game, not the exe alone: game_scarlett_master.exe with its archives next to it (v1.0.2.1: ~130 GB, 12 .rpf archives including shaders.rpf and levels.rpf, ~25,000 translated shaders). The automatic search prefers complete copies; an incomplete copy is refused with what is missing. After the translation, fewer than shaders_min shaders means an incomplete copy.",
+    "exe": "game_scarlett_master.exe",
+    "archives_requises": ["shaders.rpf", "levels.rpf"],
+    "archives_min": 8,
+    "taille_min_go": 50,
+    "shaders_min": 5000,
+    "conseil": "Gardez toute la copie du jeu dans son propre dossier (par exemple C:\\Jeux\\GTA6), pas en vrac dans Téléchargements."
+  },
+  "materiel": {
+    "note": "Profile picked automatically from this PC, without asking: the CPU, the card then the RAM adjust the settings of the groups (in that order), before the 24 GB rule. The reference PC (RTX 3050 8 GB, 12 threads, 32 GB) keeps exactly the settings of the groups.",
+    "processeur": {
+      "note": "Helper threads according to the CPU's logical cores (threads).",
+      "crans": [
+        {
+          "id": "8_fils",
+          "nom": "8 fils ou moins",
+          "moins_de_fils": 9,
+          "env": { "VICTORY_THIN_THREADS": "3", "VICTORY_UNDER_THREADS": "2", "VICTORY_VIEW_THREADS": "2", "VICTORY_PIPELINE_WORKERS": "3" }
+        },
+        {
+          "id": "12_fils",
+          "nom": "6 cœurs / 12 fils (réglages de Maykzera)",
+          "moins_de_fils": 16,
+          "env": { "VICTORY_THIN_THREADS": "4", "VICTORY_UNDER_THREADS": "3", "VICTORY_VIEW_THREADS": "3", "VICTORY_PIPELINE_WORKERS": "4" }
+        },
+        {
+          "id": "16_fils",
+          "nom": "16 fils ou plus",
+          "env": { "VICTORY_THIN_THREADS": "6", "VICTORY_UNDER_THREADS": "4", "VICTORY_VIEW_THREADS": "4", "VICTORY_PIPELINE_WORKERS": "6" }
+        }
+      ]
+    },
+    "carte": {
+      "note": "Card buffers according to its memory. Never 2048 MB under 11 GB (3 fps measured on 8 GB cards with 2 GB of buffers): a 10 GB card stays at 1024 like 8 GB (64 KiB buffers on the card, 1024 MB of them and 1280 MB of room for render targets: 75 ms against 93 on the RTX 3050, card refusals 67 -> 15, characters textured). VICTORY_TEXTURE_MAX only counts once PR #30 is merged; unknown to the engine before that, it has no effect. Card memory unknown: the settings of the groups.",
+      "crans": [
+        {
+          "id": "6_go",
+          "nom": "6 Go ou moins",
+          "moins_de_go": 7,
+          "env": { "VICTORY_CARD_BUFFERS_MB": "768", "VICTORY_TEXTURE_MAX": "2048",
+     "VICTORY_CARD_ROOM_FOR_TARGETS_MB": "1024" }
+        },
+        {
+          "id": "8_go",
+          "nom": "8 à 10 Go",
+          "moins_de_go": 11,
+          "env": { "VICTORY_CARD_BUFFERS_MB": "1024" }
+        },
+        {
+          "id": "12_go",
+          "nom": "11 Go et plus",
+          "env": { "VICTORY_CARD_BUFFERS_MB": "2048" }
+        }
+      ]
+    },
+    "tres_petite_ram": {
+      "note": "16 GB PC (under 20 GB): on top of the 24 GB rule, helper threads one step lower and card buffers at 1024 MB at most.",
+      "moins_de_go": 20,
+      "crans_de_fils_en_moins": 1,
+      "plafonds": { "VICTORY_CARD_BUFFERS_MB": 1024 },
+      "conseil": "16 Go de mémoire vive : fermez le navigateur, Discord et les autres programmes avant de jouer."
+    },
+    "fabricants": {
+      "nvidia_rtx": { "nom": "NVIDIA RTX", "dlss": true, "shaders_nvidia": true, "avertissement": "" },
+      "nvidia": { "nom": "NVIDIA GTX ou autre", "dlss": false, "shaders_nvidia": true, "avertissement": "" },
+      "amd": { "nom": "AMD", "dlss": false, "shaders_nvidia": false, "avertissement": "Carte AMD : non testé, profil Series S générique. Vos mesures nous aident." },
+      "intel_arc": { "nom": "Intel Arc", "dlss": false, "shaders_nvidia": false, "avertissement": "Carte Intel Arc : non testé, profil Series S générique. Vos mesures nous aident." },
+      "intel_integree": { "nom": "Intel (puce intégrée)", "dlss": false, "shaders_nvidia": false, "avertissement": "Puce graphique intégrée : il faut une carte graphique dédiée de 4 Go ou plus." },
+      "inconnu": { "nom": "carte inconnue", "dlss": true, "shaders_nvidia": false, "avertissement": "" }
+    },
+    "sans_avx2": "Processeur sans AVX2 : la version téléchargeable de VIctory ne démarrera pas. Compilez-la depuis les sources (voir le README)."
+  },
+  "dlss": {
+    "note": "DLSS (cartes RTX) à la place de l'upscaler du jeu, si le dossier de Streamline est donné et le mode n'est pas « off ». Mesuré sur RTX 3050 : ultra performance 90 ms (image propre), performance 102 ms, qualité 176 ms.",
+    "fichier_requis": "sl.interposer.dll",
+    "variable_dossier": "VICTORY_DLSS_DIR",
+    "variable_mode": "VICTORY_DLSS_MODE",
+    "retire": [
+      "VICTORY_RENDER_SCALE",
+      "VICTORY_OWN_UPSCALER"
+    ],
+    "modes": [
+      { "id": "ultra", "nom": "DLSS ultra performance", "mesure": "90 ms par image sur RTX 3050, image propre" },
+      { "id": "performance", "nom": "DLSS performance", "mesure": "102 ms par image sur RTX 3050" },
+      { "id": "quality", "nom": "DLSS qualité", "mesure": "176 ms par image sur RTX 3050" }
+    ]
+  },
+  "shaders": {
+    "note": "The card's facts for the shader translation (NVIDIA: waves of 32, 1,000,000 views): without them the cache is useless in game. Threads: all logical cores but two (at least 2).",
+    "env_nvidia": {
+      "VICTORY_HOST_WAVE": "32",
+      "VICTORY_HOST_ROVS": "1",
+      "VICTORY_VIEW_LIMIT": "999999"
+    },
+    "threads_laisses_libres": 2,
+    "threads_min": 2
+  }
+}

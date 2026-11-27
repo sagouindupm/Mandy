@@ -1,0 +1,115 @@
+name: Give feedback
+description: How VIctory S runs on your PC. The launcher's "Give feedback" button already fills in your configuration.
+title: "[feedback] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! Every report from another machine helps us tune the automatic profiles.
+        **Do not attach any game file** (no executable, archive or extract). Screenshots of your problems are
+        welcome.
+
+  - type: input
+    id: gpu
+    attributes:
+      label: Graphics card
+      placeholder: NVIDIA GeForce RTX 3050
+    validations:
+      required: true
+  - type: input
+    id: vram
+    attributes:
+      label: Graphics card memory
+      placeholder: 8 GB
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      placeholder: Intel Core i5-12400F (12 threads)
+    validations:
+      required: true
+  - type: input
+    id: ram
+    attributes:
+      label: RAM
+      placeholder: 32 GB
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      placeholder: Windows 11 Pro (10.0.26200)
+  - type: input
+    id: version
+    attributes:
+      label: Launcher version
+      description: At the bottom left of the window ("© VIctory S 0.1.0").
+      placeholder: VIctory S 0.1.0 (downloaded version)
+  - type: textarea
+    id: profil
+    attributes:
+      label: Detected profile
+      description: Launcher, Settings tab, "Detected profile", "Copy" button.
+      render: text
+
+  - type: dropdown
+    id: fps_cinematique
+    attributes:
+      label: Frames per second as felt, cutscenes
+      description: The "… fps" line under the PLAY button during the session.
+      options:
+        - Under 5
+        - 5 to 8
+        - 8 to 12
+        - 12 to 20
+        - Over 20
+        - I don't know
+  - type: dropdown
+    id: fps_jeu
+    attributes:
+      label: Frames per second as felt, in game
+      options:
+        - Under 5
+        - 5 to 8
+        - 8 to 12
+        - 12 to 20
+        - Over 20
+        - I don't know
+  - type: dropdown
+    id: saccades
+    attributes:
+      label: Stutter (hitches, freezes)
+      options:
+        - None
+        - A few, on first launch only
+        - A few, every session
+        - A lot
+    validations:
+      required: true
+  - type: checkboxes
+    id: preparation
+    attributes:
+      label: Setup done
+      options:
+        - label: Shaders translated (step 3)
+        - label: Pipelines built after a first session (step 4)
+        - label: NVIDIA shader cache set to "Unlimited" (NVIDIA cards)
+  - type: textarea
+    id: bugs
+    attributes:
+      label: Visual bugs
+      description: Black faces, white water, squares in the sky, missing objects… Where, and when?
+  - type: textarea
+    id: captures
+    attributes:
+      label: Screenshots and log
+      description: |
+        Drop your screenshots and the session log here (Settings, Logs: partie_….log).
+        No game files.
+  - type: textarea
+    id: commentaire
+    attributes:
+      label: Comment
+      description: Everything else: what works well, what bothers you, an idea.

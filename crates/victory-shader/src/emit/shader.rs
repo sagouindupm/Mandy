@@ -38,7 +38,8 @@ pub const SLOT_STRIDES: u8 = 255;
 /// The bits of a [`SLOT_STRIDES`] dword that hold the stride.
 pub const VIEW_STRIDE_BITS: u32 = (1 << 30) - 1;
 /// In a [`SLOT_STRIDES`] dword: a typed buffer view of an integer format
-/// (`UINT` or `SINT`), whose 16-bit typed accesses (`_d16`) pass bits.
+/// (`UINT` or `SINT`), whose 16-bit typed accesses (`_d16`) pass bits; or a
+/// texture UAV of one, whose image stores `VICTORY_NAN_SCRUB` leaves alone.
 /// (After VIctory 4243a96a.)
 pub const VIEW_INTEGER: u32 = 1 << 31;
 /// With [`VIEW_INTEGER`]: a signed (`SINT`) format.

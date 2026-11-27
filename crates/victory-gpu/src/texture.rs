@@ -375,6 +375,13 @@ pub(crate) fn alias(list: &HostList, placed: This, source: This) -> bool {
     true
 }
 
+/// Whether a staging buffer cut from a pooled block is zeroed before use
+/// (on unless `VICTORY_STAGING_ZERO=0`; see where staging buffers are made).
+fn staging_zero() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_STAGING_ZERO").is_none_or(|v| v != "0"))
+}
+
 /// Whether a texture refresh that finds the runtime remapping title memory
 /// goes on without waiting for it (`VICTORY_TEXTURE_NO_WAIT=1`; off by
 /// default).
@@ -1538,6 +1545,14 @@ impl Staging {
             if got != 0 {
                 last.hash = Some(digest(read));
                 self.detile(read);
+            } else {
+                // Nothing could be read: the upload recorded from this staging
+                // buffer would copy what its memory held before. A buffer cut
+                // from the pool holds another texture's bytes there, and the
+                // card showed them as this one's ("rainbow" faces and clothes,
+                // players' reports 27/11/2026). Zeros until the pages are read
+                // at the next refresh.
+                self.clear();
             }
             got
         });
@@ -1608,9 +1623,25 @@ impl Staging {
                     .detile(tiled, mip, slice, linear, pitch, pitch * rows as usize)
             {
                 tracing::warn!(?e, mip, slice, "texture not detiled");
+                // The rest is not this texture's: zeros, not a pooled buffer's
+                // earlier contents (see `fill`).
+                linear.fill(0);
+                let end = footprint.Offset as usize + len;
+                if end < self.bytes as usize {
+                    // SAFETY: the rest of the mapped staging buffer.
+                    unsafe { std::ptr::write_bytes(self.data.add(end), 0, self.bytes as usize - end) };
+                }
                 return;
             }
         }
+    }
+
+    /// Zeros over the whole staging buffer (a pooled one holds another
+    /// texture's bytes until it is first filled).
+    fn clear(&self) {
+        // SAFETY: the mapped staging buffer, `bytes` long.
+        unsafe { std::ptr::write_bytes(self.data, 0, self.bytes as usize) };
+        self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -2001,6 +2032,18 @@ fn staging(resource: This, copy: &crate::resource::HostTexture, first: u32) -> O
             (None, buffer, 0, data)
         }
     };
+    // A piece of a pooled block held another texture's staging two seconds ago.
+    // Any upload recorded before this one is first filled (a refresh put off,
+    // a read that failed while the runtime remapped) copied those bytes to the
+    // card, which showed them as this texture: the "rainbow" faces, clothes and
+    // walls players reported (27/11/2026), most on PCs whose pools turn over
+    // fastest (8 GB cards, 16 GB of RAM). Zeros instead (a fresh upload buffer
+    // is zeroed by Windows): a few milliseconds a frame while the world streams
+    // in, against frames of 40-170 ms. `VICTORY_STAGING_ZERO=0` skips it.
+    if piece.is_some() && staging_zero() {
+        // SAFETY: the piece's mapped memory, `total` bytes from `data`.
+        unsafe { std::ptr::write_bytes(data, 0, total as usize) };
+    }
     tracing::debug!(?desc, total, "texture contents uploaded from title memory");
     STAGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     STAGED[1].fetch_add(total, std::sync::atomic::Ordering::Relaxed);

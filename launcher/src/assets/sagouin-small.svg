@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Sagouin, the Sagouindupm mascot: simplified variant of sagouin.svg for small sizes (under 32 px in the
+       window, 16 to 32 px in the app icon, the favicon). Only what still reads at 16 px: the round dark face,
+       the two white ear tufts, the forehead blaze and the eyes; no tail, no banding, no mouth. -->
+  <rect width="64" height="64" rx="14" fill="#FF3C78"/>
+  <path d="M24 19 C16 13.5 10 11.5 4 12 C7 17 9.5 21.5 12 25.5 C8.5 29.5 5.5 34 3.5 40 C10 40 16.5 38.5 22.5 36.5 Z" fill="#F5F1EA"/>
+  <path d="M40 19 C48 13.5 54 11.5 60 12 C57 17 54.5 21.5 52 25.5 C55.5 29.5 58.5 34 60.5 40 C54 40 47.5 38.5 41.5 36.5 Z" fill="#F5F1EA"/>
+  <ellipse cx="32" cy="32" rx="16" ry="15" fill="#2A2A2E"/>
+  <path d="M32 25 C37 24 42.5 25 44 30 C45 35 42 40.5 37.5 43.5 C35.5 45 34 45.5 32 45.5 C30 45.5 28.5 45 26.5 43.5 C22 40.5 19 35 20 30 C21.5 25 27 24 32 25 Z" fill="#6E5B4E"/>
+  <path d="M32 18.5 C37 21.5 37 25.5 32 30 C27 25.5 27 21.5 32 18.5 Z" fill="#F5F1EA"/>
+  <circle cx="25.7" cy="33" r="5.3" fill="#0B0B10"/>
+  <circle cx="38.3" cy="33" r="5.3" fill="#0B0B10"/>
+  <circle cx="27.5" cy="31.2" r="2" fill="#FFFFFF"/>
+  <circle cx="40.1" cy="31.2" r="2" fill="#FFFFFF"/>
+  <path d="M29.5 39 Q32 38 34.5 39 Q33.4 41.6 32 41.8 Q30.6 41.6 29.5 39 Z" fill="#0B0B10"/>
+</svg>

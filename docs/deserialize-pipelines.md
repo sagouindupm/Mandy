@@ -1,46 +1,46 @@
 # Device slots 0x1c8 and 0x218: pipelines the title deserializes
 
-Rétro-ingénierie Sagouindupm | VIctory, 2026-11-26 (RTX 3050, Series S, titre 1.0.2.1).
-Données relevées avec `VICTORY_DUMP_UNKNOWN_PIPELINES=<dossier>` (rien du jeu dans ce dépôt).
+Reverse engineering by Sagouindupm | VIctory, 2026-11-26 (RTX 3050, Series S, title 1.0.2.1).
+Data collected with `VICTORY_DUMP_UNKNOWN_PIPELINES=<folder>` (nothing from the game in this repository).
 
-## Ce que c'est
-- **0x218** = `DeserializeComputePipelineStateX` (comme Marvisak/VIctory#2396 l'a vu pour l'upscaler AMD).
-  Description : `root, (paquet, 0x1c), (hash, 0x14), (code GFX10, n), (métadonnées, m), ...`.
-- **0x1c8** = sa version graphique (`DeserializeGraphicsPipelineStateX`, nom supposé). Aucun fork ne l'implémente.
-  Mesuré : les ~24 500 appels tombent tous en 2 s au chargement, environ 12 000 pipelines distinctes demandées
-  18 fois chacune, aucune relance par image. C'est le cache de pipelines précompilées du jeu ; il se rabat ensuite
-  sur la création classique (DXIL), que nous traduisons. Gain attendu à l'implémenter : temps de chargement et
-  compilation de shaders, pas l'image.
+## What they are
+- **0x218** = `DeserializeComputePipelineStateX` (as Marvisak/VIctory#2396 found for the AMD upscaler).
+  Description: `root, (packet, 0x1c), (hash, 0x14), (GFX10 code, n), (metadata, m), ...`.
+- **0x1c8** = its graphics version (`DeserializeGraphicsPipelineStateX`, assumed name). No fork implements it.
+  Measured: the ~24,500 calls all land within 2 s at load, about 12,000 distinct pipelines requested
+  18 times each, no repeat per frame. It is the game's precompiled pipeline cache; it then falls back
+  to regular creation (DXIL), which we translate. Expected gain from implementing it: load time and
+  shader compilation, not the picture.
 
-## Description 0x1c8 (mots de 64 bits)
-| mot | contenu |
+## 0x1c8 description (64-bit words)
+| word | content |
 |---|---|
-| 0 | root signature (notre objet) |
-| 1, 2 | paquet de registres, 0x184 à 0x200 octets |
-| 3, 4 | format d'entrée des sommets (noms `POSITION`, `COLOR`, `TEXCOORD` en clair), 0x50 à 0xbc |
-| 5-8 | étage 0 = **pixel shader** : code GFX10, taille ; métadonnées, taille |
-| 9-12 | étage 1 = **vertex shader** (exports `pos0`, `param0+`) |
-| 13-16 | étage 2 = étage de sommets quand l'étage 1 est vide (vu avec un pixel shader de 19 Ko) |
+| 0 | root signature (our object) |
+| 1, 2 | register packet, 0x184 to 0x200 bytes |
+| 3, 4 | vertex input format (names `POSITION`, `COLOR`, `TEXCOORD` in plain text), 0x50 to 0xbc |
+| 5-8 | stage 0 = **pixel shader**: GFX10 code, size; metadata, size |
+| 9-12 | stage 1 = **vertex shader** (exports `pos0`, `param0+`) |
+| 13-16 | stage 2 = vertex stage when stage 1 is empty (seen with a 19 KB pixel shader) |
 
-Les étages sont reconnus à leurs exports (`exp mrt0` pour le pixel shader, `exp pos0`/`param` pour les sommets).
+Stages are recognized by their exports (`exp mrt0` for the pixel shader, `exp pos0`/`param` for vertex stages).
 
-## Métadonnées d'étage
-Même format que la `kind 7` FSPX de `fspx_program` (Marvisak main, `native.rs`), version 2 au lieu de 0x403 :
-`u32 2, u32 taille-0xc, u32 mots de code, u8 0x40, u8 premier dword user-data, u8 nombre d'enregistrements 0x41, u8 0`,
-puis des enregistrements de 32 octets (0x41 ressource lue, 0x42 déclaration de vue, 0x43 hash).
+## Stage metadata
+Same format as FSPX `kind 7` in `fspx_program` (Marvisak main, `native.rs`), version 2 instead of 0x403:
+`u32 2, u32 size-0xc, u32 code words, u8 0x40, u8 first user-data dword, u8 number of 0x41 records, u8 0`,
+then 32-byte records (0x41 resource read, 0x42 view declaration, 0x43 hash).
 
-## Ce qui manque pour les créer
-1. Le format FSPX/ACCC dans notre traducteur (porter `fspx_program`).
-2. Le paquet de registres : SPI_PS_INPUT_*, sorties du vertex shader, format des cibles couleur (le code exporte déjà au format de la cible, sans les correctifs d'export du FSSM).
-3. Des signatures d'entrée/sortie fabriquées (le jeu ne passe pas de DXIL).
+## What is missing to create them
+1. The FSPX/ACCC format in our translator (port `fspx_program`).
+2. The register packet: SPI_PS_INPUT_*, vertex shader outputs, colour target formats (the code already exports in the target's format, without the FSSM export fixes).
+3. Fabricated input/output signatures (the game passes no DXIL).
 
-## Eau blanche (enquête du 2026-11-26)
-Outils : `VICTORY_CAPTURE_AT=<secondes>` (capture à l'heure, les cinématiques suivent l'horloge),
-`VICTORY_DUMP_TARGETS=1`, valeurs brutes des petites cibles dans le journal (build `diagnostics`).
-- L'éclairage HDR est juste (coucher de soleil de la cour de prison correct avant post-traitement) ;
-  l'exposition vaut 2^-12,9 et le ciel, les arbres et les personnages sont bien exposés.
-- Seule l'eau est blanche, dès la cible HDR éclairée : on voit le sable plein soleil sous l'eau, sans absorption.
-- Le calcul d'eau `cad2edef5ecea3ba` écrit la couleur turquoise (R11G11B10 1280x720), trouée de bandes noires,
-  et aucune passe ne la lie comme entrée dans la même image (une lecture par index, bindless, reste possible
-  et n'apparaît pas dans la liste des opérations).
-- Seuls dessins sautés : les étapes du constructeur de ray tracing (`VICTORY_BVH_BUILDER` éteint).
+## White water (investigation of 2026-11-26)
+Tools: `VICTORY_CAPTURE_AT=<seconds>` (capture at a given time; cutscenes follow the clock),
+`VICTORY_DUMP_TARGETS=1`, raw values of small targets in the log (`diagnostics` build).
+- HDR lighting is correct (the prison yard sunset is right before post-processing);
+  exposure is 2^-12.9 and the sky, trees and characters are well exposed.
+- Only the water is white, already in the lit HDR target: the sunlit sand shows under the water, with no absorption.
+- The water compute `cad2edef5ecea3ba` writes the turquoise colour (R11G11B10 1280x720), riddled with black bands,
+  and no pass binds it as an input in the same frame (a read by index, bindless, is still possible
+  and does not show up in the list of operations).
+- The only skipped draws: the ray tracing builder's steps (`VICTORY_BVH_BUILDER` off).

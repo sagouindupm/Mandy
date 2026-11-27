@@ -14,9 +14,21 @@ use anyhow::{Context, Result, bail};
 const MAX_FILE_SIZE: usize = 640 * 1024;
 const MAX_ENCODED_RUN: usize = 512;
 
+// ts, tsx, css, html: the graphical launcher's window (launcher/). svg: our own drawings (docs/assets, and
+// launcher/src/assets: the mascot the app icon is rendered from at build time), text like the rest and held to
+// the same checks (no embedded base64 image).
 const ALLOWED_EXTENSIONS: &[&str] = &[
-    "rs", "toml", "md", "txt", "lock", "yml", "yaml", "json", "hlsl", "hlsli", "ps1", "cmd", "bat", "sh",
+    "rs", "toml", "md", "txt", "lock", "yml", "yaml", "json", "hlsl", "hlsli", "ps1", "cmd", "bat",
+    "sh", "ts", "tsx", "css", "html", "svg",
 ];
+
+/// Screenshots of our own launcher for the README, the only images allowed: PNG files named
+/// `docs/assets/launcher-*.png`, at most 300 KiB each. They are taken by `scripts/package-release.ps1
+/// -Screenshots` with `--preview`, an empty home folder: no game image in the background, no path of the player's
+/// (docs/asset-policy.md).
+const OWN_SCREENSHOT_PREFIX: &str = "docs/assets/launcher-";
+const OWN_SCREENSHOT_MAX: usize = 300 * 1024;
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 const ALLOWED_NAMES: &[&str] = &[
     ".gitignore",
     ".gitattributes",
@@ -146,6 +158,21 @@ fn list_files(root: &Path, staged: bool) -> Result<Vec<String>> {
 /// All problems with one file. Pure, for testing.
 pub fn check(path: &str, content: &[u8]) -> Vec<String> {
     let mut problems = Vec::new();
+    if path.starts_with(OWN_SCREENSHOT_PREFIX)
+        && path.ends_with(".png")
+        && !path[OWN_SCREENSHOT_PREFIX.len()..].contains('/')
+    {
+        if !content.starts_with(PNG_MAGIC) {
+            problems.push("not a PNG".to_owned());
+        }
+        if content.len() > OWN_SCREENSHOT_MAX {
+            problems.push(format!(
+                "{} bytes exceeds the {OWN_SCREENSHOT_MAX}-byte limit for a launcher screenshot",
+                content.len()
+            ));
+        }
+        return problems;
+    }
     let name = path.rsplit('/').next().unwrap_or(path);
     let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
     let allowed = ALLOWED_NAMES.contains(&name)
@@ -252,6 +279,36 @@ mod tests {
         assert!(
             !check("a.rs", &vec![b'a'; 600 * 1024]).is_empty(),
             "too big"
+        );
+    }
+
+    #[test]
+    fn launcher_screenshots_only() {
+        let png = [super::PNG_MAGIC, &[0u8; 64]].concat();
+        assert!(check("docs/assets/launcher-jouer.png", &png).is_empty());
+        assert!(
+            !check("docs/assets/launcher-jouer.png", b"GIF89a").is_empty(),
+            "not a PNG"
+        );
+        assert!(
+            !check("docs/assets/capture.png", &png).is_empty(),
+            "other names refused"
+        );
+        assert!(
+            !check("docs/assets/launcher-x/y.png", &png).is_empty(),
+            "no subfolder"
+        );
+        let big = [super::PNG_MAGIC, &vec![0u8; 301 * 1024]].concat();
+        assert!(
+            !check("docs/assets/launcher-big.png", &big).is_empty(),
+            "too big"
+        );
+        assert!(
+            check(
+                "docs/assets/banniere.svg",
+                b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n"
+            )
+            .is_empty()
         );
     }
 

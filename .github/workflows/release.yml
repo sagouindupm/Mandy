@@ -1,0 +1,54 @@
+name: Release
+
+# A tag v<version> (the version of launcher/src-tauri/tauri.conf.json) builds the downloadable package with
+# scripts/package-release.ps1 and attaches VIctory-S-<version>.zip to the GitHub Release of that tag
+# (created as a pre-release if it does not exist yet).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      # The version and components pinned in rust-toolchain.toml.
+      - run: rustup toolchain install
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: launcher/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
+      # CI has already tested the tagged commit; the asset policy once more, then the package: engine and launcher
+      # built for any x86-64 processor with AVX2, assembled, checked (no game file, no DLL, nothing over 50 MB but
+      # victory.exe) and zipped.
+      - name: Asset policy
+        run: cargo xtask policy
+      - name: Package
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./scripts/package-release.ps1 -Version $env:TAG.TrimStart('v')
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/VIctory-S-*.zip
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -15,7 +15,7 @@ use crate::{io, ir, resource, structure};
 /// Lowers a wave32 compute program of 32 threads with the table of views at
 /// s0 (textures, or with `buffers` structured buffers of dwords, at entries
 /// 0 and 1, a raw UAV at entry 2) and the table of samplers at s1.
-fn build(words: &[u32], buffers: bool) -> HostShader {
+fn build(words: &[u32], buffers: bool, nonuniform_handles: u32) -> HostShader {
     let table = |user_data: u8| RootParam {
         root: RootType::Table,
         table_offset_dwords: 0,
@@ -72,7 +72,7 @@ fn build(words: &[u32], buffers: bool) -> HostShader {
     })
     .expect("lower");
     // One access with each lane's own heap index, no wave operation.
-    assert_eq!(lowered.nonuniform_handles, 1);
+    assert_eq!(lowered.nonuniform_handles, nonuniform_handles);
     assert!(!lowered.wave_ops);
     let shader = HostShader {
         stage: HwStage::Cs,
@@ -169,7 +169,7 @@ fn sampled(shader: &HostShader) -> Vec<(&'static str, Vec<f32>)> {
 #[test]
 fn lanes_sample_the_texture_their_if_else_arm_chose() {
     use crate::resource::tests::WATERFALL_JOINED_WAVE32;
-    let shader = build(WATERFALL_JOINED_WAVE32, false);
+    let shader = build(WATERFALL_JOINED_WAVE32, false, 1);
     for (label, red) in sampled(&shader) {
         // Lanes below 16 took the first texture, the others the second.
         let want: Vec<f32> = (0..32).map(|l| if l < 16 { 1.0 } else { 2.0 }).collect();
@@ -180,7 +180,7 @@ fn lanes_sample_the_texture_their_if_else_arm_chose() {
 #[test]
 fn lanes_sample_the_texture_their_arm_loaded_or_picked() {
     use crate::resource::tests::WATERFALL_JOINED_MIXED_WAVE32;
-    let shader = build(WATERFALL_JOINED_MIXED_WAVE32, false);
+    let shader = build(WATERFALL_JOINED_MIXED_WAVE32, false, 1);
     for (label, red) in sampled(&shader) {
         // Lanes below 16 loaded entry (lane & 1); of the others, lanes
         // below 24 picked the first, the rest the second.
@@ -198,7 +198,7 @@ fn lanes_sample_the_texture_their_arm_loaded_or_picked() {
 #[test]
 fn lanes_load_from_the_buffer_their_nested_arms_chose() {
     use crate::resource::tests::WATERFALL_JOINED_BUFFER_WAVE32;
-    let shader = build(WATERFALL_JOINED_BUFFER_WAVE32, true);
+    let shader = build(WATERFALL_JOINED_BUFFER_WAVE32, true, 1);
     let first: Vec<u32> = (0..32).map(|i| 100 + i).collect();
     let second: Vec<u32> = (0..32).map(|i| 200 + i).collect();
     let views = [
@@ -229,7 +229,7 @@ fn lanes_load_from_the_buffer_their_nested_arms_chose() {
 #[test]
 fn lanes_sample_the_entry_their_offset_names_in_the_console_waterfall() {
     use crate::resource::tests::WATERFALL_INDEXED_WAVE32;
-    let shader = build(WATERFALL_INDEXED_WAVE32, false);
+    let shader = build(WATERFALL_INDEXED_WAVE32, false, 1);
     let results = sampled(&shader);
     assert!(!results.is_empty());
     for (label, red) in results {
@@ -245,7 +245,7 @@ fn lanes_sample_their_own_texture_in_a_waterfall_narrowed_by_v_cmpx() {
     // Lanes below 16 hold the first descriptor, the others the second.
     let want: Vec<f32> = (0..32).map(|l| if l < 16 { 1.0 } else { 2.0 }).collect();
     for folded in [false, true] {
-        let shader = build(&cmpx_waterfall(false, folded), false);
+        let shader = build(&cmpx_waterfall(false, folded), false, 1);
         let results = sampled(&shader);
         assert!(!results.is_empty());
         for (label, red) in results {
@@ -435,6 +435,45 @@ fn immediate_sampler_chosen_by_control_flow() {
                 let got = f32::from_bits(out[0][0]);
                 assert_eq!(got, 1.0, "{case_name}/{label} branch={branch}");
             }
+        }
+    }
+}
+
+#[test]
+fn image_resinfo_returns_zero_depth_for_a_2d_view() {
+    let shader = build(
+        &[
+            0xBE84_0300, // s_mov_b32 s4, s0
+            0xBE85_0380, // s_mov_b32 s5, 0
+            0xF40C_0602,
+            0xFA00_0000, // s_load_dwordx8 s[24:31], s[4:5], 0
+            0xF408_0A02,
+            0xFA00_0040, // s_load_dwordx4 s[40:43], s[4:5], 0x40
+            0x7E04_0280, // v_mov_b32 v2, 0 (mip)
+            0x3420_0084, // v_lshlrev_b32 v16, 4, v0 (16 bytes per lane)
+            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+            0xF038_0F08,
+            0x0006_0C02, // image_get_resinfo v[12:15], v2, s[24:31], dmask:0xf, dim:2D
+            0xBF8C_3F70, // s_waitcnt vmcnt(0)
+            0xE078_1000,
+            0x800A_0C10, // buffer_store_dwordx4 v[12:15], v16, s[40:43], 0 offen
+            0xBF81_0000, // s_endpgm
+        ],
+        false,
+        0,
+    );
+    let pixels = [[0.0; 4]; 6];
+    let views = [
+        View::Texture(3, 2, &pixels),
+        View::Texture(3, 2, &pixels),
+        View::RawUav(128),
+    ];
+    let results = run(&shader, &views);
+    assert!(!results.is_empty());
+    for (label, words) in results {
+        assert_eq!(words.len(), 128);
+        for (lane, dimensions) in words.as_chunks::<4>().0.iter().enumerate() {
+            assert_eq!(*dimensions, [3, 2, 0, 1], "{label}, lane {lane}");
         }
     }
 }

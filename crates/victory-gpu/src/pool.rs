@@ -168,6 +168,8 @@ pub(crate) struct Piece {
 struct Block<B> {
     memory: B,
     free: Ranges,
+    /// Bytes of [`Self::free`] (pieces resting not counted).
+    free_bytes: u64,
     /// The end of the highest piece ever taken: above it the memory is as
     /// it was made (zeros).
     used_to: u64,
@@ -216,13 +218,32 @@ impl<B: Clone> Pool<B> {
         }
         self.rested(now);
         let mut found = None;
-        for (i, block) in self.blocks.iter_mut().enumerate() {
-            if let Some(block) = block
-                && ripe.is(block)
-                && let Some(start) = block.free.take(len, align)
-            {
-                found = Some((i, start));
-                break;
+        if fullest_first() {
+            // The fullest ripe block that has room: the emptier ones drain
+            // as their textures go and are let go whole ([`Self::rested`]).
+            let mut order: Vec<(u64, usize)> = self
+                .blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, b)| {
+                    b.as_ref()
+                        .filter(|b| ripe.is(b) && b.free_bytes >= len)
+                        .map(|b| (b.free_bytes, i))
+                })
+                .collect();
+            order.sort_unstable();
+            found = order
+                .into_iter()
+                .find_map(|(_, i)| Some((i, self.blocks[i].as_mut()?.free.take(len, align)?)));
+        } else {
+            for (i, block) in self.blocks.iter_mut().enumerate() {
+                if let Some(block) = block
+                    && ripe.is(block)
+                    && let Some(start) = block.free.take(len, align)
+                {
+                    found = Some((i, start));
+                    break;
+                }
             }
         }
         if found.is_none() && ripe.ahead > 0 {
@@ -254,6 +275,7 @@ impl<B: Clone> Pool<B> {
             }
         }
         let block = self.blocks[i].as_mut()?;
+        block.free_bytes -= len;
         let again = start < block.used_to;
         block.used_to = block.used_to.max(start + len);
         Some((Piece { block: i, start, len }, block.memory.clone(), again))
@@ -267,7 +289,14 @@ impl<B: Clone> Pool<B> {
                 self.blocks.len() - 1
             }
         };
-        self.blocks[i] = Some(Block { memory, free: Ranges::new(BLOCK), used_to: 0, made, since: crate::host::now_ms() });
+        self.blocks[i] = Some(Block {
+            memory,
+            free: Ranges::new(BLOCK),
+            free_bytes: BLOCK,
+            used_to: 0,
+            made,
+            since: crate::host::now_ms(),
+        });
         i
     }
 
@@ -285,6 +314,7 @@ impl<B: Clone> Pool<B> {
             self.resting.pop_front();
             if let Some(block) = self.blocks[piece.block].as_mut() {
                 block.free.give(piece.start, piece.len);
+                block.free_bytes += piece.len;
                 any |= block.free.whole(BLOCK);
             }
         }
@@ -320,6 +350,30 @@ static STAGING: Mutex<Pool<Upload>> = Mutex::new(Pool::new(STAGING_KEPT));
 
 fn lock<T>(m: &'static Mutex<T>) -> std::sync::MutexGuard<'static, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether pieces go to the fullest block with room instead of the first
+/// (`VICTORY_POOL_FULLEST=1`; unset: the first, as before). First fit left
+/// 1-3 GB of a 12 GB card in holes of blocks none of which ever emptied
+/// (open world); the emptier blocks drain and go instead. After
+/// edupode/cold-project-vi f195f77 (edupo).
+fn fullest_first() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_POOL_FULLEST").is_some_and(|v| v == "1"))
+}
+
+/// For the memory line: MiB free in blocks of textures, blocks wholly
+/// empty, and blocks under a quarter full.
+#[cfg(feature = "diagnostics")]
+pub(crate) fn texture_holes() -> [u64; 3] {
+    let pool = lock(&TEXTURES);
+    let blocks = pool.blocks.iter().flatten();
+    let free: u64 = blocks.clone().map(|b| b.free_bytes).sum();
+    let empty = blocks.clone().filter(|b| b.free_bytes == BLOCK).count() as u64;
+    let sparse = blocks
+        .filter(|b| b.free_bytes > BLOCK / 4 * 3 && b.free_bytes < BLOCK)
+        .count() as u64;
+    [free >> 20, empty, sparse]
 }
 
 /// Bytes of the pieces textures hold now.
@@ -714,6 +768,27 @@ mod tests {
         assert_eq!(spares(Some([0, 0, 0, 0]), true), SPARE);
         assert_eq!(spares(Some([24 * GIB, 2 * GIB, 0, 0]), false), SPARE);
         assert_eq!(spares(None, true), SPARE);
+    }
+
+    #[test]
+    fn free_bytes_follow_the_ranges() {
+        let mut pool: Pool<u32> = Pool::new(SPARE);
+        let made = std::cell::Cell::new(0);
+        let make = || {
+            made.set(made.get() + 1);
+            Some(made.get())
+        };
+        let mut taken = Vec::new();
+        for i in 0..300u64 {
+            taken.push(pool.take(4096 * (1 + i % 13), 4096, 0, make).unwrap().0);
+        }
+        for p in taken.iter().step_by(3) {
+            pool.give(*p, 0);
+        }
+        pool.rested(REST);
+        for block in pool.blocks.iter().flatten() {
+            assert_eq!(block.free_bytes, block.free.0.values().sum::<u64>());
+        }
     }
 
     #[test]
