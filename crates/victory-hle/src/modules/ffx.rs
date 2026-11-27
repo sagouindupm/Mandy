@@ -17,6 +17,25 @@ pub fn dlss() -> bool {
     victory_gpu::ffx::dlss_enabled()
 }
 
+/// Whether frame generation is asked for (`VICTORY_FRAMEGEN=1`,
+/// `victory_gpu::ffx::framegen`).
+#[cfg(windows)]
+pub fn framegen() -> bool {
+    victory_gpu::ffx::framegen::wanted()
+}
+
+/// Frame generation's stand-in for the title's own upscaler's dispatch
+/// method, and where it is told the method's address
+/// (`victory_loader::tap_upscale`).
+#[cfg(windows)]
+pub fn framegen_upscale_tap() -> (usize, fn(usize)) {
+    use victory_gpu::ffx::framegen;
+    (
+        framegen::own_upscale as *const () as usize,
+        framegen::set_own_upscale_original,
+    )
+}
+
 /// The render scale the title is set to for DLSS's `VICTORY_DLSS_MODE` in
 /// the Series S mode (`victory_gpu::ffx::dlss_render_scale`); `None` leaves
 /// its own.
