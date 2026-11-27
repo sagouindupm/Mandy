@@ -642,7 +642,8 @@ fn sync_jobs() -> (usize, usize) {
     #[cfg(feature = "diagnostics")]
     let picked = crate::ab::pick("VICTORY_SYNC_FINE");
     #[cfg(not(feature = "diagnostics"))]
-    let picked = None;
+    let picked: Option<bool> = None;
+    #[allow(clippy::unnecessary_lazy_evaluations, clippy::unnecessary_literal_unwrap)]
     let fine = picked.unwrap_or_else(|| *ON.get_or_init(|| std::env::var_os("VICTORY_SYNC_FINE").is_some_and(|v| v != "0")));
     if fine { (SYNC_PAGES_FINE, SYNC_AT_A_TIME_FINE) } else { (SYNC_PAGES, SYNC_AT_A_TIME) }
 }

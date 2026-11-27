@@ -3141,7 +3141,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
             }
         }
     }
-    (placed && place::read_by(runs, written)).then(|| {
+    (placed && place::read_by(runs, written)).then_some({
         #[cfg(feature = "diagnostics")]
         if count {
             blame("what a copy at its place writes", &[], 0, 0);
@@ -5889,6 +5889,7 @@ impl Host {
             batch.refresh_ahead(runs, |list, i| own.as_ref().is_some_and(|own| own.takes(list, i)));
         }
         stage.next("submit: the lists' steps");
+        #[allow(clippy::unused_enumerate_index)]
         for (_run, list) in runs.iter().enumerate() {
             list.run_deferred(&mut batch, &air, |i| own.as_ref().is_some_and(|own| own.takes(list, i)));
             firsts.push(lists.len());
@@ -5983,17 +5984,14 @@ impl Host {
         #[cfg(feature = "diagnostics")]
         let stamp = stamps::take();
         #[cfg(feature = "diagnostics")]
-        let compare_at = if let Some((ahead, behind)) = stamp.and_then(stamps::lists) {
+        if let Some((ahead, behind)) = stamp.and_then(stamps::lists) {
             lists.insert(0, Some(ahead));
             marks.iter_mut().for_each(|m| m.0 += 1);
             marks.insert(0, (0, crate::copystat::Timed::Other));
             marks.push((lists.len(), crate::copystat::Timed::Other));
             lists.push(Some(behind));
             firsts.iter_mut().for_each(|first| *first += 1);
-            compare_at.map(|at| at + 1)
-        } else {
-            compare_at
-        };
+        }
         #[cfg(feature = "diagnostics")]
         let sending = crate::timeline::ticks();
         if late {

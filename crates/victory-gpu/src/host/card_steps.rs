@@ -1588,7 +1588,7 @@ mod tests {
             // in front of the lists.
             let (mut title, mut card) = (start.clone(), start.clone());
             for (i, d) in does.iter().enumerate().filter(|&(i, _)| !taken(i)) {
-                let here = |from: usize, to: usize| &title[from..to] == &wanted[i][..];
+                let here = |from: usize, to: usize| title[from..to] == wanted[i][..];
                 match *d {
                     Does::Copy { dst, src, len, .. } => {
                         assert!(here(src, src + len), "CPU copy {i} of {does:?}: {chosen:?}");

@@ -3207,7 +3207,7 @@ pub(crate) fn placed_textures_like(desc: &[u32; 14]) -> (usize, Vec<u64>) {
     let map = PLACED_TEXTURES.lock().unwrap_or_else(|e| e.into_inner());
     let mut keys = 0;
     let mut addresses: Vec<u64> = Vec::new();
-    for ((address, other), _) in map.iter() {
+    for (address, other) in map.keys() {
         let mut blank = *other;
         blank[1] = 0;
         blank[13] = 0;
@@ -5056,7 +5056,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         // Packed texels: 9-bit mantissas, a shared exponent.
         let packed: Vec<u32> =
             (0..W * W).map(|i| (i * 7 % 512) | (i * 13 % 512) << 9 | (i * 29 % 512) << 18 | (12 + i % 8) << 27).collect();
-        let decode = |p: u32| {
+        let _decode = |p: u32| {
             let scale = 2f32.powi((p >> 27) as i32 - 15 - 9);
             [p & 511, p >> 9 & 511, p >> 18 & 511].map(|m| m as f32 * scale)
         };

@@ -33,6 +33,7 @@ unsafe impl Sync for SdkPath {}
 pub static D3D12SDKPath: SdkPath = SdkPath(c".\\D3D12\\".as_ptr());
 
 /// The folder `D3D12SDKPath` names, beside the running executable.
+#[allow(dead_code)]
 pub fn runtime_dir() -> Option<std::path::PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.join("D3D12"))
 }
