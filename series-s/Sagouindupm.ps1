@@ -50,8 +50,9 @@ $SeriesS = @{
     VICTORY_INDIRECT_WINDOW = '1'; VICTORY_RELAY_COPY = '1'; VICTORY_INDIRECT_BATCH = '2'
     VICTORY_MAP_THREADS = '1'; VICTORY_TITLE_PRIORITIES = '0'; VICTORY_CARD_AWAKE = '1'
     VICTORY_SHOW_AFTER = '1'; VICTORY_THIN = '1'; VICTORY_UPLOAD_AHEAD = '1'
-    # Processeur 6 cœurs / 12 fils (Maykzera) : moins de fils auxiliaires, 16 soumissions préparées ensemble
-    VICTORY_THIN_THREADS = '5'; VICTORY_UNDER_THREADS = '3'; VICTORY_VIEW_THREADS = '3'
+    # Processeur 6 cœurs / 12 fils (Maykzera) : moins de fils auxiliaires, 16 soumissions préparées ensemble ;
+    # 4 fils de traduction des listes et pas 5 (Maykzera, 2 mesures ; ici 87 ms contre 93, pire image 178 ms)
+    VICTORY_THIN_THREADS = '4'; VICTORY_UNDER_THREADS = '3'; VICTORY_VIEW_THREADS = '3'
     VICTORY_PIPELINE_WORKERS = '4'; VICTORY_PIPELINE_LOWEST = '1'
     VICTORY_JOIN_PARTS = '16'; VICTORY_JOIN_LISTS = '96'
     # Une pipeline pas prête : 150 ms d'attente au plus (10 000 gelait l'image 12 s, avatarmanz #143)
