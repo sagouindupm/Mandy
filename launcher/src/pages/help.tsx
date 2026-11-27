@@ -21,11 +21,11 @@ export function HelpPage({ ctx }: { ctx: Ctx }) {
         <ol className="flex flex-col gap-2">
           {[
             ctx.snap.packaged
-              ? "Préparation, « Tout préparer » : le jeu, puis les shaders (15 à 30 min, une fois). VIctory est déjà inclus."
-              : "Préparation, « Tout préparer » : Rust et outils C++ si besoin, compilation, jeu, shaders (15 à 30 min, une fois).",
+              ? "Préparation, « Tout préparer » : le jeu, les shaders, puis les pipelines de la liste partagée (25 à 40 min, une fois). VIctory est déjà inclus."
+              : "Préparation, « Tout préparer » : Rust et outils C++ si besoin, compilation, jeu, shaders, pipelines de la liste partagée (une fois).",
             "Cache de shaders NVIDIA sur « Illimitée » (étape 5).",
-            "Une première partie : le jeu note ses pipelines.",
-            "« Construire » les pipelines (étape 4) : plus d'à-coups ensuite.",
+            "Jouer : la première partie est déjà fluide jusqu'après la mission du bateau.",
+            "Plus loin dans le jeu : « Construire » (étape 4) ajoute les pipelines que vos parties ont notées.",
           ].map((t, i) => (
             <li key={i} className="flex gap-3">
               <span className="w-3 shrink-0 font-bold text-white">{i + 1}</span>

@@ -71,6 +71,9 @@ struct SettingsView {
     pipelines_when: Option<i64>,
     nv_cache_ok: bool,
     ancien_plan: String,
+    /// The shared list the last « warm --used » built (« nom:taille »), and the one whose shaders are in the cache.
+    pipelines_liste: String,
+    pipelines_import: String,
 }
 
 #[derive(Serialize)]
@@ -113,6 +116,8 @@ struct Snapshot {
     /// Shaders the last translation put in the cache (from its log), and the least a complete copy gives.
     shaders_count: Option<i64>,
     shaders_min: i64,
+    /// The shared pipeline list (series-s/pipelines), if there is one.
+    shared_list: Option<settings::SharedListView>,
     dlss_ok: bool,
     dlss_missing: Vec<String>,
     ram_bytes: u64,
@@ -188,11 +193,14 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
             pipelines_when: s.0.get("pipelines_when").and_then(|v| v.as_i64()),
             nv_cache_ok: s.bool("nv_cache_ok"),
             ancien_plan: s.str("ancien_plan"),
+            pipelines_liste: s.str("pipelines_liste"),
+            pipelines_import: s.str("pipelines_import"),
         },
         game_ok: game_ready(p, &s),
         game_check: game_check(p, &s),
         shaders_count: shaders_count(p, &s),
         shaders_min: reglages.as_ref().map(|r| r.jeu.shaders_min).unwrap_or(0),
+        shared_list: reglages.as_ref().ok().and_then(|r| r.pipelines_partagees.view(&p.root)),
         dlss_ok: false,
         dlss_missing: Vec::new(),
         ram_bytes: ram,
@@ -444,6 +452,21 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
             }
             Ok(Spec { kind: kind.into(), cmd, log: log("shaders_traduction.txt"), game: false, capture_dir: None })
         }
+        // The shared list into the cache's book (victory pipelines import), so a first game is smooth: before the
+        // translation (which keeps the shaders it names while it walks them), or after it with --shaders.
+        "import" => {
+            need_exe()?;
+            let r = Reglages::load(p)?;
+            let list = r.pipelines_partagees.view(&p.root).ok_or("Pas de liste de pipelines partagée dans ce dossier.")?;
+            let mut cmd = Command::new(&p.exe);
+            cmd.args(["pipelines", "import"]).arg(&list.file);
+            if s.bool("shaders_ready") {
+                need_game()?;
+                cmd.arg("--shaders").arg(shaders_source(&s));
+            }
+            game_env(p, &r, &s, &hardware(app)).apply(&mut cmd);
+            Ok(Spec { kind: kind.into(), cmd, log: log("pipelines_import.txt"), game: false, capture_dir: None })
+        }
         "warm" => {
             need_exe()?;
             let r = Reglages::load(p)?;
@@ -494,12 +517,33 @@ async fn run_job(handle: AppHandle, kind: String) -> Res<i32> {
                 if let Some(n) = n {
                     s.set("shaders_count", n);
                 }
-                s.set("shaders_ready", n.is_none_or(|n| n >= min));
+                let ok = n.is_none_or(|n| n >= min);
+                s.set("shaders_ready", ok);
+                // The shared list imported just before: this translation kept its shaders.
+                let pending = s.str("pipelines_import_pending");
+                if ok && !pending.is_empty() {
+                    s.set("pipelines_import", pending);
+                    s.set("pipelines_import_pending", "");
+                }
+            }
+            "import" if code == 0 => {
+                // With --shaders the containers are there now; before a translation, once it succeeds.
+                let mark = Reglages::load(p).ok().and_then(|r| r.pipelines_partagees.view(&p.root)).map(|l| l.mark).unwrap_or_default();
+                if s.bool("shaders_ready") {
+                    s.set("pipelines_import", mark);
+                } else {
+                    s.set("pipelines_import_pending", mark);
+                }
             }
             "warm" if code == 0 => {
                 let n = s.int("parties");
                 s.set("pipelines_parties", n);
                 s.set("pipelines_when", sys::unix_now());
+                // The shared list is built if its shaders were in the cache (as pipelines_liste in the console).
+                let imported = s.str("pipelines_import");
+                if !imported.is_empty() {
+                    s.set("pipelines_liste", imported);
+                }
             }
             "play" => {
                 let n = s.int("parties") + 1;

@@ -244,9 +244,21 @@ export default function App() {
         return ok
       }
       case "build":
-      case "shaders":
-      case "warm":
         return runJob(id)
+      case "shaders": {
+        // The shared pipeline list first: the translation keeps the shaders it names while it walks them, so
+        // step 4 can build its pipelines before the first game.
+        const s = await api.snapshot()
+        if (s.sharedList && !(await runJob("import"))) toast.warning("Import de la liste de pipelines impossible : voyez son journal.")
+        return runJob("shaders")
+      }
+      case "warm": {
+        // Shaders translated before the list was imported: import it now with --shaders (~7 min), then build.
+        const s = await api.snapshot()
+        if (s.sharedList && s.settings.shadersReady && s.settings.pipelinesImport !== s.sharedList.mark && !(await runJob("import")))
+          return false
+        return runJob("warm")
+      }
       case "find_game":
         return findGame()
       case "pick_game":

@@ -156,9 +156,26 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
       level: "info", status: "",
     }
     const why = !exe ? "Il faut d'abord le moteur (étape 1)." : undefined
-    if (st.parties <= 0) {
+    const list = s.sharedList
+    const listBuilt = !!list && st.pipelinesListe === list.mark
+    if (list) {
+      const n = list.count != null ? `${list.count.toLocaleString("fr-FR")} pipelines` : "les pipelines"
+      step.explain = `Construites d'avance d'après la liste partagée (${n} jusqu'après la mission du bateau, aucun code du jeu) avec vos shaders : la première partie est déjà fluide. Ensuite, chaque partie note les pipelines qui manquent.`
+    }
+    if (list && !listBuilt) {
+      // Before the first game: the shared list (step 3 imports it before translating).
+      step.level = "error"
+      step.status = "Pas encore construites"
+      const needShaders = why ?? (!st.shadersReady ? "Il faut d'abord les shaders (étape 3)." : undefined)
+      step.action = { label: "Construire", icon: Boxes, id: "warm", primary: true, disabled: needShaders }
+      step.auto = "warm"
+    } else if (st.parties <= 0 && !listBuilt) {
       step.level = "info"
       step.status = "Jouez d'abord une partie"
+    } else if (st.parties <= 0) {
+      step.level = "ok"
+      step.status = st.pipelinesWhen ? `Liste partagée construite · ${dateTime(st.pipelinesWhen * 1000)}` : "Liste partagée construite"
+      step.action = { label: "Reconstruire", icon: RefreshCw, id: "warm", primary: false, disabled: why }
     } else if (st.pipelinesParties < 0) {
       step.level = "error"
       step.status = `Pas construites · ${st.parties} partie${st.parties > 1 ? "s" : ""} jouée${st.parties > 1 ? "s" : ""}`

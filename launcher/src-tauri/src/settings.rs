@@ -18,7 +18,10 @@ pub struct Settings(pub Map<String, Value>);
 
 /// Keys of lanceur.json, with their default when an older file lacks them (as Complete-Settings in reglages.ps1).
 /// pipelines_when (this launcher only): Unix time of the last successful « victory warm --used ».
-fn defaults() -> [(&'static str, Value); 9] {
+/// pipelines_liste: « nom:taille » of the shared list the last successful « warm --used » built (as the console).
+/// pipelines_import (this launcher only): the list whose shader containers are in the cache (imported with
+/// --shaders, or before a translation that kept them: pipelines_import_pending until it succeeds).
+fn defaults() -> [(&'static str, Value); 12] {
     [
         ("game_exe", json!("")),
         ("shaders_dir", json!("")),
@@ -29,6 +32,9 @@ fn defaults() -> [(&'static str, Value); 9] {
         ("pipelines_parties", json!(-1)),
         ("nv_cache_ok", json!(false)),
         ("ancien_plan", json!("")),
+        ("pipelines_liste", json!("")),
+        ("pipelines_import", json!("")),
+        ("pipelines_import_pending", json!("")),
     ]
 }
 
@@ -225,6 +231,35 @@ pub fn shaders_count_from_log(log: &Path) -> Option<i64> {
     })
 }
 
+/// « pipelines_partagees » in reglages.json: the shared pipeline list (no shader code).
+#[derive(Deserialize, Clone)]
+pub struct SharedList {
+    pub fichier: String,
+}
+
+/// The shared list as the window shows it.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedListView {
+    pub file: String,
+    /// « series-s-rtx.txt:454981 » (as Get-SharedPipelineMark in reglages.ps1).
+    pub mark: String,
+    /// Pipelines it holds, from its « # N pipelines » line.
+    pub count: Option<u64>,
+}
+
+impl SharedList {
+    pub fn view(&self, root: &Path) -> Option<SharedListView> {
+        let path = root.join(&self.fichier);
+        let len = std::fs::metadata(&path).ok().filter(|m| m.is_file())?.len();
+        let name = path.file_name()?.to_string_lossy().to_string();
+        let count = std::fs::read_to_string(&path).ok().and_then(|t| {
+            t.lines().take(20).find_map(|l| l.strip_prefix("# ")?.split_once(" pipelines")?.0.trim().parse().ok())
+        });
+        Some(SharedListView { file: path.display().to_string(), mark: format!("{name}:{len}"), count })
+    }
+}
+
 #[derive(Deserialize, Clone)]
 pub struct Reglages {
     pub profil: String,
@@ -232,6 +267,7 @@ pub struct Reglages {
     pub groupes: Vec<Group>,
     pub pipelines_sautees: Skip,
     pub petite_ram: LowRam,
+    pub pipelines_partagees: SharedList,
     pub materiel: Materiel,
     pub dlss: Dlss,
     pub shaders: Shaders,
@@ -433,6 +469,16 @@ mod tests {
         let d = copy_with(&names);
         let c = r.check(&d.0.join("game_scarlett_master.exe").display().to_string());
         assert!(!c.complete && c.problem.contains("Go d'archives"), "{}", c.problem);
+    }
+
+    #[test]
+    fn shared_list_of_the_repository() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let b = std::fs::read(root.join("series-s/reglages.json")).unwrap();
+        let r: Reglages = serde_json::from_slice(b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&b)).unwrap();
+        let v = r.pipelines_partagees.view(&root).expect("series-s/pipelines/series-s-rtx.txt");
+        assert_eq!(v.count, Some(2874));
+        assert!(v.mark.starts_with("series-s-rtx.txt:"), "{}", v.mark);
     }
 
     #[test]

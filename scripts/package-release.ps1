@@ -13,8 +13,8 @@
 # (crt-static) : .cargo/config.toml compile pour CE processeur (target-cpu=native), ce qui ne convient pas à un
 # paquet distribué.
 #
-# Le paquet ne contient que : VIctory S.exe, engine\victory.exe, series-s\reglages.json, scripts\rt_off_hashes.txt,
-# LISEZMOI.txt, LICENSE. Jamais de fichier du jeu, de DLL NVIDIA, de capture ni de cache : une vérification
+# Le paquet ne contient que : VIctory S.exe, engine\victory.exe, series-s\reglages.json,
+# series-s\pipelines\series-s-rtx.txt, scripts\rt_off_hashes.txt, LISEZMOI.txt, LICENSE. Jamais de fichier du jeu, de DLL NVIDIA, de capture ni de cache : une vérification
 # arrête le script si autre chose s'y trouve (fichier inattendu, .rpf/.dll/.pdb, plus de 50 Mo hors victory.exe).
 param(
     [string]$Version = '',
@@ -67,10 +67,12 @@ $out = Join-Path $dist $name
 $zip = Join-Path $dist "$name.zip"
 Write-Host "==> Assemblage de dist\$name" -ForegroundColor Magenta
 Remove-Item -Recurse -Force $out, $zip -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force (Join-Path $out 'engine'), (Join-Path $out 'series-s'), (Join-Path $out 'scripts') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $out 'engine'), (Join-Path $out 'series-s\pipelines'), (Join-Path $out 'scripts') | Out-Null
 Copy-Item $launcherExe (Join-Path $out 'VIctory S.exe')
 Copy-Item $engineExe (Join-Path $out 'engine\victory.exe')
 Copy-Item (Join-Path $Root 'series-s\reglages.json') (Join-Path $out 'series-s\reglages.json')
+# La liste de pipelines partagée (clés, empreintes, états : aucun code du jeu), construite avant la première partie.
+Copy-Item (Join-Path $Root 'series-s\pipelines\series-s-rtx.txt') (Join-Path $out 'series-s\pipelines\series-s-rtx.txt')
 Copy-Item (Join-Path $Root 'scripts\rt_off_hashes.txt') (Join-Path $out 'scripts\rt_off_hashes.txt')
 Copy-Item (Join-Path $Root 'LICENSE') (Join-Path $out 'LICENSE')
 # LISEZMOI.txt pour le Bloc-notes : UTF-8 avec BOM, fins de ligne Windows.
@@ -78,7 +80,7 @@ $readme = (Get-Content (Join-Path $Root 'scripts\release\LISEZMOI.txt') -Raw -En
 [IO.File]::WriteAllText((Join-Path $out 'LISEZMOI.txt'), $readme, (New-Object Text.UTF8Encoding $true))
 
 # ------------------------------------------------------------------ vérification : rien d'autre que la liste
-$expected = @('VIctory S.exe', 'engine\victory.exe', 'series-s\reglages.json', 'scripts\rt_off_hashes.txt', 'LISEZMOI.txt', 'LICENSE')
+$expected = @('VIctory S.exe', 'engine\victory.exe', 'series-s\reglages.json', 'series-s\pipelines\series-s-rtx.txt', 'scripts\rt_off_hashes.txt', 'LISEZMOI.txt', 'LICENSE')
 function Test-Package($entries) {
     # $entries : chemins relatifs (séparateur \) et tailles.
     $problems = @()

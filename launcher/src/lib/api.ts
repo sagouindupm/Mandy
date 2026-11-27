@@ -12,7 +12,13 @@ export type Settings = {
   pipelinesWhen: number | null
   nvCacheOk: boolean
   ancienPlan: string
+  /** « nom:taille » of the shared list the last « warm --used » built, and of the one whose shaders are cached. */
+  pipelinesListe: string
+  pipelinesImport: string
 }
+
+/** The shared pipeline list (series-s/pipelines): built before the first game. */
+export type SharedList = { file: string; mark: string; count: number | null }
 
 export type DlssMode = { id: string; nom: string; mesure: string }
 export type Group = { titre: string; note: string; env: [string, string][] }
@@ -60,6 +66,7 @@ export type Snapshot = {
   /** Shaders in the cache after the last translation (null: unknown), and the least a complete copy gives. */
   shadersCount: number | null
   shadersMin: number
+  sharedList: SharedList | null
   dlssOk: boolean
   dlssMissing: string[]
   ramBytes: number
@@ -103,12 +110,13 @@ export type Facts = {
   dxCache: number
 }
 
-export type JobKind = "rust" | "vs" | "build" | "shaders" | "warm" | "play"
+export type JobKind = "rust" | "vs" | "build" | "import" | "shaders" | "warm" | "play"
 
 export const JOB_TITLES: Record<JobKind, string> = {
   rust: "Installation de Rust",
   vs: "Installation des outils C++",
   build: "Compilation de VIctory",
+  import: "Import de la liste de pipelines partagée",
   shaders: "Traduction des shaders",
   warm: "Construction des pipelines",
   play: "Partie en cours",
