@@ -3,16 +3,16 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 import { Slot } from "radix-ui"
 
-// State labels: a coloured dot and the word, on a dark chip.
+// State labels: a coloured icon and the word, on a dark chip.
 const badgeVariants = cva(
-  "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-sm bg-[#2a2a2a] px-2 text-[11px] font-bold tracking-[0.06em] whitespace-nowrap uppercase before:size-1.5 before:rounded-full before:content-['']",
+  "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-sm bg-[#2a2a2a] px-2 text-[11px] font-bold tracking-[0.06em] whitespace-nowrap uppercase [&>svg]:size-3.5 [&>svg]:shrink-0",
   {
     variants: {
       variant: {
-        success: "text-success before:bg-success",
-        warning: "text-warning before:bg-warning",
-        error: "text-destructive before:bg-destructive",
-        info: "text-muted-foreground before:bg-muted-foreground",
+        success: "text-success",
+        warning: "text-warning",
+        error: "text-destructive",
+        info: "text-muted-foreground",
       },
     },
     defaultVariants: {

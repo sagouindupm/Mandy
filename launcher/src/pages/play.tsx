@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Play, Square } from "lucide-react"
 
 import type { Ctx } from "@/App"
 import { Button } from "@/components/ui/button"
@@ -59,12 +59,14 @@ export function PlayPage({ ctx }: { ctx: Ctx }) {
           {playing ? (
             <>
               <Button size="lg" variant="secondary" onClick={ctx.stop}>
+                <Square className="size-4 fill-current" />
                 Arrêter
               </Button>
               <span className="text-[14px] text-white/85">{fps ?? "Démarrage du jeu…"}</span>
             </>
           ) : (
             <Button size="lg" onClick={ctx.play} disabled={busy}>
+              <Play className="fill-current" strokeWidth={1.75} />
               Jouer
             </Button>
           )}

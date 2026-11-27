@@ -1,4 +1,9 @@
 // The six preparation steps and their state, from what the Rust side reports.
+import {
+  Boxes, Cpu, Download, ExternalLink, FolderOpen, FolderSearch, Hammer, HardDrive, Layers, type LucideIcon,
+  RefreshCw, Undo2, Zap,
+} from "lucide-react"
+
 import { type Facts, type Snapshot, GB, dateTime, gb } from "./api"
 
 export type Level = "ok" | "warn" | "error" | "info" | "wait"
@@ -20,12 +25,13 @@ export type Step = {
   n: number
   id: "engine" | "game" | "shaders" | "pipelines" | "nvcache" | "power"
   title: string
+  icon: LucideIcon
   explain: string
   level: Level
   status: string
   /** Small sub-checks shown in the card (engine: Rust, C++ tools). */
   checks?: { label: string; ok: boolean }[]
-  action?: { label: string; id: ActionId; primary: boolean; disabled?: string }
+  action?: { label: string; id: ActionId; primary: boolean; disabled?: string; icon?: LucideIcon }
   /** « Tout préparer » can do it by itself. */
   auto?: ActionId
 }
@@ -48,7 +54,7 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
     const step: Step = {
       n: 1,
       id: "engine",
-      title: "Moteur VIctory",
+      title: "Moteur VIctory", icon: Cpu,
       explain: "Compilé une fois sur ce PC avec Rust et les outils C++ de Microsoft (10 à 20 min).",
       level: "wait",
       status: "Vérification…",
@@ -60,20 +66,20 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
     if (exe) {
       step.level = "ok"
       step.status = `Compilé le ${dateTime(s.exeBuilt!)}`
-      if (f?.cargo && f.vcTools) step.action = { label: "Recompiler", id: "build", primary: false }
+      if (f?.cargo && f.vcTools) step.action = { label: "Recompiler", id: "build", icon: RefreshCw, primary: false }
     } else if (f) {
       step.level = "error"
       if (!f.cargo) {
         step.status = "Rust n'est pas installé"
-        step.action = { label: "Installer Rust", id: "rust", primary: true }
+        step.action = { label: "Installer Rust", icon: Download, id: "rust", primary: true }
         step.auto = "rust"
       } else if (!f.vcTools || !f.winSdk) {
         step.status = f.vcTools ? "SDK Windows absent" : "Outils C++ de Microsoft absents"
-        step.action = { label: "Installer les outils", id: "vs", primary: true }
+        step.action = { label: "Installer les outils", icon: Download, id: "vs", primary: true }
         step.auto = "vs"
       } else {
         step.status = "Pas encore compilé"
-        step.action = { label: "Compiler", id: "build", primary: true }
+        step.action = { label: "Compiler", icon: Hammer, id: "build", primary: true }
         step.auto = "build"
       }
     }
@@ -86,15 +92,15 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
     steps.push(
       s.gameOk
         ? {
-            n: 2, id: "game", title: "Dossier du jeu",
+            n: 2, id: "game", title: "Dossier du jeu", icon: FolderSearch,
             explain: "Votre copie du jeu : le fichier game_scarlett_master.exe.",
-            level: "ok", status: folder, action: { label: "Changer", id: "pick_game", primary: false },
+            level: "ok", status: folder, action: { label: "Changer", id: "pick_game", icon: FolderOpen, primary: false },
           }
         : {
-            n: 2, id: "game", title: "Dossier du jeu",
+            n: 2, id: "game", title: "Dossier du jeu", icon: FolderSearch,
             explain: "Votre copie du jeu : le fichier game_scarlett_master.exe.",
             level: "error", status: "Jeu pas encore trouvé",
-            action: { label: "Chercher le jeu", id: "find_game", primary: true }, auto: "find_game",
+            action: { label: "Chercher le jeu", icon: FolderSearch, id: "find_game", primary: true }, auto: "find_game",
           },
     )
   }
@@ -105,15 +111,15 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
     steps.push(
       st.shadersReady
         ? {
-            n: 3, id: "shaders", title: "Shaders traduits",
+            n: 3, id: "shaders", title: "Shaders traduits", icon: Layers,
             explain: "Traduits une fois pour votre carte (15 à 30 min) : moins d'écrans noirs et d'à-coups.",
-            level: "ok", status: "Traduits", action: { label: "Retraduire", id: "shaders", primary: false, disabled: why },
+            level: "ok", status: "Traduits", action: { label: "Retraduire", icon: RefreshCw, id: "shaders", primary: false, disabled: why },
           }
         : {
-            n: 3, id: "shaders", title: "Shaders traduits",
+            n: 3, id: "shaders", title: "Shaders traduits", icon: Layers,
             explain: "Traduits une fois pour votre carte (15 à 30 min) : moins d'écrans noirs et d'à-coups.",
             level: "error", status: "Pas encore traduits",
-            action: { label: "Traduire", id: "shaders", primary: true, disabled: why }, auto: "shaders",
+            action: { label: "Traduire", icon: Layers, id: "shaders", primary: true, disabled: why }, auto: "shaders",
           },
     )
   }
@@ -121,7 +127,7 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
   // 4. Pipelines
   {
     const step: Step = {
-      n: 4, id: "pipelines", title: "Pipelines construites",
+      n: 4, id: "pipelines", title: "Pipelines construites", icon: Boxes,
       explain: "Chaque partie note les pipelines du jeu ; les construire hors jeu (quelques minutes) retire les à-coups.",
       level: "info", status: "",
     }
@@ -132,17 +138,17 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
     } else if (st.pipelinesParties < 0) {
       step.level = "error"
       step.status = `Pas construites · ${st.parties} partie${st.parties > 1 ? "s" : ""} jouée${st.parties > 1 ? "s" : ""}`
-      step.action = { label: "Construire", id: "warm", primary: true, disabled: why }
+      step.action = { label: "Construire", icon: Boxes, id: "warm", primary: true, disabled: why }
       step.auto = "warm"
     } else if (st.pipelinesParties < st.parties) {
       step.level = "warn"
       step.status = "Nouvelles pipelines notées depuis"
-      step.action = { label: "Construire", id: "warm", primary: true, disabled: why }
+      step.action = { label: "Construire", icon: Boxes, id: "warm", primary: true, disabled: why }
       step.auto = "warm"
     } else {
       step.level = "ok"
       step.status = st.pipelinesWhen ? `À jour · ${dateTime(st.pipelinesWhen * 1000)}` : "À jour"
-      step.action = { label: "Reconstruire", id: "warm", primary: false, disabled: why }
+      step.action = { label: "Reconstruire", icon: RefreshCw, id: "warm", primary: false, disabled: why }
     }
     steps.push(step)
   }
@@ -150,13 +156,13 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
   // 5. NVIDIA shader cache
   {
     const step: Step = {
-      n: 5, id: "nvcache", title: "Cache NVIDIA illimité",
+      n: 5, id: "nvcache", title: "Cache NVIDIA illimité", icon: HardDrive,
       explain: "Le pilote garde 4 Go de pipelines par jeu ; plein, il recompile tout à chaque lancement.",
       level: "wait", status: "Vérification…",
     }
     if (f) {
       const size = `${gb(f.dxCache, 1)} Go`
-      const act = { label: "Panneau NVIDIA", id: "nv_cache" as const, primary: false }
+      const act = { label: "Panneau NVIDIA", icon: ExternalLink, id: "nv_cache" as const, primary: false }
       if (!f.nvidia) {
         step.level = "info"
         step.status = "Non concerné : carte non NVIDIA"
@@ -184,7 +190,7 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
   // 6. Power plan
   {
     const step: Step = {
-      n: 6, id: "power", title: "Alimentation",
+      n: 6, id: "power", title: "Alimentation", icon: Zap,
       explain: "Mode « Performances élevées » de Windows : le processeur et la carte ne ralentissent pas. Réversible.",
       level: "wait", status: "Vérification…",
     }
@@ -195,11 +201,11 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
       if (f.schemeGood) {
         step.level = "ok"
         step.status = f.battery ? "Performances élevées, sur secteur" : "Performances élevées"
-        if (st.ancienPlan) step.action = { label: "Revenir à l'ancien mode", id: "power_revert", primary: false }
+        if (st.ancienPlan) step.action = { label: "Revenir à l'ancien mode", icon: Undo2, id: "power_revert", primary: false }
       } else {
         step.level = "warn"
         step.status = `Mode « ${schemeLabel(f.schemeGuid, f.schemeName)} »`
-        step.action = { label: "Activer", id: "power_high", primary: true }
+        step.action = { label: "Activer", icon: Zap, id: "power_high", primary: true }
         step.auto = "power_high"
       }
     }

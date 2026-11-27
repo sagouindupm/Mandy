@@ -1,8 +1,9 @@
 // The window's frame: the player's screenshots as a background, the sidebar, the footer.
 import * as React from "react"
 import { convertFileSrc } from "@tauri-apps/api/core"
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react"
+import { type LucideIcon, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 
+import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Snapshot } from "@/lib/api"
@@ -47,14 +48,14 @@ export function Backdrop({ files, mode }: { files: string[]; mode: "hero" | "dim
   )
 }
 
-export type Profile = { id: string; initials: string; name: string; disabledWhy?: string }
+export type Profile = { id: string; icon: LucideIcon; name: string; disabledWhy?: string }
 
 export function Sidebar(props: {
   snap: Snapshot
   profiles: Profile[]
   selected: string
   onSelect: (id: string) => void
-  shortcuts: { label: string; run: () => void; disabled?: boolean }[]
+  shortcuts: { label: string; icon: LucideIcon; run: () => void; disabled?: boolean }[]
   collapsed: boolean
   onCollapse: () => void
 }) {
@@ -62,9 +63,7 @@ export function Sidebar(props: {
   return (
     <aside className={`flex shrink-0 flex-col bg-sidebar transition-[width] duration-200 ${collapsed ? "w-[72px]" : "w-64"}`}>
       <div className="flex h-[88px] shrink-0 items-center gap-3 px-[18px]">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-badge text-[12px] font-black tracking-[-0.02em] text-black">
-          VS
-        </div>
+        <Logo size={36} className="shrink-0" />
         {!collapsed && <span className="truncate text-[13px] font-bold">VIctory S</span>}
       </div>
 
@@ -84,11 +83,11 @@ export function Sidebar(props: {
                 }`}
               >
                 <span
-                  className={`flex size-9 shrink-0 items-center justify-center rounded-sm text-[11px] font-black ${
+                  className={`flex size-8 shrink-0 items-center justify-center rounded-md ${
                     active ? "bg-white text-black" : "bg-[#2a2a2a] text-muted-foreground"
                   }`}
                 >
-                  {p.initials}
+                  <p.icon className="size-[17px]" strokeWidth={1.75} />
                 </span>
                 {!collapsed && (
                   <span className="flex min-w-0 flex-col">
@@ -121,9 +120,10 @@ export function Sidebar(props: {
                   type="button"
                   disabled={s.disabled}
                   onClick={s.run}
-                  className="h-9 truncate px-5 text-left text-[13px] text-muted-foreground transition-colors duration-200 outline-none hover:text-white focus-visible:text-white disabled:opacity-40"
+                  className="flex h-9 items-center gap-3 px-5 text-left text-[13px] text-muted-foreground transition-colors duration-200 outline-none hover:text-white focus-visible:text-white disabled:opacity-40"
                 >
-                  {s.label}
+                  <s.icon className="size-4 shrink-0" strokeWidth={1.75} />
+                  <span className="truncate">{s.label}</span>
                 </button>
               ))}
             </div>
