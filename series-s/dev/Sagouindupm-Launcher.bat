@@ -1,10 +1,11 @@
 @echo off
-rem Double-click here: graphical launcher of Sagouindupm ^| VIctory, for beginners.
+rem For developers: builds and starts the VIctory S launcher from a repository checkout.
+rem Players use VIctory S.exe from the release zip.
 rem The console launcher (advanced users) is still Sagouindupm.bat.
 rem First launch: builds the launcher window (launcher\, Tauri) with Node.js and Rust,
 rem offering to install them with winget if they are missing. After that, it starts directly.
 setlocal EnableExtensions
-for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+for %%I in ("%~dp0..\..") do set "ROOT=%%~fI"
 set "APP=%ROOT%\launcher"
 set "SAGOUINDUPM_ROOT=%ROOT%"
 if defined CARGO_TARGET_DIR (set "EXE=%CARGO_TARGET_DIR%\release\sagouindupm-launcher.exe") else (set "EXE=%APP%\src-tauri\target\release\sagouindupm-launcher.exe")
@@ -74,7 +75,7 @@ exit /b 0
 :fail
 echo.
 echo  The launcher could not be built: see the messages above.
-echo  It needs Node.js, Rust and the Microsoft C++ tools. The console launcher is still available: Sagouindupm.bat
+echo  It needs Node.js, Rust and the Microsoft C++ tools. The console launcher is still available: series-s\dev\Sagouindupm.bat
 echo.
 pause
 exit /b 1

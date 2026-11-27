@@ -299,7 +299,7 @@ export const fr: Dict = {
   "help.what.p1":
     "Il lance votre copie d'un jeu Xbox Series sur PC, profil Series S, avec les réglages mesurés sur une carte de 8 Go, un processeur 6 cœurs et 32 Go de RAM, ajustés tout seuls à votre PC (Réglages, « Profil détecté »).",
   "help.what.p2":
-    "Rien du jeu n'est fourni ni modifié. Les réglages viennent de series-s\\reglages.json, comme pour le lanceur console Sagouindupm.bat.",
+    "Rien du jeu n'est fourni ni modifié. Les réglages viennent de series-s\\reglages.json, comme pour le lanceur console (series-s\dev\Sagouindupm.bat).",
   "help.perf": "Performances",
   "help.perf.p1":
     "Environ 10 images par seconde sur RTX 3050 dans la mission du bateau. La console partage une mémoire entre processeur et carte ; le PC en a deux, que VIctory synchronise sans cesse.",

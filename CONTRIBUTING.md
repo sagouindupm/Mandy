@@ -11,7 +11,7 @@ on an RTX 3050. Target: 15.
 2. If you work with an AI, give it [AGENTS.md](AGENTS.md) first.
 3. Build: `cargo build --release -p victory` (Rust toolchain in `rust-toolchain.toml`, MSVC tools and
    Windows SDK).
-4. Launch with `series-s\Sagouindupm.bat` (or `series-s\launch_series_s.bat`).
+4. Launch with `series-s\dev\Sagouindupm.bat`.
 5. **NVIDIA cards**: NVIDIA Control Panel → Manage 3D settings → **Shader Cache Size → Unlimited**.
    Otherwise, once the default 4 GB are full, every new build recompiles its shaders at every launch and
    looks much slower (see `docs/test-log.md`).

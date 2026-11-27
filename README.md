@@ -235,7 +235,7 @@ cargo build --release --locked -p victory          # the engine: target\release\
 cd launcher; npm ci; npm run tauri build -- --no-bundle   # the launcher
 ```
 
-Or double-click `series-s\Sagouindupm-Launcher.bat`, which installs what is missing (winget) and builds the
+Or double-click `series-s\dev\Sagouindupm-Launcher.bat`, which installs what is missing (winget) and builds the
 launcher; from a repository checkout, step 1 of the launcher compiles the engine.
 
 The download is made with `scripts\package-release.ps1` (engine and launcher for any x86-64 CPU with AVX2, no
@@ -246,7 +246,7 @@ Visual C++ runtime to install; content check, zip in `dist\`). A `v<version>` ta
 <details>
 <summary><b>The console launcher</b></summary>
 
-`series-s\Sagouindupm.bat`: a menu in a console (prepare the shaders, play, build the pipelines, DLSS, saves).
+`series-s\dev\Sagouindupm.bat`: a menu in a console (prepare the shaders, play, build the pipelines, DLSS, saves).
 It reads the same settings (`series-s\reglages.json`, applied by `series-s\reglages.ps1`), computes the same
 profile and shares the graphical launcher's configuration (`%LOCALAPPDATA%\Sagouindupm`). The first time:
 **[2]** (translates the shaders and keeps along the way those named by the shared list), **[3]** (imports the
