@@ -1,10 +1,10 @@
-﻿# Sagouindupm | VIctory : chemins et lanceur.json du lanceur console Sagouindupm.ps1, et application des
-# réglages Series S. Les réglages eux-mêmes sont dans reglages.json, la seule source, que le lanceur graphique
-# (launcher/) lit aussi : un réglage changé là vaut pour les deux.
-# Les scripts de mesure (scripts/bench) appellent victory.exe directement et ne lisent pas ces fichiers.
+﻿# Sagouindupm | VIctory: paths and lanceur.json of the console launcher Sagouindupm.ps1, and application of the
+# Series S settings. The settings themselves are in reglages.json, the single source, which the graphical launcher
+# (launcher/) reads too: a setting changed there applies to both.
+# The measuring scripts (scripts/bench) call victory.exe directly and do not read these files.
 
 $Root   = Split-Path -Parent $PSScriptRoot
-# La version téléchargée (scripts/package-release.ps1) a victory.exe dans engine\ ; un dépôt, dans target\release.
+# The downloaded version (scripts/package-release.ps1) has victory.exe in engine\; a repository, in target\release.
 $Exe    = Join-Path $Root 'engine\victory.exe'
 if (-not (Test-Path $Exe)) { $Exe = Join-Path $Root 'target\release\victory.exe' }
 $Home_  = Join-Path $env:LOCALAPPDATA 'Sagouindupm'
@@ -17,12 +17,12 @@ function Get-Settings {
     if (Test-Path $Conf) { return Get-Content $Conf -Raw | ConvertFrom-Json }
     [pscustomobject]@{ game_exe = ''; shaders_dir = ''; shaders_ready = $false; parties = 0 }
 }
-# Réglages ajoutés après la première version du lanceur : présents même dans un ancien lanceur.json.
-#   dlss_dir, dlss_mode : DLSS (dossier de Streamline, mode).
-#   pipelines_parties   : nombre de parties lancées au dernier « victory warm --used » réussi (-1 : jamais).
-#   pipelines_liste     : repère « nom:taille » de la liste partagée construite par ce « warm » ('' : aucune).
-#   nv_cache_ok         : le joueur a dit avoir réglé le cache de shaders NVIDIA sur « Illimitée ».
-#   ancien_plan         : mode d'alimentation actif avant que le lanceur graphique le change (pour revenir).
+# Settings added after the first version of the launcher: present even in an old lanceur.json.
+#   dlss_dir, dlss_mode : DLSS (Streamline folder, mode).
+#   pipelines_parties   : number of sessions launched at the last successful "victory warm --used" (-1: never).
+#   pipelines_liste     : "name:size" mark of the shared list built by that "warm" ('': none).
+#   nv_cache_ok         : the player said they set the NVIDIA shader cache to "Unlimited".
+#   ancien_plan         : power plan active before the graphical launcher changed it (to go back).
 function Complete-Settings($s) {
     $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; pipelines_liste = ''; nv_cache_ok = $false; ancien_plan = '' }
     foreach ($k in $defaults.Keys) {
@@ -32,16 +32,34 @@ function Complete-Settings($s) {
 }
 function Save-Settings($s) { $s | ConvertTo-Json | Set-Content -Encoding utf8 $Conf }
 
-# victory.toml : le dossier du jeu, lu par victory.exe (VICTORY_CONFIG).
+# victory.toml: the game folder, read by victory.exe (VICTORY_CONFIG).
 function Write-VictoryToml($s) {
     $dir = (Split-Path -Parent $s.game_exe) -replace "'", "''"
     "[paths]`ngame_dir = '$dir'`ntest_titles = []`n" | Set-Content -Encoding utf8 $Toml
     Save-Settings $s
 }
 
-# Réglages Series S, pipelines sautées, profil du matériel, DLSS : series-s\reglages.json (lu aussi par le lanceur
-# graphique). Ce fichier ne fait que l'appliquer.
+# Series S settings, skipped pipelines, hardware profile, DLSS: series-s\reglages.json (also read by the graphical
+# launcher). This file only applies it.
 $Reglages = Get-Content (Join-Path $PSScriptRoot 'reglages.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+
+# The texts of reglages.json that this console shows, in English. reglages.json keeps the French ones (the graphical
+# launcher shows them in its French window); the keys are the graphical launcher's (tier.<id>, vendorWarning.<id>...).
+# A text missing here is shown as written in reglages.json.
+$EnglishTexts = @{
+    'tier.8_fils'                      = '8 threads or fewer'
+    'tier.12_fils'                     = '6 cores / 12 threads (Maykzera''s settings)'
+    'tier.16_fils'                     = '16 threads or more'
+    'tier.6_go'                        = '6 GB or less'
+    'tier.8_go'                        = '8 to 10 GB'
+    'tier.12_go'                       = '11 GB and more'
+    'vendorWarning.amd'                = 'AMD card: untested, generic Series S profile. Your measurements help us.'
+    'vendorWarning.intel_arc'          = 'Intel Arc card: untested, generic Series S profile. Your measurements help us.'
+    'vendorWarning.intel_integree'     = 'Integrated graphics: you need a dedicated graphics card with 4 GB or more.'
+    'materiel.tres_petite_ram.conseil' = '16 GB of RAM: close your browser, Discord and other programs before playing.'
+    'jeu.conseil'                      = 'Keep the whole game copy in its own folder (for example C:\Games\GTA6), not loose in Downloads.'
+}
+function Get-Text([string]$Key, [string]$Text) { if ($EnglishTexts.ContainsKey($Key)) { $EnglishTexts[$Key] } else { $Text } }
 
 function Get-SeriesSSettings {
     $h = [ordered]@{}
@@ -49,7 +67,7 @@ function Get-SeriesSSettings {
     $h
 }
 
-# Pipelines sautées : le fichier des passes du ray tracing (relatif à la racine du dépôt) puis les hachages en plus.
+# Skipped pipelines: the file of the ray tracing passes (relative to the repository root) then the extra hashes.
 function Get-SkipPipelines {
     $rt = Join-Path $Root $Reglages.pipelines_sautees.fichier
     $skip = @($Reglages.pipelines_sautees.en_plus)
@@ -57,29 +75,29 @@ function Get-SkipPipelines {
     $skip -join ','
 }
 
-# La liste partagée des pipelines (« pipelines_partagees » dans reglages.json), $null si absente.
+# The shared pipeline list ("pipelines_partagees" in reglages.json), $null if absent.
 function Get-SharedPipelineList {
     $f = Join-Path $Root $Reglages.pipelines_partagees.fichier
     if (Test-Path $f) { $f } else { $null }
 }
 
-# Son repère « nom:taille », pour savoir quelle liste a été construite (le même que le lanceur graphique).
+# Its "name:size" mark, to know which list was built (the same as the graphical launcher's).
 function Get-SharedPipelineMark {
     $f = Get-SharedPipelineList
     if ($f) { $i = Get-Item $f; "$($i.Name):$($i.Length)" } else { '' }
 }
 
-# Mémoire vive totale en octets (0 si inconnue).
+# Total RAM in bytes (0 if unknown).
 function Get-TotalRam {
     try { (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory } catch { 0 }
 }
 
-# ------------------------------------------------------------------ profil du matériel
-# « materiel » dans reglages.json, le même calcul que launcher/src-tauri/src/profile.rs (scripts/check-profils.ps1
-# compare les deux).
+# ------------------------------------------------------------------ hardware profile
+# "materiel" in reglages.json, the same computation as launcher/src-tauri/src/profile.rs (scripts/check-profils.ps1
+# compares the two).
 
-# La carte graphique : NVIDIA d'abord, sinon celle qui a le plus de mémoire (taille 64 bits du pilote ; AdapterRAM
-# s'arrête à 4 Go). Le même choix que le lanceur graphique (sys.rs).
+# The graphics card: NVIDIA first, otherwise the one with the most memory (the driver's 64-bit size; AdapterRAM
+# stops at 4 GB). The same choice as the graphical launcher (sys.rs).
 function Get-Gpu {
     $mem = @{}
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -95,7 +113,7 @@ function Get-Gpu {
     if ($gpu) { $gpu } else { [pscustomobject]@{ Name = ''; Vram = [double]0 } }
 }
 
-# Ce PC (lu une fois) : mémoire vive, mémoire de la carte, fils du processeur, nom de la carte. 0 = inconnu.
+# This PC (read once): RAM, card memory, CPU threads, card name. 0 = unknown.
 $script:Hardware = $null
 function Get-Hardware {
     if (-not $script:Hardware) {
@@ -108,13 +126,13 @@ function Get-Hardware {
     $script:Hardware
 }
 
-# nvidia_rtx, nvidia, amd, intel_arc, intel_integree ou inconnu, d'après le nom de la carte.
+# nvidia_rtx, nvidia, amd, intel_arc, intel_integree or inconnu, from the card's name.
 function Get-GpuVendor([string]$Name) {
     $n = $Name.ToUpper()
     if ($n.Contains('NVIDIA') -or $n.Contains('GEFORCE')) { if ($n.Contains('RTX')) { return 'nvidia_rtx' } else { return 'nvidia' } }
     if ($n.Contains('AMD') -or $n.Contains('RADEON')) { return 'amd' }
     if ($n.Contains('INTEL')) {
-        # Les cartes Arc dédiées ont un numéro (A380, A770, B580) ; les puces Arc des processeurs, non.
+        # Dedicated Arc cards have a number (A380, A770, B580); the Arc chips inside CPUs don't.
         $card = @($n -split '[^A-Z0-9]' | Where-Object { $_ -cmatch '^[AB][0-9]{3}$' }).Count -gt 0
         if ($n.Contains('ARC') -and $card) { return 'intel_arc' } else { return 'intel_integree' }
     }
@@ -123,7 +141,7 @@ function Get-GpuVendor([string]$Name) {
 
 function Format-Env($o) { ($o.PSObject.Properties | ForEach-Object { "$($_.Name -replace '^VICTORY_', '')=$($_.Value)" }) -join ', ' }
 
-# Le profil de ce PC : Env (ce qui change par rapport aux groupes), Reasons, Warnings, Tips, Dlss, ShadersNvidia.
+# This PC's profile: Env (what changes compared with the groups), Reasons, Warnings, Tips, Dlss, ShadersNvidia.
 function Get-HardwareProfile($hw) {
     $m = $Reglages.materiel
     $base = Get-SeriesSSettings
@@ -132,7 +150,7 @@ function Get-HardwareProfile($hw) {
     $ramGb = $hw.RamBytes / 1GB; $vramGb = $hw.VramBytes / 1GB
     $veryLow = $hw.RamBytes -gt 0 -and $ramGb -lt [double]$m.tres_petite_ram.moins_de_go
 
-    # Processeur : le premier cran sous sa limite ; un cran plus bas sur un PC de 16 Go.
+    # CPU: the first step under its limit; one step lower on a 16 GB PC.
     $cpu = @($m.processeur.crans)
     if ($hw.Threads -gt 0 -and $cpu.Count -gt 0) {
         $found = $cpu.Count - 1
@@ -140,23 +158,23 @@ function Get-HardwareProfile($hw) {
         $idx = if ($veryLow) { [Math]::Max(0, $found - [int]$m.tres_petite_ram.crans_de_fils_en_moins) } else { $found }
         $t = $cpu[$idx]
         foreach ($p in $t.env.PSObject.Properties) { $envs[$p.Name] = [string]$p.Value }
-        $low = if ($idx -ne $found) { ", un cran plus bas pour $([Math]::Round($ramGb)) Go de mémoire vive" } else { '' }
-        $reasons += "Processeur, $($hw.Threads) fils : $($t.nom)$low, $(Format-Env $t.env)."
+        $low = if ($idx -ne $found) { ", one step lower for $([Math]::Round($ramGb)) GB of RAM" } else { '' }
+        $reasons += "CPU, $($hw.Threads) threads: $(Get-Text "tier.$($t.id)" $t.nom)$low, $(Format-Env $t.env)."
     }
-    # Mémoire de la carte.
+    # Card memory.
     $card = @($m.carte.crans)
     if ($hw.VramBytes -gt 0 -and $card.Count -gt 0) {
         $t = $card[$card.Count - 1]
         foreach ($c in $card) { if ($null -eq $c.moins_de_go -or $vramGb -lt [double]$c.moins_de_go) { $t = $c; break } }
         foreach ($p in $t.env.PSObject.Properties) { $envs[$p.Name] = [string]$p.Value }
-        $reasons += "Carte, $([Math]::Round($vramGb)) Go : $($t.nom), $(Format-Env $t.env)."
-    } else { $reasons += 'Carte : mémoire inconnue, réglages pour 8 Go.' }
-    # Mémoire vive : sous 24 Go les fenêtres de mémoire dans la carte ; sous 20 Go aussi des plafonds.
+        $reasons += "Card, $([Math]::Round($vramGb)) GB: $(Get-Text "tier.$($t.id)" $t.nom), $(Format-Env $t.env)."
+    } else { $reasons += 'Card: unknown memory, settings for 8 GB.' }
+    # RAM: under 24 GB the memory windows on the card; under 20 GB caps too.
     if ($hw.RamBytes -gt 0) {
         $parts = @()
         if ($ramGb -lt [double]$Reglages.petite_ram.moins_de_go) {
             foreach ($p in $Reglages.petite_ram.env.PSObject.Properties) { $envs[$p.Name] = [string]$p.Value }
-            $parts += "moins de $($Reglages.petite_ram.moins_de_go) Go, fenêtres de mémoire du jeu dans la carte ($(Format-Env $Reglages.petite_ram.env))"
+            $parts += "under $($Reglages.petite_ram.moins_de_go) GB, game memory windows on the card ($(Format-Env $Reglages.petite_ram.env))"
         }
         if ($veryLow) {
             $capped = @()
@@ -165,29 +183,29 @@ function Get-HardwareProfile($hw) {
                 $now = if ($envs.Contains($p.Name)) { $envs[$p.Name] } elseif ($base.Contains($p.Name)) { $base[$p.Name] } else { $null }
                 if ($null -eq $now -or [double]$now -gt $cap) { $envs[$p.Name] = [string]$cap; $capped += "$($p.Name -replace '^VICTORY_', '')=$cap" }
             }
-            $parts += "moins de $($m.tres_petite_ram.moins_de_go) Go, fils un cran plus bas$(if ($capped) { ' et ' + ($capped -join ', ') })"
-            $tips += $m.tres_petite_ram.conseil
+            $parts += "under $($m.tres_petite_ram.moins_de_go) GB, threads one step lower$(if ($capped) { ' and ' + ($capped -join ', ') })"
+            $tips += Get-Text 'materiel.tres_petite_ram.conseil' $m.tres_petite_ram.conseil
         }
-        $reasons += "Mémoire vive, $([Math]::Round($ramGb)) Go : $(if ($parts) { $parts -join ' ; ' } else { 'rien à réduire' })."
+        $reasons += "RAM, $([Math]::Round($ramGb)) GB: $(if ($parts) { $parts -join '; ' } else { 'nothing to reduce' })."
     }
-    # Fabricant : DLSS, faits NVIDIA pour les shaders, avertissements.
+    # Vendor: DLSS, NVIDIA facts for the shaders, warnings.
     $vendor = Get-GpuVendor $hw.GpuName
     $v = $m.fabricants.$vendor
-    if ($v.avertissement) { $warnings += $v.avertissement }
-    # Seulement ce qui change vraiment par rapport aux groupes.
+    if ($v.avertissement) { $warnings += Get-Text "vendorWarning.$vendor" $v.avertissement }
+    # Only what really changes compared with the groups.
     $changed = [ordered]@{}
     foreach ($k in $envs.Keys) { if (-not ($base.Contains($k) -and $base[$k] -eq $envs[$k])) { $changed[$k] = $envs[$k] } }
-    $label = @(if ($hw.GpuName) { ($hw.GpuName -replace '^(NVIDIA|AMD|Intel\(R\))\s+', '' -replace '^GeForce\s+', '').Trim() } else { 'carte inconnue' })
-    if ($hw.VramBytes -gt 0) { $label += "$([Math]::Round($vramGb)) Go" }
-    if ($hw.Threads -gt 0) { $label += "$($hw.Threads) fils" }
-    if ($hw.RamBytes -gt 0) { $label += "$([Math]::Round($ramGb)) Go de RAM" }
+    $label = @(if ($hw.GpuName) { ($hw.GpuName -replace '^(NVIDIA|AMD|Intel\(R\))\s+', '' -replace '^GeForce\s+', '').Trim() } else { 'unknown card' })
+    if ($hw.VramBytes -gt 0) { $label += "$([Math]::Round($vramGb)) GB" }
+    if ($hw.Threads -gt 0) { $label += "$($hw.Threads) threads" }
+    if ($hw.RamBytes -gt 0) { $label += "$([Math]::Round($ramGb)) GB of RAM" }
     [pscustomobject]@{
         Label = $label -join ' · '; Vendor = $vendor; Env = $changed; Reasons = $reasons; Warnings = $warnings; Tips = $tips
         Dlss = [bool]$v.dlss; ShadersNvidia = [bool]$v.shaders_nvidia
     }
 }
 
-# Les variables que reçoit victory.exe : Set (dans l'ordre) et Remove. Sans PATH ni fichier : vérifiable à part.
+# The variables victory.exe receives: Set (in order) and Remove. No PATH or file: checkable on its own.
 function Get-GameEnvMap($s, $hw) {
     $set = [ordered]@{ VICTORY_CONFIG = $Toml }
     $seriesS = Get-SeriesSSettings
@@ -195,7 +213,7 @@ function Get-GameEnvMap($s, $hw) {
     $prof = Get-HardwareProfile $hw
     foreach ($k in $prof.Env.Keys) { $set[$k] = $prof.Env[$k] }
     $set[$Reglages.pipelines_sautees.variable] = Get-SkipPipelines
-    # DLSS (cartes RTX seulement) : voir « dlss » dans reglages.json.
+    # DLSS (RTX cards only): see "dlss" in reglages.json.
     $d = $Reglages.dlss
     $remove = @($d.variable_dossier, $d.variable_mode)
     if ($prof.Dlss -and $s.dlss_mode -and $s.dlss_mode -ne 'off' -and $s.dlss_dir -and (Test-Path (Join-Path $s.dlss_dir $d.fichier_requis))) {
@@ -206,7 +224,7 @@ function Get-GameEnvMap($s, $hw) {
     [pscustomobject]@{ Set = $set; Remove = $remove }
 }
 
-# Prépare l'environnement de victory.exe (dans ce processus : les programmes lancés ensuite en héritent).
+# Prepares victory.exe's environment (in this process: the programs started afterwards inherit it).
 function Set-GameEnv($s) {
     $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\dxil.dll' -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
     if ($sdk -and -not ($env:PATH -like "$($sdk.DirectoryName);*")) { $env:PATH = "$($sdk.DirectoryName);$env:PATH" }
@@ -215,19 +233,19 @@ function Set-GameEnv($s) {
     foreach ($k in $map.Remove) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
 }
 
-# Les faits de la carte pour la traduction des shaders (NVIDIA) : voir « shaders » dans reglages.json.
+# The card's facts for the shader translation (NVIDIA): see "shaders" in reglages.json.
 function Get-ShaderHostEnv {
     $h = @{}
     foreach ($p in $Reglages.shaders.env_nvidia.PSObject.Properties) { $h[$p.Name] = [string]$p.Value }
     $h
 }
 
-# Threads pour « victory shaders » : tous les cœurs logiques sauf deux (au moins 2).
+# Threads for "victory shaders": all logical cores but two (at least 2).
 function Get-ShaderJobs { [Math]::Max([int]$Reglages.shaders.threads_min, [Environment]::ProcessorCount - [int]$Reglages.shaders.threads_laisses_libres) }
 
-# ------------------------------------------------------------------ copie du jeu
-# « jeu » dans reglages.json, le même contrôle que le lanceur graphique (GameRule::check dans settings.rs) :
-# l'exe avec ses archives à côté. Renvoie $null si la copie est complète, sinon ce qui manque (en français).
+# ------------------------------------------------------------------ game copy
+# "jeu" in reglages.json, the same check as the graphical launcher (GameRule::check in settings.rs): the exe with
+# its archives next to it. Returns $null if the copy is complete, otherwise what is missing.
 function Test-GameCopy([string]$ExePath) {
     $j = $Reglages.jeu
     $dir = Split-Path -Parent $ExePath
@@ -238,14 +256,14 @@ function Test-GameCopy([string]$ExePath) {
     if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) { $missing += $j.exe }
     $missing += @($j.archives_requises | Where-Object { $names -notcontains $_.ToLower() })
     $what = @()
-    if ($missing) { $what += "il manque $($missing -join ', ')" }
-    if ($rpfs.Count -lt [int]$j.archives_min) { $what += "$($rpfs.Count) archive$(if ($rpfs.Count -gt 1) { 's' }) .rpf sur $($j.archives_min) au moins" }
-    if ($sizeGb -lt [double]$j.taille_min_go) { $what += ("{0:N0} Go d'archives sur {1} au moins (une copie complète fait ~130 Go)" -f $sizeGb, $j.taille_min_go) }
+    if ($missing) { $what += "missing $($missing -join ', ')" }
+    if ($rpfs.Count -lt [int]$j.archives_min) { $what += "$($rpfs.Count) .rpf archive$(if ($rpfs.Count -ne 1) { 's' }) out of at least $($j.archives_min)" }
+    if ($sizeGb -lt [double]$j.taille_min_go) { $what += ("{0:N0} GB of archives out of at least {1} (a complete copy is ~130 GB)" -f $sizeGb, $j.taille_min_go) }
     if (-not $what) { return $null }
-    "Copie du jeu incomplète dans $dir : $($what -join ' ; '). $($j.conseil)"
+    "Incomplete game copy in ${dir}: $($what -join '; '). $(Get-Text 'jeu.conseil' $j.conseil)"
 }
 
-# Shaders mis dans le cache par une traduction : sa dernière ligne « N shaders in the cache, M do not translate ».
+# Shaders put in the cache by a translation: its last line "N shaders in the cache, M do not translate".
 function Get-ShadersCount($Lines) {
     $n = $null
     foreach ($l in $Lines) { if ("$l" -match '^\s*(\d+) shaders in the cache, \d+ do not translate') { $n = [int]$Matches[1] } }

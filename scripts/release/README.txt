@@ -1,44 +1,43 @@
-VIctory S {VERSION} : démarrage rapide
-======================================
+VIctory S {VERSION}: quick start
+================================
 
-VIctory S lance VOTRE copie d'un jeu Xbox Series sur PC, avec le profil Series S réglé pour les
-petites configurations. Aucun fichier du jeu n'est fourni ici : il faut votre propre copie.
+VIctory S runs YOUR copy of an Xbox Series game on PC, with the Series S profile tuned for
+low-end PCs. No game file is provided here: you need your own copy.
 
-0. Il faut la copie COMPLÈTE du jeu : game_scarlett_master.exe avec toutes ses archives
-   à côté (shaders.rpf, levels.rpf et les autres .rpf, ~130 Go pour la v1.0.2.1), dans son
-   propre dossier (par exemple C:\Jeux\GTA6), pas en vrac dans Téléchargements.
-1. Décompressez ce dossier où vous voulez (pas dans le dossier du jeu).
-2. Double-cliquez sur « VIctory S.exe ».
-3. Onglet Préparation, bouton « Tout préparer » : le lanceur trouve le jeu
-   (game_scarlett_master.exe de votre copie), traduit les shaders pour votre carte, puis
-   construit d'avance les pipelines de la liste partagée (25 à 40 minutes, une seule fois).
-   VIctory lui-même est déjà inclus : rien à compiler.
-4. Onglet Jouer, bouton JOUER : la première partie est déjà fluide jusqu'après la mission
-   du bateau. Plus loin, Préparation, étape 4, « Construire » ajoute les pipelines notées.
+0. You need the COMPLETE copy of the game: game_scarlett_master.exe with all its archives
+   next to it (shaders.rpf, levels.rpf and the other .rpf files, ~130 GB for v1.0.2.1), in its
+   own folder (for example C:\Games\GTA6), not loose in Downloads.
+1. Unzip this folder wherever you like (not in the game folder).
+2. Double-click "VIctory S.exe".
+3. Setup tab, "Prepare everything" button: the launcher finds the game
+   (game_scarlett_master.exe from your copy), translates the shaders for your card, then
+   builds ahead of time the pipelines of the shared list (25 to 40 minutes, only once).
+   VIctory itself is already included: nothing to compile.
+4. Play tab, PLAY button: the first session is already smooth until after the boat
+   mission. Further on, Setup, step 4, "Build" adds the recorded pipelines.
 
-Le profil (fils du processeur, mémoire de la carte, mémoire vive) est choisi tout seul d'après
-votre PC : voyez « Profil détecté » dans l'onglet Réglages.
+The profile (CPU threads, card memory, RAM) is picked automatically from your PC: see
+"Detected profile" in the Settings tab.
 
-Conseils
-- Carte NVIDIA : Panneau de configuration NVIDIA > Gérer les paramètres 3D > Taille du cache
-  des shaders > Illimitée.
-- 16 Go de mémoire vive : fermez le navigateur, Discord et les autres programmes avant de jouer.
-- Portable : branchez le chargeur.
-- Processeur avec AVX2 nécessaire (Intel 4e génération / AMD Ryzen ou plus récents) et Windows 10
-  ou 11 64 bits avec WebView2 (déjà présent sur un Windows à jour).
+Tips
+- NVIDIA card: NVIDIA Control Panel > Manage 3D settings > Shader Cache Size > Unlimited.
+- 16 GB of RAM: close your browser, Discord and other programs before playing.
+- Laptop: plug in the charger.
+- A CPU with AVX2 is required (Intel 4th generation / AMD Ryzen or newer), and 64-bit
+  Windows 10 or 11 with WebView2 (already there on an up-to-date Windows).
 
-Donner mon avis : onglet Aide ou bas de la fenêtre, « Donner mon avis ». Le formulaire GitHub
-s'ouvre déjà rempli avec votre configuration ; vous le relisez et l'envoyez vous-même.
+Give feedback: Help tab or bottom of the window, "Give feedback". The GitHub form opens
+already filled in with your configuration; you read it over and send it yourself.
 
-Contenu
-- VIctory S.exe              le lanceur
-- engine\victory.exe         le moteur VIctory (profil Series S)
-- series-s\reglages.json     les réglages mesurés, les profils par matériel
+Contents
+- VIctory S.exe              the launcher
+- engine\victory.exe         the VIctory engine (Series S profile)
+- series-s\reglages.json     the measured settings, the per-hardware profiles
 - series-s\pipelines\series-s-rtx.txt
-                             la liste de pipelines partagée (aucun code du jeu)
-- scripts\rt_off_hashes.txt  les passes du ray tracing sautées
+                             the shared pipeline list (no game code)
+- scripts\rt_off_hashes.txt  the skipped ray tracing passes
 - LICENSE                    GPL-3.0-or-later
 
-Vos réglages, journaux et captures : %LOCALAPPDATA%\Sagouindupm
-Sources, aide et mesures : https://github.com/sagouindupm/Mandy
-Projet sans lien avec l'éditeur ou le développeur du jeu.
+Your settings, logs and screenshots: %LOCALAPPDATA%\Sagouindupm
+Source, help and measurements: https://github.com/sagouindupm/Mandy
+This project is not affiliated with the game's publisher or developer.

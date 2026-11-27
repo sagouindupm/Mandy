@@ -1,9 +1,12 @@
 {
   "a_lire": [
-    "Sagouindupm | VIctory : la seule source des réglages Series S.",
-    "Lu par series-s/reglages.ps1 (lanceur console Sagouindupm.ps1) et par le lanceur graphique (launcher/) :",
-    "un réglage changé ici vaut pour les deux. Les scripts de mesure (scripts/bench) appellent victory.exe",
-    "directement et ne lisent pas ce fichier. Les « note » expliquent chaque groupe ; seuls les « env » comptent."
+    "Sagouindupm | VIctory: the single source of the Series S settings.",
+    "Read by series-s/reglages.ps1 (console launcher Sagouindupm.ps1) and by the graphical launcher (launcher/):",
+    "a setting changed here applies to both. The measuring scripts (scripts/bench) call victory.exe directly",
+    "and do not read this file. The notes explain each group; only the env values count.",
+    "The texts the launchers show (titre, note of the groups, nom, avertissement, conseil, sans_avx2, profil,",
+    "mesure, the notes of petite_ram and dlss) stay in French here: they are the French window's texts. The",
+    "English ones live in the graphical launcher and in reglages.ps1, matched by id. The other notes are in English."
   ],
   "profil": "Base trustno1-coder/VIctory-NVIDIA réglée pour RTX 3060 par Maykzera, mesurée ici sur RTX 3050 8 Go + i5-12400F : ~84 ms par image (11,8 fps) dans la cinématique du bateau, eau et visages fidèles.",
   "groupes": [
@@ -75,7 +78,7 @@
   ],
   "pipelines_sautees": {
     "variable": "VICTORY_SKIP_PIPELINES",
-    "note": "Les ~1 000 passes de résolution du ray tracing (pas de structure de rayons sur NVIDIA, fichier ci-dessous, relatif à la racine du dépôt), puis la brume de chaleur 731a39171b568298 (foxhound : elle étale des blocs de pixels, aussi sur l'eau) : 84 ms contre 93 sur RTX 3050, image propre. Puis les programmes que le repli LDS (#27) rend traduisibles mais qui coûtent ~30 ms sans les arbres (volumétrie de l'eau 5dc3/6f22, sous l'eau 926c, transmission 1f1f, 21f7, 7c9a) ; les arbres restent.",
+    "note": "The ~1,000 ray tracing resolve passes (no ray structure on NVIDIA, file below, relative to the repository root), then the heat haze 731a39171b568298 (foxhound: it smears blocks of pixels, on the water too): 84 ms against 93 on an RTX 3050, clean picture. Then the programs that the LDS fallback (#27) makes translatable but that cost ~30 ms without the trees (water volumetrics 5dc3/6f22, underwater 926c, transmission 1f1f, 21f7, 7c9a); the trees stay.",
     "fichier": "scripts/rt_off_hashes.txt",
     "en_plus": [
       "731a39171b568298",
@@ -88,7 +91,7 @@
     ]
   },
   "pipelines_partagees": {
-    "note": "La liste partagée des pipelines (clés, empreintes des shaders, états : aucun code du jeu), relative à la racine. Les deux lanceurs l'importent avant la traduction des shaders (victory pipelines import <liste> : la traduction garde au passage les shaders qu'elle nomme), ou après avec --shaders <shaders du joueur>, puis victory warm --used : la première partie n'a plus d'à-coups jusqu'après la mission du bateau. Le repère « nom:taille » dans lanceur.json (pipelines_liste) dit quelle liste a été construite.",
+    "note": "The shared pipeline list (keys, shader hashes, states: no game code), relative to the root. Both launchers import it before the shader translation (victory pipelines import <list>: the translation keeps along the way the shaders it names), or after it with --shaders <the player's shaders>, then victory warm --used: the first session no longer stutters until after the boat mission. The \"name:size\" mark in lanceur.json (pipelines_liste) says which list was built.",
     "fichier": "series-s/pipelines/series-s-rtx.txt"
   },
   "petite_ram": {
@@ -99,7 +102,7 @@
     }
   },
   "jeu": {
-    "note": "Une copie complète du jeu, pas l'exe seul : game_scarlett_master.exe avec ses archives à côté (v1.0.2.1 : ~130 Go, 12 archives .rpf dont shaders.rpf et levels.rpf, ~25 000 shaders traduits). La recherche automatique préfère les copies complètes ; une copie incomplète est refusée avec ce qui manque. Après la traduction, moins de « shaders_min » shaders veut dire une copie incomplète.",
+    "note": "A complete copy of the game, not the exe alone: game_scarlett_master.exe with its archives next to it (v1.0.2.1: ~130 GB, 12 .rpf archives including shaders.rpf and levels.rpf, ~25,000 translated shaders). The automatic search prefers complete copies; an incomplete copy is refused with what is missing. After the translation, fewer than shaders_min shaders means an incomplete copy.",
     "exe": "game_scarlett_master.exe",
     "archives_requises": ["shaders.rpf", "levels.rpf"],
     "archives_min": 8,
@@ -108,9 +111,9 @@
     "conseil": "Gardez toute la copie du jeu dans son propre dossier (par exemple C:\\Jeux\\GTA6), pas en vrac dans Téléchargements."
   },
   "materiel": {
-    "note": "Profil choisi tout seul d'après ce PC, sans question : le processeur, la carte puis la mémoire vive ajustent les réglages des groupes (dans cet ordre), avant la règle des 24 Go. Le PC de référence (RTX 3050 8 Go, 12 fils, 32 Go) garde exactement les réglages des groupes.",
+    "note": "Profile picked automatically from this PC, without asking: the CPU, the card then the RAM adjust the settings of the groups (in that order), before the 24 GB rule. The reference PC (RTX 3050 8 GB, 12 threads, 32 GB) keeps exactly the settings of the groups.",
     "processeur": {
-      "note": "Fils auxiliaires selon les cœurs logiques (fils) du processeur.",
+      "note": "Helper threads according to the CPU's logical cores (threads).",
       "crans": [
         {
           "id": "8_fils",
@@ -132,7 +135,7 @@
       ]
     },
     "carte": {
-      "note": "Tampons de la carte selon sa mémoire. Jamais 2048 Mo sous 11 Go (3 fps mesurés sur des cartes de 8 Go avec 2 Go de tampons) : une carte de 10 Go reste à 1536. VICTORY_TEXTURE_MAX ne compte qu'une fois la PR #30 fusionnée ; inconnu du moteur avant, il est sans effet. Mémoire de la carte inconnue : réglages des groupes.",
+      "note": "Card buffers according to its memory. Never 2048 MB under 11 GB (3 fps measured on 8 GB cards with 2 GB of buffers): a 10 GB card stays at 1536. VICTORY_TEXTURE_MAX only counts once PR #30 is merged; unknown to the engine before that, it has no effect. Card memory unknown: the settings of the groups.",
       "crans": [
         {
           "id": "6_go",
@@ -154,7 +157,7 @@
       ]
     },
     "tres_petite_ram": {
-      "note": "PC de 16 Go (moins de 20 Go) : en plus de la règle des 24 Go, fils auxiliaires un cran plus bas et tampons de la carte à 1024 Mo au plus.",
+      "note": "16 GB PC (under 20 GB): on top of the 24 GB rule, helper threads one step lower and card buffers at 1024 MB at most.",
       "moins_de_go": 20,
       "crans_de_fils_en_moins": 1,
       "plafonds": { "VICTORY_CARD_BUFFERS_MB": 1024 },
@@ -186,7 +189,7 @@
     ]
   },
   "shaders": {
-    "note": "Les faits de la carte pour la traduction des shaders (NVIDIA : vagues de 32, 1 000 000 de vues) : sans eux le cache ne sert à rien en jeu. Threads : tous les cœurs logiques sauf deux (au moins 2).",
+    "note": "The card's facts for the shader translation (NVIDIA: waves of 32, 1,000,000 views): without them the cache is useless in game. Threads: all logical cores but two (at least 2).",
     "env_nvidia": {
       "VICTORY_HOST_WAVE": "32",
       "VICTORY_HOST_ROVS": "1",

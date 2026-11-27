@@ -1,3 +1,3 @@
 @echo off
-rem Double-cliquez ici pour lancer Sagouindupm ^| VIctory.
+rem Double-click here to start Sagouindupm ^| VIctory.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Sagouindupm.ps1"

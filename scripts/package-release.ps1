@@ -1,21 +1,21 @@
-﻿# VIctory S : la version téléchargeable. Compile le moteur et le lanceur, assemble dist\VIctory-S-<version>\ et
-# le zippe en dist\VIctory-S-<version>.zip. Lancé aussi par .github/workflows/release.yml (tags v*).
+﻿# VIctory S: the downloadable version. Builds the engine and the launcher, assembles dist\VIctory-S-<version>\ and
+# zips it into dist\VIctory-S-<version>.zip. Also run by .github/workflows/release.yml (tags v*).
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1
-#   ... -SkipBuild                 assembler avec les exe déjà compilés (essai à blanc)
-#   ... -Version 0.2.0             doit être la version de launcher/src-tauri/tauri.conf.json (le tag sans « v »)
-#   ... -Screenshots docs\assets   ensuite, captures du lanceur du paquet (launcher-*.png, --preview : un dossier
-#                                  personnel vide, aucune image du jeu)
+#   ... -SkipBuild                 assemble with the exes already built (dry run)
+#   ... -Version 0.2.0             must be the version of launcher/src-tauri/tauri.conf.json (the tag without "v")
+#   ... -Screenshots docs\assets   afterwards, screenshots of the packaged launcher (launcher-*.png, --preview: an
+#                                  empty personal folder, no game image)
 #
-# Dossiers de compilation : -EngineTarget (défaut : CARGO_TARGET_DIR, sinon target\) et -LauncherTarget (défaut :
-# launcher\src-tauri\target). Les deux exe sont compilés pour tous les processeurs x86-64 avec AVX2
-# (x86-64-v3 ; le moteur choisit aussi ses chemins AVX2 à l'exécution) et sans dépendre du runtime Visual C++
-# (crt-static) : .cargo/config.toml compile pour CE processeur (target-cpu=native), ce qui ne convient pas à un
-# paquet distribué.
+# Build folders: -EngineTarget (default: CARGO_TARGET_DIR, otherwise target\) and -LauncherTarget (default:
+# launcher\src-tauri\target). Both exes are built for every x86-64 CPU with AVX2 (x86-64-v3; the engine also picks
+# its AVX2 paths at run time) and without depending on the Visual C++ runtime (crt-static): .cargo/config.toml
+# builds for THIS CPU (target-cpu=native), which does not suit a distributed package.
 #
-# Le paquet ne contient que : VIctory S.exe, engine\victory.exe, series-s\reglages.json,
-# series-s\pipelines\series-s-rtx.txt, scripts\rt_off_hashes.txt, LISEZMOI.txt, LICENSE. Jamais de fichier du jeu, de DLL NVIDIA, de capture ni de cache : une vérification
-# arrête le script si autre chose s'y trouve (fichier inattendu, .rpf/.dll/.pdb, plus de 50 Mo hors victory.exe).
+# The package contains only: VIctory S.exe, engine\victory.exe, series-s\reglages.json,
+# series-s\pipelines\series-s-rtx.txt, scripts\rt_off_hashes.txt, README.txt, LICENSE. Never a game file, an NVIDIA
+# DLL, a screenshot or a cache: a check stops the script if anything else is there (unexpected file, .rpf/.dll/.pdb,
+# more than 50 MB apart from victory.exe).
 param(
     [string]$Version = '',
     [switch]$SkipBuild,
@@ -30,7 +30,7 @@ Set-Location $Root
 $conf = Get-Content (Join-Path $Root 'launcher\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
 if (-not $Version) { $Version = $conf.version }
 if ($Version -ne $conf.version) {
-    throw "Version $Version demandée, mais launcher/src-tauri/tauri.conf.json dit $($conf.version) : mettez-les d'accord (et launcher/src-tauri/Cargo.toml)."
+    throw "Version $Version requested, but launcher/src-tauri/tauri.conf.json says $($conf.version): make them match (and launcher/src-tauri/Cargo.toml)."
 }
 if (-not $EngineTarget) { $EngineTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'target' } }
 if (-not $LauncherTarget) { $LauncherTarget = Join-Path $Root 'launcher\src-tauri\target' }
@@ -40,70 +40,70 @@ $launcherExe = Join-Path $LauncherTarget 'release\sagouindupm-launcher.exe'
 function Invoke-Step($what, [scriptblock]$run) {
     Write-Host "==> $what" -ForegroundColor Magenta
     & $run
-    if ($LASTEXITCODE) { throw "$what : échec (code $LASTEXITCODE)" }
+    if ($LASTEXITCODE) { throw "${what}: failed (code $LASTEXITCODE)" }
 }
 
-# ------------------------------------------------------------------ compilation
+# ------------------------------------------------------------------ build
 if (-not $SkipBuild) {
     $savedFlags = $env:RUSTFLAGS; $savedTarget = $env:CARGO_TARGET_DIR
     try {
         $env:RUSTFLAGS = '-C target-cpu=x86-64-v3 -C target-feature=+crt-static'
         $env:CARGO_TARGET_DIR = $EngineTarget
-        Invoke-Step 'Moteur : cargo build --release --locked -p victory' { cargo build --release --locked -p victory }
+        Invoke-Step 'Engine: cargo build --release --locked -p victory' { cargo build --release --locked -p victory }
         $env:CARGO_TARGET_DIR = $LauncherTarget
         Push-Location (Join-Path $Root 'launcher')
         try {
-            Invoke-Step 'Lanceur : npm ci' { npm ci --no-audit --no-fund }
-            Invoke-Step 'Lanceur : npm run tauri build -- --no-bundle' { npm run tauri build -- --no-bundle }
+            Invoke-Step 'Launcher: npm ci' { npm ci --no-audit --no-fund }
+            Invoke-Step 'Launcher: npm run tauri build -- --no-bundle' { npm run tauri build -- --no-bundle }
         } finally { Pop-Location }
     } finally { $env:RUSTFLAGS = $savedFlags; $env:CARGO_TARGET_DIR = $savedTarget }
 }
-foreach ($f in $engineExe, $launcherExe) { if (-not (Test-Path $f)) { throw "Introuvable : $f (compilez d'abord, ou sans -SkipBuild)." } }
+foreach ($f in $engineExe, $launcherExe) { if (-not (Test-Path $f)) { throw "Not found: $f (build first, or run without -SkipBuild)." } }
 
-# ------------------------------------------------------------------ assemblage
+# ------------------------------------------------------------------ assembly
 $name = "VIctory-S-$Version"
 $dist = Join-Path $Root 'dist'
 $out = Join-Path $dist $name
 $zip = Join-Path $dist "$name.zip"
-Write-Host "==> Assemblage de dist\$name" -ForegroundColor Magenta
+Write-Host "==> Assembling dist\$name" -ForegroundColor Magenta
 Remove-Item -Recurse -Force $out, $zip -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $out 'engine'), (Join-Path $out 'series-s\pipelines'), (Join-Path $out 'scripts') | Out-Null
 Copy-Item $launcherExe (Join-Path $out 'VIctory S.exe')
 Copy-Item $engineExe (Join-Path $out 'engine\victory.exe')
 Copy-Item (Join-Path $Root 'series-s\reglages.json') (Join-Path $out 'series-s\reglages.json')
-# La liste de pipelines partagée (clés, empreintes, états : aucun code du jeu), construite avant la première partie.
+# The shared pipeline list (keys, hashes, states: no game code), built before the first session.
 Copy-Item (Join-Path $Root 'series-s\pipelines\series-s-rtx.txt') (Join-Path $out 'series-s\pipelines\series-s-rtx.txt')
 Copy-Item (Join-Path $Root 'scripts\rt_off_hashes.txt') (Join-Path $out 'scripts\rt_off_hashes.txt')
 Copy-Item (Join-Path $Root 'LICENSE') (Join-Path $out 'LICENSE')
-# LISEZMOI.txt pour le Bloc-notes : UTF-8 avec BOM, fins de ligne Windows.
-$readme = (Get-Content (Join-Path $Root 'scripts\release\LISEZMOI.txt') -Raw -Encoding UTF8).Replace('{VERSION}', $Version) -replace "`r?`n", "`r`n"
-[IO.File]::WriteAllText((Join-Path $out 'LISEZMOI.txt'), $readme, (New-Object Text.UTF8Encoding $true))
+# README.txt for Notepad: UTF-8 with BOM, Windows line endings.
+$readme = (Get-Content (Join-Path $Root 'scripts\release\README.txt') -Raw -Encoding UTF8).Replace('{VERSION}', $Version) -replace "`r?`n", "`r`n"
+[IO.File]::WriteAllText((Join-Path $out 'README.txt'), $readme, (New-Object Text.UTF8Encoding $true))
 
-# ------------------------------------------------------------------ vérification : rien d'autre que la liste
-$expected = @('VIctory S.exe', 'engine\victory.exe', 'series-s\reglages.json', 'series-s\pipelines\series-s-rtx.txt', 'scripts\rt_off_hashes.txt', 'LISEZMOI.txt', 'LICENSE')
+# ------------------------------------------------------------------ check: nothing but the list
+$expected = @('VIctory S.exe', 'engine\victory.exe', 'series-s\reglages.json', 'series-s\pipelines\series-s-rtx.txt', 'scripts\rt_off_hashes.txt', 'README.txt', 'LICENSE')
 function Test-Package($entries) {
-    # $entries : chemins relatifs (séparateur \) et tailles.
+    # $entries: relative paths (separator \) and sizes.
     $problems = @()
     foreach ($e in $entries) {
         $rel = $e.Path
-        if ($expected -notcontains $rel) { $problems += "fichier inattendu : $rel" }
-        if ($rel -match '\.(rpf|dll|pdb|bin|dat|dds|xvd|xvc|msixvc|awc|bik|png|jpg|jpeg|log|toml)$') { $problems += "type interdit dans le paquet : $rel" }
-        if ($e.Size -gt 50MB -and $rel -ne 'engine\victory.exe') { $problems += "plus de 50 Mo : $rel ($([Math]::Round($e.Size / 1MB)) Mo)" }
-        if ($rel -match '(^|\\)(sl\.|nvngx)') { $problems += "DLL NVIDIA : $rel" }
+        if ($expected -notcontains $rel) { $problems += "unexpected file: $rel" }
+        if ($rel -match '\.(rpf|dll|pdb|bin|dat|dds|xvd|xvc|msixvc|awc|bik|png|jpg|jpeg|log|toml)$') { $problems += "file type not allowed in the package: $rel" }
+        if ($e.Size -gt 50MB -and $rel -ne 'engine\victory.exe') { $problems += "over 50 MB: $rel ($([Math]::Round($e.Size / 1MB)) MB)" }
+        if ($rel -match '(^|\\)(sl\.|nvngx)') { $problems += "NVIDIA DLL: $rel" }
     }
-    foreach ($x in $expected) { if (-not ($entries | Where-Object { $_.Path -eq $x })) { $problems += "manquant : $x" } }
-    if ($problems) { $problems | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }; throw 'Paquet refusé.' }
+    foreach ($x in $expected) { if (-not ($entries | Where-Object { $_.Path -eq $x })) { $problems += "missing: $x" } }
+    if ($problems) { $problems | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }; throw 'Package rejected.' }
 }
 $files = Get-ChildItem -Recurse -File $out | ForEach-Object {
     [pscustomobject]@{ Path = $_.FullName.Substring($out.Length + 1); Size = $_.Length }
 }
 Test-Package $files
 
-# ------------------------------------------------------------------ zip, puis la même vérification sur le zip
+# ------------------------------------------------------------------ zip, then the same check on the zip
 Write-Host "==> $name.zip" -ForegroundColor Magenta
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
-# Entrée par entrée, avec des « / » : Windows PowerShell 5.1 (CreateFromDirectory) écrirait des « \ » que d'autres
-# outils de décompression lisent mal.
+# Entry by entry, with "/": Windows PowerShell 5.1 (CreateFromDirectory) would write "\" that other unzip tools
+# read badly.
 $z = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
 try {
     foreach ($f in Get-ChildItem -Recurse -File $out) {
@@ -121,14 +121,14 @@ Test-Package $inZip
 
 $zipSize = (Get-Item $zip).Length
 Write-Host ''
-Write-Host "Paquet : $zip ($([Math]::Round($zipSize / 1MB, 1)) Mo)" -ForegroundColor Green
-$inZip | ForEach-Object { '  {0,-28} {1,8:N0} Ko' -f $_.Path, ($_.Size / 1KB) }
+Write-Host "Package: $zip ($([Math]::Round($zipSize / 1MB, 1)) MB)" -ForegroundColor Green
+$inZip | ForEach-Object { '  {0,-28} {1,8:N0} KB' -f $_.Path, ($_.Size / 1KB) }
 
-# ------------------------------------------------------------------ captures du lanceur (README)
+# ------------------------------------------------------------------ launcher screenshots (README)
 if ($Screenshots) {
     $shots = if ([IO.Path]::IsPathRooted($Screenshots)) { $Screenshots } else { Join-Path $Root $Screenshots }
-    Write-Host "==> Captures du lanceur dans $shots (--preview)" -ForegroundColor Magenta
+    Write-Host "==> Launcher screenshots in $shots (--preview)" -ForegroundColor Magenta
     $p = Start-Process -FilePath (Join-Path $out 'VIctory S.exe') -ArgumentList '--preview', "`"$shots`"" -WorkingDirectory $out -PassThru
-    if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id; throw 'Le lanceur ne s''est pas fermé : captures incomplètes.' }
-    Get-ChildItem $shots -Filter 'launcher-*.png' | ForEach-Object { '  {0,-28} {1,8:N0} Ko' -f $_.Name, ($_.Length / 1KB) }
+    if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id; throw 'The launcher did not close: screenshots incomplete.' }
+    Get-ChildItem $shots -Filter 'launcher-*.png' | ForEach-Object { '  {0,-28} {1,8:N0} KB' -f $_.Name, ($_.Length / 1KB) }
 }
