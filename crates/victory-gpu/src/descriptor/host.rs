@@ -4160,6 +4160,37 @@ fn twin_window(format: DXGI_FORMAT, first: u64, count: u32, stride: u32, raw: bo
     Some((from / 4, dwords, (start - from) as u32))
 }
 
+/// The format the host makes a typed buffer view in. Translated shaders
+/// declare every typed buffer load and store as 32-bit float
+/// (`victory_shader` `emit/lower.rs`, but for 16-bit accesses that move
+/// halves), and a view in a 32-bit integer format converts between float
+/// and integer values on the way: a store of an integer's bits as a float
+/// is written as the integer the float rounds to (zero for most of them),
+/// where the console moves the bits. The float format of the same width
+/// moves them unchanged, and matches what the shader declares. (The meshlet
+/// culling programs append packed meshlet numbers to an `R32_UINT` list
+/// this way.) `VICTORY_BIT_EXACT_VIEWS=1` turns it on; off by default here:
+/// not yet run in the game on this tree, and a 16-bit access that moves
+/// halves through a 32-bit integer view declares unsigned integers.
+fn bit_exact_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("VICTORY_BIT_EXACT_VIEWS").is_some_and(|v| v == "1")) {
+        return format;
+    }
+    bit_exact(format)
+}
+
+/// [`bit_exact_format`] when it is on.
+fn bit_exact(format: DXGI_FORMAT) -> DXGI_FORMAT {
+    match format {
+        DXGI_FORMAT_R32G32B32A32_UINT | DXGI_FORMAT_R32G32B32A32_SINT => DXGI_FORMAT_R32G32B32A32_FLOAT,
+        DXGI_FORMAT_R32G32B32_UINT | DXGI_FORMAT_R32G32B32_SINT => DXGI_FORMAT_R32G32B32_FLOAT,
+        DXGI_FORMAT_R32G32_UINT | DXGI_FORMAT_R32G32_SINT => DXGI_FORMAT_R32G32_FLOAT,
+        DXGI_FORMAT_R32_UINT | DXGI_FORMAT_R32_SINT => DXGI_FORMAT_R32_FLOAT,
+        other => other,
+    }
+}
+
 fn buffer_srv(
     address: u64,
     len: u64,
@@ -4195,6 +4226,7 @@ fn buffer_srv(
             Flags: D3D12_BUFFER_SRV_FLAG_RAW,
         };
     }
+    desc.Format = bit_exact_format(desc.Format);
     let element = element_size(&desc);
     // SAFETY: a buffer view's union member.
     let buffer = unsafe { &mut desc.Anonymous.Buffer };
@@ -4332,6 +4364,7 @@ fn buffer_uav(
     buffer.CounterOffsetInBytes = 0;
     let (first, count, stride) = (buffer.FirstElement, buffer.NumElements, buffer.StructureByteStride);
     let raw = buffer.Flags.0 & D3D12_BUFFER_UAV_FLAG_RAW.0 != 0;
+    desc.Format = bit_exact_format(desc.Format);
     if window.is_some() {
         // (Left out at first: every structured unordered access view was then
         // refused by `buffer_view_ok` and left null, runs 15 and 16.)
@@ -5493,6 +5526,32 @@ mod tests {
         assert_eq!(view(5, u32::MAX, 5.5), (2, u32::MAX, 2.5));
         // (Two levels the copy has not.)
         assert_eq!(view(1, 4, 0.0), (0, 2, 0.0));
+    }
+
+    /// Typed buffer views of 32-bit integer formats are made in the float
+    /// format of the same width (the shaders' float loads and stores then
+    /// move the bits); every other format is the title's.
+    #[test]
+    fn typed_buffer_views_of_32_bit_integers_move_bits() {
+        for (title, host) in [
+            (DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32_FLOAT),
+            (DXGI_FORMAT_R32_SINT, DXGI_FORMAT_R32_FLOAT),
+            (DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32_FLOAT),
+            (DXGI_FORMAT_R32G32B32_SINT, DXGI_FORMAT_R32G32B32_FLOAT),
+            (DXGI_FORMAT_R32G32B32A32_UINT, DXGI_FORMAT_R32G32B32A32_FLOAT),
+        ] {
+            assert_eq!(bit_exact(title), host);
+            assert_eq!(crate::resource::element(title.0 as u32), crate::resource::element(host.0 as u32));
+        }
+        for kept in [
+            DXGI_FORMAT_R32_FLOAT,
+            DXGI_FORMAT_R32_TYPELESS,
+            DXGI_FORMAT_UNKNOWN,
+            DXGI_FORMAT_R16G16_UINT,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+        ] {
+            assert_eq!(bit_exact(kept), kept);
+        }
     }
 
     /// 2D textures and arrays have a neutral stand-in, others a null view.
