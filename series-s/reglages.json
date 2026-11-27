@@ -270,7 +270,16 @@
       "url": "https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip",
       "fichiers": ["sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "sl.reflex.dll", "sl.pcl.dll", "nvngx_dlssg.dll", "sl.dlss.dll", "nvngx_dlss.dll"],
       "licences": ["license.txt", "nvngx_dlss.license.txt", "reflex.license.txt"],
-      "sha256": {}
+      "sha256": {
+        "sl.interposer.dll": "b1d7395aebd7b9722841d64dcf7433680020b6a8e421f851c16d5ba0c2182edf",
+        "sl.common.dll": "38eea3b4209afc455636ea372b5933d65fcc13becec6c84d101dcfc4d8648f75",
+        "sl.dlss_g.dll": "3ed9538df724993bea8a050195a6a78b9c8c8a566d5b05ade477aab3c390e90f",
+        "sl.reflex.dll": "443577e869352436ff7ec8f4d9c90418d3e95368436ce219261e0f4f07a38122",
+        "sl.pcl.dll": "5698c38e722318681f215c9fe68e45b9bedd51378acc699d8eee26e961e57770",
+        "nvngx_dlssg.dll": "8d59d49b36410dd6b62fef2503a5871d347415bd85d943fa0848563a95dd50c7",
+        "sl.dlss.dll": "18871eea87c90345da97d8109faa81ea7d5840e8d99b51b55b0e46cfa177f84e",
+        "nvngx_dlss.dll": "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e"
+      }
     },
     "fsr3": {
       "note": "dlssg-to-fsr3 (Nukem9, GPL-3.0), built from source (commit 0e253f63) into the fg folder of the downloadable package. Copied next to engine\\victory.exe and into the folder before a session with frame generation on an RTX 20/30 or GTX 16 card (Streamline's sl.interposer.dll imports dbghelp.dll, the mod's loader), and taken away otherwise.",

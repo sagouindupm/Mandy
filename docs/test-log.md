@@ -136,13 +136,13 @@ finer lock nor more threads made it faster: to profile).
 | Published pipeline list, without game code (`victory pipelines export/import/merge`, `series-s/pipelines/series-s-rtx.txt`: 2,874 pipelines from the maintainer's cache past the boat mission, 444 KB of text, 234 states, 2,944 shaders by hash): built before the first session | us | fresh cache, outside the game: `victory shaders` 18 min (6 threads, 25,780 shaders); import + 2,944 containers found in the player's files by hash 7 min 12 s; `warm --used` 2,874 done in 6 min 19 s (6 processes, median 184 ms, 5 without a host pipeline, 0 skipped); translation hash identical to the maintainer's cache (d8d859e1b5d7b418). Final build (27/11 evening): fresh cache, import + `shaders` 24 min, `warm --used` 2,874 in 5 min, then a 15-minute session from a new game through the prologue to the boat mission: 92 ms median (10.9 fps). The list was then extended to 3,535 pipelines (that session + a community player's list) | `known/list.rs`, `pipelines.rs`, launcher [2]/[3] |
 
 | Frame generation (`VICTORY_FRAMEGEN=1`, x2) on RTX 3050 through dlssg-to-fsr3 (Nukem9, built from source at 0e253f63: `dbghelp.dll` loader + `dlssg_to_fsr3_amd_is_better.dll` + ini, next to victory.exe and in the Streamline 2.14.16 folder), with its memory rebalance `VICTORY_CARD_BUFFERS_MB=768` + `VICTORY_TEXTURE_ROOM_PERCENT=90` (boat mission) | trustno1-coder 6395727/22c6be2, pepezin-ai 1469efe (port), us (rebalance) | frame generation alone: 85 ms per real frame but **189 card "no room" refusals (black objects)**; with the rebalance **91 ms, 7 refusals, characters textured**, ~2x frames shown | 0.2: launcher option "Frame generation (FSR 3)", off by default (`framegen` in `series-s/reglages.json`) |
+| The 0.2 build (frame generation code merged) with frame generation **off**, against the final 0.1 build (RTX 3050, boat mission, one A/B round) | us | 73 ms against 79: the code costs nothing when off | 0.2 |
 
 ## Rejected (measured, don't redo without a new idea)
 
 | Test | Origin | Result |
 |---|---|---|
-| Frame generation + rebalance + `VICTORY_TEXTURE_MAX=2048` (RTX 3050, boat mission) | us | 89 ms, 2 refusals, but **one 5.9 s hitch**: not kept |
-| `VICTORY_POOL_FULLEST` alone (to make room for frame generation) | edupode/cold-project-vi | 105 ms against 88: rejected |
+| Frame generation + rebalance + `VICTORY_TEXTURE_MAX=2048` (RTX 3050, boat mission) | us | 89 ms, 2 refusals, but **one 5.9 s hitch**: not kept || `VICTORY_POOL_FULLEST` alone (to make room for frame generation) | edupode/cold-project-vi | 105 ms against 88: rejected |
 | `VICTORY_MERGE_RUNS=65536` alone | — | 290 / 343 ms: the wait moves to "title memory read" |
 | "Masked" pass over changed bytes (`VICTORY_MASKED_MIN=64`, code present, off) **(to re-measure)** | cold-project-vi aff5fb2 (ported) | 388 / 280 ms, +1.3 GB of VRAM; the wait moves to "title memory read" (75 ms) |
 | Heap pass in slices (`VICTORY_HEAP_ROLL=1`, code present, off) **(to re-measure)** | cold-project-vi 1141d35 | pass 110-170 ms instead of 63-150; 250 / 453 ms |
