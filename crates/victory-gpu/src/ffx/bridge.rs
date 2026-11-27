@@ -274,6 +274,9 @@ const NEEDED: [usize; 4] = [0, 1, 2, OUTPUT];
 struct Deferred {
     d: DispatchUpscale,
     ours: usize,
+    /// The title's frame, for Streamline, with frame generation on
+    /// (`super::framegen::frame_index`).
+    frame: Option<u32>,
 }
 
 // SAFETY: plain data and the title's objects, used by one thread at a time.
@@ -290,7 +293,7 @@ impl Deferred {
         // behind our list, at this point of the title's.
         let r = unsafe {
             record_on_host((&raw const self.d).cast(), &NEEDED, |d| {
-                dlss::dispatch(&mut slot, d)
+                dlss::dispatch(&mut slot, d, self.frame)
             })
         };
         match r {
@@ -322,7 +325,7 @@ fn written_down(e: Option<Entry>, desc: *const Header, n: u32) -> bool {
         return false;
     }
     let list = d.command_list as crate::object::This;
-    let job = Deferred { d, ours };
+    let job = Deferred { d, ours, frame: super::framegen::frame_index() };
     if crate::list::thin::defer(list, Box::new(move |back| job.run(back))).is_err() {
         return false;
     }
@@ -336,6 +339,10 @@ extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> Ret
     let Some(real) = REAL.get() else { return ERROR };
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    // Frame generation's depth, motion vectors and numbers, whoever
+    // upscales (`super::framegen`).
+    // SAFETY: the title's description (null checked there).
+    unsafe { super::framegen::from_ffx(desc) };
     let e = entry(context);
     if written_down(e, desc, n) {
         return OK;
@@ -350,7 +357,7 @@ extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> Ret
             // the host list the swap gives it.
             unsafe {
                 record_on_host(desc, &NEEDED, |d| {
-                    dlss::dispatch(&mut slot, d)
+                    dlss::dispatch(&mut slot, d, super::framegen::frame_index())
                 })
             }
             .and_then(|r| {

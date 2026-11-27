@@ -92,6 +92,10 @@ pub fn load(prepared: &PreparedImage, dir: &Path) -> Result<LoadedImage> {
     }
     // SAFETY: just mapped, and no title code has run.
     let levers = unsafe { crate::hooks::resolution_levers(loaded.base(), &prepared.original_hash) };
+    // SAFETY: as above.
+    if unsafe { crate::hooks::upscale_tap(loaded.base(), &prepared.original_hash) } {
+        tracing::info!("frame generation: the title's own upscaler hands its inputs over");
+    }
     if levers > 0 {
         tracing::warn!(
             applied = levers,

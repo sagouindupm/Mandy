@@ -892,6 +892,10 @@ extern "system" fn present(
         release_held(forces());
     }
     let frame = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
+    // Frame generation's inputs for this frame, taken now: the line may
+    // serve the present after the next frame's upscale has come.
+    #[cfg(windows)]
+    let fg = crate::ffx::framegen::for_present();
     #[cfg(windows)]
     crate::gfxwatch::title_present();
     if frame.is_power_of_two() {
@@ -960,7 +964,7 @@ extern "system" fn present(
         // LOCAL (port of fxceless #1189): the interface plane, as the first.
         let over = second_plane(planes, plane_parameters, resource as This)
             .map(|(copy, state)| (copy, if crate::list::thin::wanted() { u32::MAX } else { state }));
-        behind::present(this, texture.map(|(_, copy, state)| (copy, state)), Shown { frame, resource, over });
+        behind::present(this, texture.map(|(_, copy, state)| (copy, state)), Shown { frame, resource, over, fg });
         called.end();
         #[cfg(feature = "diagnostics")]
         frame_ends();
@@ -981,7 +985,7 @@ extern "system" fn present(
         let state = crate::resource::host_transition(resource, COPY_SOURCE)
             .map_or(COPY_SOURCE, |(_, before)| before);
         let over = second_plane(planes, plane_parameters, resource);
-        show(texture, state, Shown { frame, resource: resource as usize, over });
+        show(texture, state, Shown { frame, resource: resource as usize, over, fg });
         crate::resource::host_transition(resource, state);
         let _ = host;
     }
@@ -1021,6 +1025,10 @@ struct Shown {
     /// shown one, and its host state (`u32::MAX`: the state its lists left
     /// it in when they ran).
     over: Option<(std::sync::Arc<crate::resource::HostTexture>, u32)>,
+    /// With frame generation (`VICTORY_FRAMEGEN=1`): the latest upscale's
+    /// depth, motion vectors and numbers when the title presented this frame
+    /// (`crate::ffx::framegen::for_present`).
+    fg: Option<crate::ffx::framegen::ForPresent>,
 }
 
 /// LOCAL (port of fxceless #1189): a present's second plane, to be laid over
@@ -1110,7 +1118,7 @@ fn show(texture: &windows::Win32::Graphics::Direct3D12::ID3D12Resource, state: u
         let s = if *s == u32::MAX { t.state.load(Ordering::Relaxed) } else { *s };
         (&t.texture, s)
     });
-    let shown = host.present_over(texture, state, over, what.frame);
+    let shown = host.present_over(texture, state, over, what.frame, what.fg.as_ref());
     #[cfg(feature = "diagnostics")]
     blinks(what.frame, what.resource as This, state, shown);
     #[cfg(not(feature = "diagnostics"))]

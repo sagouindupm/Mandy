@@ -9671,18 +9671,20 @@ impl Host {
     /// shown; else, in diagnostics builds, whether the frame was black.
     #[allow(dead_code)]
     pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
-        self.present_over(texture, state, None, frame)
+        self.present_over(texture, state, None, frame, None)
     }
 
     /// LOCAL (port of fxceless #1189): [`Self::present`], with a second
     /// plane laid over `texture` if there is one (`crate::compose`): its
-    /// texture and its state, which it is left in.
+    /// texture and its state, which it is left in. `fg`: frame generation's
+    /// inputs for this frame (`crate::ffx::framegen`).
     pub(crate) fn present_over(
         &self,
         texture: &ID3D12Resource,
         state: u32,
         over: Option<(&ID3D12Resource, u32)>,
         frame: u64,
+        fg: Option<&crate::ffx::framegen::ForPresent>,
     ) -> Option<bool> {
         // SAFETY: a live resource.
         let desc = unsafe { texture.GetDesc() };
@@ -9705,6 +9707,9 @@ impl Host {
         if (p.width, p.height, p.format) != (width, height, format) {
             // Presents sent ahead hold back buffers until they have run.
             settle_now(WHY_SYNC);
+            // Frame generation off across the resize (on again at the next
+            // present).
+            crate::ffx::framegen::before_resize();
             // SAFETY: no back buffer is held; every submission was waited for.
             let resized = unsafe {
                 p.swap_chain
@@ -9819,7 +9824,13 @@ impl Host {
             #[cfg(feature = "diagnostics")]
             crate::replay::record::present(texture, state);
             let mut showing = crate::timeline::span("the host's Present");
+            // Frame generation (Streamline's proxy swap chain): the frame's
+            // constants and tags, the latency markers. The scene plane is
+            // the colour without the interface; the back buffer is a copy
+            // of it, or of it with the interface laid over it.
+            crate::ffx::framegen::present_start(frame, fg, [width, height], Some((texture, state.0 as u32)), over);
             let shown = p.swap_chain.Present(0, DXGI_PRESENT(0));
+            crate::ffx::framegen::present_end(frame);
             showing.next("the frame meter");
             #[cfg(feature = "diagnostics")]
             p.panel.frame(p.meter.line_due());
@@ -9852,6 +9863,9 @@ impl Host {
         // SAFETY: plain object creation for our window.
         unsafe {
             let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
+            // With frame generation (`VICTORY_FRAMEGEN=1`): Streamline's
+            // proxy of the factory, whose swap chain shows generated frames.
+            let factory = crate::ffx::framegen::start(&self.device, factory);
             let desc = DXGI_SWAP_CHAIN_DESC1 {
                 Width: width,
                 Height: height,
