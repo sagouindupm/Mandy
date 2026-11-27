@@ -1,9 +1,17 @@
-// The VIctory S mark: a geometric « S » (two bowls of radius 9 joined on a smooth spine, stroke 8, square
-// ends) in near-black on a sunset-pink rounded square (corner radius 22 %). Drawn on a 64 x 64 grid; the
-// app icon in src-tauri/build.rs rasterises the same geometry.
+// The Sagouindupm mascot: a sagouin (common marmoset) on the sunset-pink rounded square (corner radius 22 %).
+// The drawings are src/assets/sagouin.svg (32 px and up) and src/assets/sagouin-small.svg (below: face
+// silhouette, ear tufts, blaze and eyes only, what still reads at 16 px). The favicon (index.html) and the app
+// icon (src-tauri/build.rs renders the .ico from them) use the same two files.
+import detailed from "@/assets/sagouin.svg?raw"
+import small from "@/assets/sagouin-small.svg?raw"
 
-/** The S: top bowl centred (32, 23), bottom bowl centred (32, 41), both radius 9. */
-export const LOGO_S_PATH = "M39.79 18.5 A9 9 0 1 0 32 32 A9 9 0 1 1 24.21 45.5"
+/** What is inside a file's <svg> element (its drawing, without the outer element). */
+function inner(svg: string): string {
+  return svg.slice(svg.indexOf(">", svg.indexOf("<svg")) + 1, svg.lastIndexOf("</svg>"))
+}
+
+const DETAILED = inner(detailed)
+const SMALL = inner(small)
 
 export function Logo({ size = 36, className }: { size?: number; className?: string }) {
   return (
@@ -13,11 +21,9 @@ export function Logo({ size = 36, className }: { size?: number; className?: stri
       viewBox="0 0 64 64"
       className={className}
       role="img"
-      aria-label="VIctory S"
+      aria-label="Sagouindupm"
       shapeRendering="geometricPrecision"
-    >
-      <rect width="64" height="64" rx="14" fill="#FF3C78" />
-      <path d={LOGO_S_PATH} fill="none" stroke="#0B0B10" strokeWidth="8" strokeLinecap="butt" />
-    </svg>
+      dangerouslySetInnerHTML={{ __html: size >= 32 ? DETAILED : SMALL }}
+    />
   )
 }

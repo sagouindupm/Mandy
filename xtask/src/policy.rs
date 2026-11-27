@@ -14,8 +14,9 @@ use anyhow::{Context, Result, bail};
 const MAX_FILE_SIZE: usize = 640 * 1024;
 const MAX_ENCODED_RUN: usize = 512;
 
-// ts, tsx, css, html: the graphical launcher's window (launcher/). svg: our own drawings (docs/assets), text
-// like the rest and held to the same checks (no embedded base64 image).
+// ts, tsx, css, html: the graphical launcher's window (launcher/). svg: our own drawings (docs/assets, and
+// launcher/src/assets: the mascot the app icon is rendered from at build time), text like the rest and held to
+// the same checks (no embedded base64 image).
 const ALLOWED_EXTENSIONS: &[&str] = &[
     "rs", "toml", "md", "txt", "lock", "yml", "yaml", "json", "hlsl", "hlsli", "ps1", "cmd", "bat",
     "sh", "ts", "tsx", "css", "html", "svg",

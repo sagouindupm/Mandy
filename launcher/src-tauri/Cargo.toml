@@ -18,6 +18,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Renders the app icon from the mascot's SVG drawings (build.rs). resvg re-exports the usvg and tiny-skia it
+# was built with (resvg::usvg, resvg::tiny_skia), so they need no entry of their own. Default features off: the
+# drawings hold no text or raster image, so no font database or image decoders.
+resvg = { version = "0.45", default-features = false }
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }

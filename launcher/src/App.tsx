@@ -506,7 +506,6 @@ export default function App() {
 
           <header className="relative flex shrink-0 items-end justify-between gap-8 px-10 pt-6 pb-2">
             <div className="flex min-w-0 flex-col gap-1">
-              <span className="truncate text-[12px] text-muted-foreground">VIctory S</span>
               <h1 className="text-[34px] leading-tight font-bold">{t(TITLES[tab])}</h1>
             </div>
             <div className="flex items-center gap-8 pb-1.5">

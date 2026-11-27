@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/assets/sagouin.svg" alt="Sagouin, the Sagouindupm mascot (a common marmoset)" width="112">
+</p>
+
+<p align="center">
   <img src="docs/assets/banniere.svg" alt="VIctory S: the Series S profile for low-end PCs" width="100%">
 </p>
 
