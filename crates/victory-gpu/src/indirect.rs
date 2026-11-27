@@ -295,10 +295,11 @@ pub(crate) fn amd(device: &ID3D12Device) -> bool {
 
 /// Whether a record that does not fit in what is left of its list's budget
 /// takes the rest, so that every record after it runs empty too
-/// (`VICTORY_INDIRECT_REST=1`; off by default so one oversized record takes
-/// nothing and later valid draws still run).
+/// (on by default, as trustno1-coder/VIctory-NVIDIA and the tests here expect;
+/// `VICTORY_INDIRECT_REST=0`: one oversized record takes nothing and later
+/// valid draws still run, the Proudnoob4/VIctory-NVIDIA default).
 pub(crate) fn rest() -> u32 {
-    u32::from(std::env::var("VICTORY_INDIRECT_REST").is_ok_and(|v| v == "1"))
+    u32::from(std::env::var("VICTORY_INDIRECT_REST").map_or(true, |v| v != "0"))
 }
 
 /// The clamp compiled from `source` (ours, or in the benchmark the one it
