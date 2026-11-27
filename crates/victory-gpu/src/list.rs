@@ -182,6 +182,14 @@ pub(crate) fn tables_done(lists: &[This]) {
     }
 }
 
+/// After host work that binds its own heaps, root signatures and pipeline
+/// on a title list's host list (an upscaler): the next draw or dispatch
+/// binds the title's again.
+#[cfg(windows)]
+pub(crate) fn forget_host_bindings(this: This) {
+    with_state(this, |_, state| state.forget_host());
+}
+
 /// The host list behind a title list, if there is a host GPU.
 #[cfg(windows)]
 pub(crate) fn host_list<'a>(this: This) -> Option<&'a crate::host::HostList> {
