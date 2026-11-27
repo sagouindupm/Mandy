@@ -149,13 +149,20 @@ pub fn enabled() -> bool {
     std::env::var_os("VICTORY_FFX_DIR").is_some() || dlss::enabled()
 }
 
+/// Whether DLSS answers the title's FidelityFX calls (`VICTORY_DLSS_DIR`
+/// set and holding Streamline's DLLs).
+pub fn dlss_enabled() -> bool {
+    dlss::enabled()
+}
+
 /// The render scale `VICTORY_DLSS_MODE` asks the title for, with DLSS on
-/// (`VICTORY_DLSS_DIR`) in the Series S mode, the one whose upscale goes
-/// through FidelityFX; `None` for the title's own (quality, the default).
-/// The title takes its scale from its own code and not from a FidelityFX
-/// query (`dlss`), so it is set there, by the runner.
-pub fn dlss_render_scale() -> Option<f32> {
-    if !dlss::enabled() || crate::console::current() != crate::console::Console::SeriesS {
+/// (`VICTORY_DLSS_DIR`) in the Series S mode (`series_s`), the one whose
+/// upscale goes through FidelityFX; `None` for the title's own (quality,
+/// the default). The title takes its scale from its own code and not from
+/// a FidelityFX query (`dlss`), so it is set there, by the loader's
+/// render-scale patches (`victory_loader::use_host_upscaler`).
+pub fn dlss_render_scale(series_s: bool) -> Option<f32> {
+    if !dlss::enabled() || !series_s {
         return None;
     }
     dlss::requested().render_scale()

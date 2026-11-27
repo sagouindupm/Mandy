@@ -10,11 +10,19 @@
 #[cfg(windows)]
 use crate::{HleExport, HleModule};
 
-/// The render scale the title is set to for DLSS's `VICTORY_DLSS_MODE`
-/// (`victory_gpu::ffx::dlss_render_scale`); `None` leaves its own.
+/// Whether DLSS answers the title's FidelityFX calls
+/// (`victory_gpu::ffx::dlss_enabled`).
 #[cfg(windows)]
-pub fn dlss_render_scale() -> Option<f32> {
-    victory_gpu::ffx::dlss_render_scale()
+pub fn dlss() -> bool {
+    victory_gpu::ffx::dlss_enabled()
+}
+
+/// The render scale the title is set to for DLSS's `VICTORY_DLSS_MODE` in
+/// the Series S mode (`victory_gpu::ffx::dlss_render_scale`); `None` leaves
+/// its own.
+#[cfg(windows)]
+pub fn dlss_render_scale(series_s: bool) -> Option<f32> {
+    victory_gpu::ffx::dlss_render_scale(series_s)
 }
 
 /// With `VICTORY_FFX_DIR`: the five FidelityFX calls of both DLLs, served by
