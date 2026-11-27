@@ -9,6 +9,8 @@
 
 # Build output
 /target/
+# The downloadable package (scripts/package-release.ps1)
+/dist/
 /tests/fixtures/*/target/
 
 # Graphical launcher (launcher/): npm packages, build output, the icon drawn by build.rs
