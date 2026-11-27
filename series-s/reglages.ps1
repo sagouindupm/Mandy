@@ -68,7 +68,9 @@ function Get-SeriesSSettings {
 # 84 ms contre 93 sur RTX 3050, image propre.
 function Get-SkipPipelines {
     $rt = Join-Path $Root 'scripts\rt_off_hashes.txt'
-    $skip = @('731a39171b568298')
+    # + les programmes que le repli LDS (#27) rend traduisibles mais qui coûtent ~30 ms sans les arbres
+    #   (volumétrie de l'eau 5dc3/6f22, sous l'eau 926c, transmission 1f1f, 21f7, 7c9a) ; les arbres restent.
+    $skip = @('731a39171b568298', '5dc3b25986622949', '6f225b641c5b0708', '926c46bab3b86bd6', '1f1fbd86759b3da2', '21f7ad7863620328', '7c9a6a83826cdfac')
     if (Test-Path $rt) { $skip = @((Get-Content $rt -Raw).Trim()) + $skip }
     $skip -join ','
 }
