@@ -4,6 +4,7 @@ import { MessageSquareHeart } from "lucide-react"
 import type { Ctx } from "@/App"
 import { Button } from "@/components/ui/button"
 import { Card, CardTitle } from "@/components/ui/card"
+import { useI18n } from "@/i18n"
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -15,75 +16,55 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export function HelpPage({ ctx }: { ctx: Ctx }) {
+  const { t } = useI18n()
   return (
     <div className="grid grid-cols-2 gap-6">
-      <Section title="Dans quel ordre">
+      <Section title={t("help.order")}>
         <ol className="flex flex-col gap-2">
           {[
-            ctx.snap.packaged
-              ? "Préparation, « Tout préparer » : le jeu, les shaders, puis les pipelines de la liste partagée (25 à 40 min, une fois). VIctory est déjà inclus."
-              : "Préparation, « Tout préparer » : Rust et outils C++ si besoin, compilation, jeu, shaders, pipelines de la liste partagée (une fois).",
-            "Cache de shaders NVIDIA sur « Illimitée » (étape 5).",
-            "Jouer : la première partie est déjà fluide jusqu'après la mission du bateau.",
-            "Plus loin dans le jeu : « Construire » (étape 4) ajoute les pipelines que vos parties ont notées.",
-          ].map((t, i) => (
+            ctx.snap.packaged ? t("help.order.packaged") : t("help.order.source"),
+            t("help.order.nvcache"),
+            t("help.order.play"),
+            t("help.order.build"),
+          ].map((text, i) => (
             <li key={i} className="flex gap-3">
               <span className="w-3 shrink-0 font-bold text-white">{i + 1}</span>
-              <span>{t}</span>
+              <span>{text}</span>
             </li>
           ))}
         </ol>
       </Section>
 
-      <Section title="Ce que fait le lanceur">
-        <p>
-          Il lance votre copie d'un jeu Xbox Series sur PC, profil Series S, avec les réglages mesurés sur une carte de
-          8 Go, un processeur 6 cœurs et 32 Go de RAM, ajustés tout seuls à votre PC (Réglages, « Profil détecté »).
-        </p>
-        <p>
-          Rien du jeu n'est fourni ni modifié. Les réglages viennent de series-s\reglages.json, comme pour le lanceur
-          console Sagouindupm.bat.
-        </p>
+      <Section title={t("help.what")}>
+        <p>{t("help.what.p1")}</p>
+        <p>{t("help.what.p2")}</p>
       </Section>
 
-      <Section title="Performances">
-        <p>
-          Environ 10 images par seconde sur RTX 3050 dans la mission du bateau. La console partage une mémoire entre
-          processeur et carte ; le PC en a deux, que VIctory synchronise sans cesse.
-        </p>
-        <p>Avant de jouer : fermez le navigateur et Discord, branchez le chargeur d'un portable.</p>
+      <Section title={t("help.perf")}>
+        <p>{t("help.perf.p1")}</p>
+        <p>{t("help.perf.p2")}</p>
       </Section>
 
-      <Section title="En cas de problème">
-        <p>
-          Chaque tâche écrit un journal (compilation.txt, shaders_traduction.txt, pipelines_warm.txt, partie_….log) : joignez
-          le dernier à votre signalement.
-        </p>
-        <p>
-          Écran noir au début : shaders pas traduits. Plantage 0x8007000E : mémoire insuffisante, fermez les autres
-          programmes et laissez Windows gérer la mémoire virtuelle.
-        </p>
+      <Section title={t("help.trouble")}>
+        <p>{t("help.trouble.p1")}</p>
+        <p>{t("help.trouble.p2")}</p>
         <div className="mt-1 flex items-center gap-4">
           <Button variant="secondary" size="sm" onClick={() => ctx.open("logs")}>
-            Journaux
+            {t("help.trouble.logs")}
           </Button>
           <Button variant="link" className="text-[12.5px]" onClick={() => ctx.open("issues")}>
-            Signaler un problème
+            {t("footer.report")}
           </Button>
         </div>
       </Section>
 
       <div className="col-span-2">
-        <Section title="Donner mon avis">
-          <p>
-            Vos images par seconde, les saccades, ce qui s'affiche mal : chaque retour sur une autre machine nous aide à
-            régler les profils. Le bouton ouvre un formulaire GitHub déjà rempli avec votre configuration et le profil
-            détecté ; vous le relisez, ajoutez vos impressions et l'envoyez vous-même (compte GitHub gratuit).
-          </p>
+        <Section title={t("footer.feedback")}>
+          <p>{t("help.feedback.p")}</p>
           <div className="mt-1 flex items-center gap-4">
             <Button size="sm" onClick={() => ctx.open("feedback")}>
               <MessageSquareHeart strokeWidth={2} />
-              Donner mon avis
+              {t("footer.feedback")}
             </Button>
           </div>
         </Section>

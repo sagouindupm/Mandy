@@ -11,6 +11,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::msg::Msg;
 use crate::sys::{CREATE_NO_WINDOW, hidden};
 
 #[derive(Default)]
@@ -111,7 +112,7 @@ fn follow(app: AppHandle, kind: String, log: PathBuf, capture_dir: Option<PathBu
                 Ok(file) => {
                     let _ = app.emit("capture", file.display().to_string());
                 }
-                Err(e) => emit_line(&app, &kind, &format!("Capture automatique impossible : {e}")),
+                Err(e) => emit_line(&app, &kind, &format!("Automatic screenshot failed: {e}")),
             }
         }
         std::thread::sleep(Duration::from_millis(700));
@@ -128,7 +129,7 @@ impl Jobs {
         {
             let cur = self.current.lock().unwrap();
             if let Some((k, _)) = cur.as_ref() {
-                return Err(format!("Une tâche est déjà en cours ({k})."));
+                return Err(Msg::new("err.busy").with("task", Msg::new(&format!("job.{k}"))).into());
             }
         }
         let _ = app.emit("job-start", JobEvent { kind: spec.kind.clone(), code: None });
@@ -136,7 +137,7 @@ impl Jobs {
         let kind = spec.kind.clone();
         let code = if spec.game {
             spec.cmd.stdout(Stdio::null()).stderr(Stdio::null());
-            let mut child = spec.cmd.spawn().map_err(|e| format!("Lancement impossible : {e}"))?;
+            let mut child = spec.cmd.spawn().map_err(|e| String::from(Msg::new("err.startFailed").with("error", e.to_string())))?;
             *self.current.lock().unwrap() = Some((kind.clone(), child.id()));
             let done = Arc::new(Mutex::new(false));
             let t = {
@@ -154,10 +155,10 @@ impl Jobs {
             let mut child = match spec.cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    let msg = format!("Lancement impossible : {e}");
-                    emit_line(app, &kind, &msg);
+                    // The log in English (for developers), the error for the window to translate.
+                    emit_line(app, &kind, &format!("Could not start: {e}"));
                     let _ = app.emit("job-end", JobEvent { kind, code: Some(-1) });
-                    return Err(msg);
+                    return Err(Msg::new("err.startFailed").with("error", e.to_string()).into());
                 }
             };
             *self.current.lock().unwrap() = Some((kind.clone(), child.id()));

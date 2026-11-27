@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::msg::Msg;
 use crate::paths::Paths;
 pub use crate::profile::LowRam;
 use crate::profile::{Hardware, Materiel, Profile, put};
@@ -111,6 +112,9 @@ pub fn write_victory_toml(paths: &Paths, game_exe: &str) -> Result<(), String> {
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Group {
+    /// For the window's English texts (« group.<id>.titre »); the French ones are titre and note.
+    #[serde(default)]
+    pub id: String,
     pub titre: String,
     pub note: String,
     pub env: Map<String, Value>,
@@ -166,8 +170,20 @@ pub struct GameCheck {
     pub complete: bool,
     pub rpf_count: usize,
     pub size_gb: f64,
-    /// What is missing, in French, with the advice (empty when complete).
-    pub problem: String,
+    /// What is missing, with the advice (None when complete): « game.incomplete », translated by the window.
+    pub problem: Option<Msg>,
+}
+
+impl GameCheck {
+    /// The problem as a command's error (empty when complete).
+    pub fn problem_err(&self) -> String {
+        self.problem.clone().map(String::from).unwrap_or_default()
+    }
+
+    /// The problem for developers and tests (`key(params)`).
+    pub fn problem_text(&self) -> String {
+        self.problem.as_ref().map(|m| m.to_string()).unwrap_or_default()
+    }
 }
 
 impl GameRule {
@@ -200,19 +216,19 @@ impl GameRule {
         if !c.complete {
             let mut what = Vec::new();
             if !missing.is_empty() {
-                what.push(format!("il manque {}", missing.join(", ")));
+                what.push(Msg::new("game.missing").with("files", missing.join(", ")));
             }
             if few {
-                what.push(format!("{} archive{} .rpf sur {} au moins", c.rpf_count, if c.rpf_count > 1 { "s" } else { "" }, self.archives_min));
+                what.push(Msg::new("game.fewArchives").with("count", c.rpf_count).with("min", self.archives_min));
             }
             if small {
-                what.push(format!("{:.0} Go d'archives sur {:.0} au moins (une copie complète fait ~130 Go)", c.size_gb, self.taille_min_go));
+                what.push(Msg::new("game.smallSize").with("size", format!("{:.0}", c.size_gb)).with("min", format!("{:.0}", self.taille_min_go)));
             }
-            c.problem = format!(
-                "Copie du jeu incomplète dans {} : {}. {}",
-                dir.display(),
-                what.join(" ; "),
-                self.conseil
+            c.problem = Some(
+                Msg::new("game.incomplete")
+                    .with("dir", dir.display().to_string())
+                    .with("what", what)
+                    .with("advice", Msg::data("jeu.conseil", &self.conseil)),
             );
         }
         c
@@ -450,7 +466,8 @@ mod tests {
         ];
         let d = copy_with(&names);
         let c = rule().check(&d.0.join("game_scarlett_master.exe").display().to_string());
-        assert!(c.complete, "{}", c.problem);
+        assert!(c.complete, "{}", c.problem_text());
+        assert!(c.problem.is_none());
         assert_eq!(c.rpf_count, 12);
     }
 
@@ -459,16 +476,20 @@ mod tests {
         let d = copy_with(&["game_scarlett_master.exe", "common.rpf"]);
         let c = rule().check(&d.0.join("game_scarlett_master.exe").display().to_string());
         assert!(!c.complete);
-        assert!(c.problem.contains("shaders.rpf") && c.problem.contains("levels.rpf"), "{}", c.problem);
-        assert!(c.problem.contains("1 archive .rpf sur 8"), "{}", c.problem);
-        assert!(c.problem.contains("pas en vrac dans Téléchargements"), "{}", c.problem);
+        // The message for the window (« game.incomplete », translated there), with reglages.json's advice.
+        let p = c.problem_text();
+        assert!(p.starts_with("game.incomplete("), "{p}");
+        assert!(p.contains("shaders.rpf") && p.contains("levels.rpf"), "{p}");
+        assert!(p.contains("game.fewArchives(count=1, min=8)"), "{p}");
+        assert!(p.contains("pas en vrac dans Téléchargements"), "{p}");
+        assert!(c.problem_err().starts_with(r#"{"key":"game.incomplete","#), "{}", c.problem_err());
         // And the size rule of reglages.json: empty archives are far from a complete copy.
         let mut r = rule();
         r.taille_min_go = 50.0;
         let names = ["game_scarlett_master.exe", "a.rpf", "b.rpf", "c.rpf", "d.rpf", "e.rpf", "f.rpf", "levels.rpf", "shaders.rpf"];
         let d = copy_with(&names);
         let c = r.check(&d.0.join("game_scarlett_master.exe").display().to_string());
-        assert!(!c.complete && c.problem.contains("Go d'archives"), "{}", c.problem);
+        assert!(!c.complete && c.problem_text().contains("game.smallSize("), "{}", c.problem_text());
     }
 
     #[test]

@@ -11,6 +11,7 @@
   "profil": "Base trustno1-coder/VIctory-NVIDIA réglée pour RTX 3060 par Maykzera, mesurée ici sur RTX 3050 8 Go + i5-12400F : ~84 ms par image (11,8 fps) dans la cinématique du bateau, eau et visages fidèles.",
   "groupes": [
     {
+      "id": "serie_rapide",
       "titre": "Série rapide",
       "note": "avatarmanz/trustno1",
       "env": {
@@ -32,6 +33,7 @@
       }
     },
     {
+      "id": "processeur",
       "titre": "Processeur 6 cœurs / 12 fils",
       "note": "Maykzera : moins de fils auxiliaires, 16 soumissions préparées ensemble ; 4 fils de traduction des listes et pas 5 (Maykzera, 2 mesures ; ici 87 ms contre 93, pire image 178 ms).",
       "env": {
@@ -45,6 +47,7 @@
       }
     },
     {
+      "id": "attente_pipelines",
       "titre": "Attente des pipelines",
       "note": "Une pipeline pas prête : 150 ms d'attente au plus (10 000 gelait l'image 12 s, avatarmanz #143).",
       "env": {
@@ -52,6 +55,7 @@
       }
     },
     {
+      "id": "image",
       "titre": "Image",
       "note": "Lumière de remplacement du ray tracing, NaN effacés, 540p + upscaler du jeu, interface Series S.",
       "env": {
@@ -69,6 +73,7 @@
       }
     },
     {
+      "id": "carnet_pipelines",
       "titre": "Carnet des pipelines",
       "note": "Chaque partie note les pipelines créées, pour « Construire les pipelines » (victory warm --used).",
       "env": {

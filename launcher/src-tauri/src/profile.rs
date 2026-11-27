@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::msg::Msg;
+
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 /// What the profile depends on. Zero means unknown (that rule is then left out).
@@ -73,17 +75,24 @@ pub struct Materiel {
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
-    /// « RTX 3050 · 8 Go · 12 fils · 32 Go »
+    /// « RTX 3050 · 8 GB · 12 threads · 32 GB RAM », in English for feedback reports; the window builds its own
+    /// from the four fields below.
     pub label: String,
+    /// The card's short name (« RTX 3050 »), empty when unknown.
+    pub gpu: String,
+    /// Whole GB of card memory and of RAM, and logical processors; zero when unknown.
+    pub vram_gb: u64,
+    pub threads: usize,
+    pub ram_gb: u64,
     /// nvidia_rtx, nvidia, amd, intel_arc, intel_integree, inconnu.
     pub vendor: String,
     pub vendor_name: String,
-    /// Why each setting is what it is, one line per rule.
-    pub reasons: Vec<String>,
-    /// Things the player should know (untested card, integrated chip, no AVX2).
-    pub warnings: Vec<String>,
-    /// Advice (16 GB: close the browser).
-    pub tips: Vec<String>,
+    /// Why each setting is what it is, one line per rule (translated by the window: « reason.* »).
+    pub reasons: Vec<Msg>,
+    /// Things the player should know (untested card, integrated chip, no AVX2): texts of reglages.json.
+    pub warnings: Vec<Msg>,
+    /// Advice (16 GB: close the browser): a text of reglages.json.
+    pub tips: Vec<Msg>,
     /// The tiers chosen (« 12_fils », « 8_go », « moins_de_20_go »), for feedback reports.
     pub tiers: Vec<String>,
     /// The variables changed from the groups of reglages.json, in order.
@@ -133,9 +142,14 @@ fn value_str(v: &Value) -> String {
     }
 }
 
-/// French number of GB without decimals when whole: 8 -> "8", 15.8 -> "16".
-fn go(bytes: u64) -> String {
-    format!("{}", (bytes as f64 / GIB).round() as u64)
+/// Whole GB: 8 GB -> 8, 15.8 GB -> 16.
+fn go(bytes: u64) -> u64 {
+    (bytes as f64 / GIB).round() as u64
+}
+
+/// « THIN_THREADS=4, UNDER_THREADS=3 »: a tier's variables without the prefix.
+fn env_list(env: &Map<String, Value>) -> String {
+    env.iter().map(|(k, v)| format!("{}={}", k.trim_start_matches("VICTORY_"), value_str(v))).collect::<Vec<_>>().join(", ")
 }
 
 /// Sets `k` in an ordered list: replaced where it is, else added at the end.
@@ -173,13 +187,14 @@ impl Materiel {
             for (k, v) in &t.env {
                 put(&mut env, k, value_str(v));
             }
-            let lowered = if idx != found { format!(", un cran plus bas pour {} Go de mémoire vive", go(hw.ram_bytes)) } else { String::new() };
-            p.reasons.push(format!(
-                "Processeur, {} fils : {}{lowered}, {}.",
-                hw.threads,
-                t.nom,
-                t.env.iter().map(|(k, v)| format!("{}={}", k.trim_start_matches("VICTORY_"), value_str(v))).collect::<Vec<_>>().join(", ")
-            ));
+            let mut reason = Msg::new("reason.cpu")
+                .with("threads", hw.threads)
+                .with("tier", Msg::data(&format!("tier.{}", t.id), &t.nom))
+                .with("env", env_list(&t.env));
+            if idx != found {
+                reason = reason.with("lowered", Msg::new("reason.cpuLowered").with("ram", go(hw.ram_bytes)));
+            }
+            p.reasons.push(reason);
         }
 
         // Graphics card memory.
@@ -190,14 +205,14 @@ impl Materiel {
             for (k, v) in &t.env {
                 put(&mut env, k, value_str(v));
             }
-            p.reasons.push(format!(
-                "Carte, {} Go : {}, {}.",
-                go(hw.vram_bytes),
-                t.nom,
-                t.env.iter().map(|(k, v)| format!("{}={}", k.trim_start_matches("VICTORY_"), value_str(v))).collect::<Vec<_>>().join(", ")
-            ));
+            p.reasons.push(
+                Msg::new("reason.card")
+                    .with("vram", go(hw.vram_bytes))
+                    .with("tier", Msg::data(&format!("tier.{}", t.id), &t.nom))
+                    .with("env", env_list(&t.env)),
+            );
         } else {
-            p.reasons.push("Carte : mémoire inconnue, réglages pour 8 Go.".into());
+            p.reasons.push(Msg::new("reason.cardUnknown"));
         }
 
         // RAM: under 24 GB the memory windows in the card; under 20 GB also caps (the lower of the card's value
@@ -209,11 +224,7 @@ impl Materiel {
                 for (k, v) in &small.env {
                     put(&mut env, k, value_str(v));
                 }
-                parts.push(format!(
-                    "moins de {} Go, fenêtres de mémoire du jeu dans la carte ({})",
-                    small.moins_de_go,
-                    small.env.iter().map(|(k, v)| format!("{}={}", k.trim_start_matches("VICTORY_"), value_str(v))).collect::<Vec<_>>().join(", ")
-                ));
+                parts.push(Msg::new("reason.ramSmall").with("gb", small.moins_de_go).with("env", env_list(&small.env)));
             }
             if very_low_ram {
                 p.tiers.push(format!("moins_de_{}_go", self.tres_petite_ram.moins_de_go));
@@ -226,18 +237,17 @@ impl Materiel {
                         capped.push(format!("{}={cap}", k.trim_start_matches("VICTORY_")));
                     }
                 }
-                parts.push(format!(
-                    "moins de {} Go, fils un cran plus bas{}",
-                    self.tres_petite_ram.moins_de_go,
-                    if capped.is_empty() { String::new() } else { format!(" et {}", capped.join(", ")) }
-                ));
-                p.tips.push(self.tres_petite_ram.conseil.clone());
+                let mut part = Msg::new("reason.ramVeryLow").with("gb", self.tres_petite_ram.moins_de_go);
+                if !capped.is_empty() {
+                    part = part.with("capped", Msg::new("reason.ramCapped").with("caps", capped.join(", ")));
+                }
+                parts.push(part);
+                p.tips.push(Msg::data("materiel.tres_petite_ram.conseil", &self.tres_petite_ram.conseil));
             }
-            p.reasons.push(format!(
-                "Mémoire vive, {} Go : {}.",
-                go(hw.ram_bytes),
-                if parts.is_empty() { "rien à réduire".to_string() } else { parts.join(" ; ") }
-            ));
+            if parts.is_empty() {
+                parts.push(Msg::new("reason.ramNothing"));
+            }
+            p.reasons.push(Msg::new("reason.ram").with("ram", go(hw.ram_bytes)).with("parts", parts));
         }
 
         // Vendor: DLSS, the NVIDIA shader facts, warnings.
@@ -248,32 +258,36 @@ impl Materiel {
         p.dlss = v.dlss;
         p.shaders_nvidia = v.shaders_nvidia;
         if !hw.gpu_name.is_empty() {
-            p.reasons.push(format!(
-                "{} : {}.",
-                v.nom,
-                if v.dlss { "DLSS proposé (dossier de Streamline à choisir), « Recommandé » par défaut" } else { "pas de DLSS, 540p et upscaler du jeu" }
-            ));
+            p.reasons.push(
+                Msg::new("reason.vendor")
+                    .with("vendor", Msg::data(&format!("vendor.{vendor_id}"), &v.nom))
+                    .with("dlss", Msg::new(if v.dlss { "reason.dlssOffered" } else { "reason.noDlss" })),
+            );
         }
         if !v.avertissement.is_empty() {
-            p.warnings.push(v.avertissement.clone());
+            p.warnings.push(Msg::data(&format!("vendorWarning.{vendor_id}"), &v.avertissement));
         }
         if hw.avx2 == Some(false) {
-            p.warnings.push(self.sans_avx2.clone());
+            p.warnings.push(Msg::data("materiel.sans_avx2", &self.sans_avx2));
         }
 
         // Only what really differs from the groups.
         env.retain(|(k, v)| !base.iter().any(|(bk, bv)| bk == k && bv == v));
         p.env = env;
+        p.gpu = if hw.gpu_name.is_empty() { String::new() } else { short_gpu(&hw.gpu_name) };
+        p.vram_gb = go(hw.vram_bytes);
+        p.threads = hw.threads;
+        p.ram_gb = go(hw.ram_bytes);
         let mut parts = Vec::new();
-        parts.push(if hw.gpu_name.is_empty() { "carte inconnue".to_string() } else { short_gpu(&hw.gpu_name) });
+        parts.push(if p.gpu.is_empty() { "unknown card".to_string() } else { p.gpu.clone() });
         if hw.vram_bytes > 0 {
-            parts.push(format!("{} Go", go(hw.vram_bytes)));
+            parts.push(format!("{} GB", p.vram_gb));
         }
         if hw.threads > 0 {
-            parts.push(format!("{} fils", hw.threads));
+            parts.push(format!("{} threads", hw.threads));
         }
         if hw.ram_bytes > 0 {
-            parts.push(format!("{} Go de RAM", go(hw.ram_bytes)));
+            parts.push(format!("{} GB RAM", p.ram_gb));
         }
         p.label = parts.join(" · ");
         p
@@ -361,7 +375,7 @@ mod tests {
         for (h, th, buf, tex, bar, dlss, nv, warn) in rows {
             let e = env_of(&r, &h);
             let p = r.materiel.profile(&h, &base_env(&r), &r.petite_ram);
-            println!("{} -> threads {} buffers {:?} texture {:?} bar {:?} dlss {} | {}", p.label, threads(&e), get(&e, "VICTORY_CARD_BUFFERS_MB"), get(&e, "VICTORY_TEXTURE_MAX"), get(&e, "VICTORY_WINDOWS_BAR_MB"), p.dlss, p.reasons.join(" "));
+            println!("{} -> threads {} buffers {:?} texture {:?} bar {:?} dlss {} | {}", p.label, threads(&e), get(&e, "VICTORY_CARD_BUFFERS_MB"), get(&e, "VICTORY_TEXTURE_MAX"), get(&e, "VICTORY_WINDOWS_BAR_MB"), p.dlss, p.reasons.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(" "));
             assert_eq!(threads(&e), th, "{}", p.label);
             assert_eq!(get(&e, "VICTORY_CARD_BUFFERS_MB"), Some(buf), "{}", p.label);
             assert_eq!(get(&e, "VICTORY_TEXTURE_MAX"), tex, "{}", p.label);

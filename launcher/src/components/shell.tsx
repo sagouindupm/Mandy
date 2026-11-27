@@ -6,6 +6,7 @@ import { type LucideIcon, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useI18n } from "@/i18n"
 import type { Snapshot } from "@/lib/api"
 
 const ROTATE_MS = 9000
@@ -60,6 +61,7 @@ export function Sidebar(props: {
   onCollapse: () => void
 }) {
   const { collapsed } = props
+  const { t } = useI18n()
   return (
     <aside className={`flex shrink-0 flex-col bg-sidebar transition-[width] duration-200 ${collapsed ? "w-[72px]" : "w-64"}`}>
       <div className="flex h-[88px] shrink-0 items-center gap-3 px-[18px]">
@@ -68,7 +70,7 @@ export function Sidebar(props: {
       </div>
 
       <nav className="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto pb-4">
-        {!collapsed && <span className="label px-5 pt-2 pb-2">Profil</span>}
+        {!collapsed && <span className="label px-5 pt-2 pb-2">{t("sidebar.profile")}</span>}
         <div className="flex flex-col gap-1 px-2">
           {props.profiles.map((p) => {
             const active = p.id === props.selected
@@ -112,7 +114,7 @@ export function Sidebar(props: {
 
         {!collapsed && (
           <>
-            <span className="label px-5 pt-7 pb-2">Raccourcis</span>
+            <span className="label px-5 pt-7 pb-2">{t("sidebar.shortcuts")}</span>
             <div className="flex flex-col">
               {props.shortcuts.map((s) => (
                 <button
@@ -132,7 +134,7 @@ export function Sidebar(props: {
       </nav>
 
       <div className={`flex shrink-0 px-[18px] pb-5 ${collapsed ? "justify-center px-0" : ""}`}>
-        <Button variant="icon" size="icon" onClick={props.onCollapse} aria-label={collapsed ? "Déplier le menu" : "Replier le menu"}>
+        <Button variant="icon" size="icon" onClick={props.onCollapse} aria-label={collapsed ? t("sidebar.expand") : t("sidebar.collapse")}>
           {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
         </Button>
       </div>

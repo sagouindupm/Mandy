@@ -8,10 +8,12 @@ import { Card, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { JOB_TITLES, gb } from "@/lib/api"
+import { useI18n } from "@/i18n"
+import { JOB_KEYS } from "@/lib/api"
 import type { Level, Step } from "@/lib/steps"
 
 function StepCard({ step, ctx }: { step: Step; ctx: Ctx }) {
+  const { t } = useI18n()
   const [busy, setBusy] = React.useState(false)
   const blocked = ctx.running !== null || ctx.preparing !== null
   const a = step.action
@@ -37,7 +39,7 @@ function StepCard({ step, ctx }: { step: Step; ctx: Ctx }) {
           <span className="flex size-8 items-center justify-center rounded-md bg-[#2a2a2a] text-muted-foreground">
             <step.icon className="size-[17px]" strokeWidth={1.75} />
           </span>
-          <span className="label">Étape {step.n}</span>
+          <span className="label">{t("step.n", { n: step.n })}</span>
         </div>
         <StateBadge level={step.level} />
       </div>
@@ -48,7 +50,7 @@ function StepCard({ step, ctx }: { step: Step; ctx: Ctx }) {
           <span className="font-medium">{step.status}</span>
           {step.checks?.map((c) => (
             <span key={c.label} className={c.ok ? "text-success" : "text-destructive"}>
-              {c.label} {c.ok ? "présent" : "absent"}
+              {t(c.ok ? "check.present" : "check.absent", { label: c.label })}
             </span>
           ))}
         </div>
@@ -90,6 +92,7 @@ function Fact({ label, value, note, level, action }: {
 }
 
 export function PreparePage({ ctx }: { ctx: Ctx }) {
+  const { t, gb } = useI18n()
   const { steps, facts, snap, preparing, running } = ctx
   const [showLog, setShowLog] = React.useState(false)
   const viewport = React.useRef<HTMLDivElement>(null)
@@ -114,44 +117,44 @@ export function PreparePage({ ctx }: { ctx: Ctx }) {
         <div className="flex items-center gap-8">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <CardTitle className="text-[18px]">
-              {preparing ? preparing.current : `${ok} étapes prêtes sur ${steps.length}`}
+              {preparing ? preparing.current : t("prepare.readyCount", { ok, total: steps.length })}
             </CardTitle>
             <p className="text-[13px] text-muted-foreground">
               {preparing
-                ? `Étape ${preparing.done + 1} sur ${preparing.total}.`
+                ? t("prepare.stepOf", { n: preparing.done + 1, total: preparing.total })
                 : auto > 0
-                  ? `${auto} étape${auto > 1 ? "s" : ""} automatique${auto > 1 ? "s" : ""}, dans l'ordre.`
+                  ? t("prepare.auto", { count: auto })
                   : ok === steps.length
-                    ? "Tout est prêt."
-                    : "Les étapes restantes se règlent depuis leur carte."}
+                    ? t("prepare.allReady")
+                    : t("prepare.rest")}
             </p>
           </div>
           {running && running !== "play" ? (
             <Button variant="secondary" onClick={ctx.stop}>
               <Square className="size-3.5 fill-current" />
-              Arrêter
+              {t("common.stop")}
             </Button>
           ) : (
             <Button onClick={ctx.prepareAll} disabled={running !== null || auto === 0}>
               <ListChecks strokeWidth={2} />
-              Tout préparer
+              {t("prepareAll.title")}
             </Button>
           )}
         </div>
         <Progress value={value} className="mt-5" />
         <div className="mt-4 flex items-center justify-between text-[12.5px]">
           <Button variant="link" className="text-[12.5px]" onClick={() => setShowLog((v) => !v)}>
-            {showLog ? "Masquer le journal" : "Afficher le journal"}
+            {showLog ? t("prepare.hideLog") : t("prepare.showLog")}
           </Button>
           <span className="text-muted-foreground">
-            {running ? JOB_TITLES[running] : ctx.lines.length > 0 ? "Dernière tâche terminée" : "Aucune tâche lancée"}
+            {running ? t(JOB_KEYS[running]) : ctx.lines.length > 0 ? t("prepare.lastDone") : t("prepare.noTask")}
           </span>
         </div>
         {showLog && (
           <ScrollArea viewportRef={viewport} className="mt-3 h-52 rounded-md border border-border bg-field">
             <div className="px-4 py-3 font-mono text-[11.5px] leading-[1.6] text-white/70 select-text">
               {ctx.lines.length === 0 ? (
-                <span className="text-white/40">Aucune ligne pour le moment.</span>
+                <span className="text-white/40">{t("prepare.noLines")}</span>
               ) : (
                 ctx.lines.map((l, i) => (
                   <div key={i} className={`break-all ${l.startsWith("──") ? "mt-1 font-bold text-white" : ""}`}>
@@ -172,51 +175,55 @@ export function PreparePage({ ctx }: { ctx: Ctx }) {
 
       <Card className="p-6">
         <div className="flex items-center justify-between">
-          <CardTitle>Ce PC</CardTitle>
+          <CardTitle>{t("pc.title")}</CardTitle>
           <Button variant="link" className="text-[12.5px]" onClick={() => ctx.refreshFacts()}>
             <RefreshCw className="size-3.5" strokeWidth={2} />
-            Revérifier
+            {t("pc.recheck")}
           </Button>
         </div>
         <div className="grid grid-cols-4 gap-8">
           <Fact
-            label="Carte graphique"
-            value={facts ? facts.gpuName || "Inconnue" : "…"}
+            label={t("pc.gpu")}
+            value={facts ? facts.gpuName || t("pc.gpu.unknown") : "…"}
             note={
               facts && facts.vram > 0
-                ? `${gb(facts.vram)} Go de mémoire.${/RTX/i.test(facts.gpuName) ? " DLSS possible." : ""}`
-                : "Mémoire inconnue."
+                ? t("pc.gpu.memory", { gb: gb(facts.vram) }) + (/RTX/i.test(facts.gpuName) ? t("pc.gpu.dlss") : "")
+                : t("pc.gpu.memoryUnknown")
             }
             level="info"
           />
           <Fact
-            label="Mémoire vive"
-            value={ram > 0 ? `${gb(ram)} Go` : "Inconnue"}
-            note={
-              lowRam
-                ? `Moins de ${snap.lowRamBelowGb} Go : 3 Go de la mémoire du jeu passent dans la carte. Fermez le navigateur avant de jouer.`
-                : `${snap.lowRamBelowGb} Go ou plus : rien à adapter.`
-            }
+            label={t("pc.ram")}
+            value={ram > 0 ? t("unit.gb", { n: gb(ram) }) : t("pc.ram.unknown")}
+            note={lowRam ? t("pc.ram.low", { gb: snap.lowRamBelowGb }) : t("pc.ram.ok", { gb: snap.lowRamBelowGb })}
             level={lowRam ? "warn" : "info"}
           />
           <Fact
-            label="Mémoire virtuelle"
-            value={!facts ? "…" : facts.autoPagefile == null ? "Inconnue" : facts.autoPagefile ? "Gérée par Windows" : "Taille fixe"}
-            note="À laisser gérer par Windows : une petite taille fixe fait planter le jeu."
+            label={t("pc.pagefile")}
+            value={
+              !facts
+                ? "…"
+                : facts.autoPagefile == null
+                  ? t("pc.pagefile.unknown")
+                  : facts.autoPagefile
+                    ? t("pc.pagefile.auto")
+                    : t("pc.pagefile.fixed")
+            }
+            note={t("pc.pagefile.note")}
             level={facts?.autoPagefile === false ? "warn" : "info"}
             action={
               <Button variant="link" className="w-fit text-[12.5px]" onClick={() => ctx.open("perf_options")}>
-                Options de performances
+                {t("pc.pagefile.options")}
               </Button>
             }
           />
           <Fact
-            label="Resizable BAR"
-            value={!facts ? "…" : facts.bar1Mb >= 1024 ? "Actif" : facts.bar1Mb > 0 ? "Désactivé" : "Inconnu"}
+            label={t("pc.bar")}
+            value={!facts ? "…" : facts.bar1Mb >= 1024 ? t("pc.bar.on") : facts.bar1Mb > 0 ? t("pc.bar.off") : t("pc.bar.unknown")}
             note={
               facts && facts.bar1Mb > 0
-                ? `BAR1 : ${facts.bar1Mb} Mo.${facts.bar1Mb < 1024 ? " À activer dans le BIOS (Above 4G Decoding, Re-Size BAR)." : ""}`
-                : "Se règle dans le BIOS (Above 4G Decoding, Re-Size BAR)."
+                ? t("pc.bar.size", { mb: facts.bar1Mb }) + (facts.bar1Mb < 1024 ? t("pc.bar.turnOn") : "")
+                : t("pc.bar.bios")
             }
             level={facts && facts.bar1Mb > 0 && facts.bar1Mb < 1024 ? "warn" : "info"}
           />

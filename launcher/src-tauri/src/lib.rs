@@ -4,6 +4,7 @@
 //! launcher (series-s/Sagouindupm.ps1).
 
 mod jobs;
+mod msg;
 mod paths;
 mod profile;
 mod settings;
@@ -18,6 +19,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use jobs::{Jobs, Spec};
+use msg::Msg;
 use paths::Paths;
 use profile::{Hardware, Profile};
 use settings::{DlssMode, GameCheck, Reglages, Settings, game_env, shader_host_env, write_victory_toml};
@@ -74,11 +76,14 @@ struct SettingsView {
     /// The shared list the last « warm --used » built (« nom:taille »), and the one whose shaders are in the cache.
     pipelines_liste: String,
     pipelines_import: String,
+    /// The window's language, « langue » in lanceur.json: "en" (default) or "fr".
+    langue: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GroupView {
+    id: String,
     titre: String,
     note: String,
     env: Vec<(String, String)>,
@@ -195,6 +200,7 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
             ancien_plan: s.str("ancien_plan"),
             pipelines_liste: s.str("pipelines_liste"),
             pipelines_import: s.str("pipelines_import"),
+            langue: lang_of(&s).to_string(),
         },
         game_ok: game_ready(p, &s),
         game_check: game_check(p, &s),
@@ -232,7 +238,8 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
                 .collect();
         }
         snap.profil = r.profil.clone();
-        snap.groups = r.groupes.iter().map(|g| GroupView { titre: g.titre.clone(), note: g.note.clone(), env: kv(&g.env) }).collect();
+        snap.groups =
+            r.groupes.iter().map(|g| GroupView { id: g.id.clone(), titre: g.titre.clone(), note: g.note.clone(), env: kv(&g.env) }).collect();
         let skip = r.skip_value(&p.root);
         snap.skip_count = skip.split(',').filter(|h| !h.trim().is_empty()).count();
         snap.skip_file = r.pipelines_sautees.fichier.clone();
@@ -248,7 +255,7 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
         snap.applied = plan
             .set
             .into_iter()
-            .map(|(k, v)| if k == r.pipelines_sautees.variable { (k, format!("{} programmes", snap.skip_count)) } else { (k, v) })
+            .map(|(k, v)| if k == r.pipelines_sautees.variable { (k, format!("{} programs", snap.skip_count)) } else { (k, v) })
             .collect();
     }
     Ok(snap)
@@ -291,13 +298,13 @@ fn shaders_count(p: &Paths, s: &Settings) -> Option<i64> {
 fn set_game_path(app: &App, path: &str) -> Res<()> {
     let p = Path::new(path);
     if !p.is_file() || !path.to_lowercase().ends_with(".exe") {
-        return Err(format!("Fichier introuvable : {path}"));
+        return Err(Msg::new("err.fileNotFound").with("path", path).into());
     }
     // An incomplete copy (the exe alone, a few archives) is refused with what is missing.
     if let Ok(r) = Reglages::load(&app.paths) {
         let c = r.jeu.check(path);
         if !c.complete {
-            return Err(c.problem);
+            return Err(c.problem_err());
         }
     }
     let mut s = Settings::load(&app.paths);
@@ -331,11 +338,12 @@ fn set_game(app: State<'_, App>, path: String) -> Res<()> {
     set_game_path(&app, &path)
 }
 
+/// `title` and `filter`: the dialog's texts, in the window's language.
 #[tauri::command]
-async fn pick_game(handle: AppHandle) -> Res<Option<String>> {
+async fn pick_game(handle: AppHandle, title: String, filter: String) -> Res<Option<String>> {
     let h = handle.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        let mut d = h.dialog().file().set_title("Où est game_scarlett_master.exe (votre copie du jeu) ?").add_filter("Jeu (game_scarlett_master.exe)", &["exe"]);
+        let mut d = h.dialog().file().set_title(title).add_filter(filter, &["exe"]);
         if let Some(w) = h.get_webview_window("main") {
             d = d.set_parent(&w);
         }
@@ -351,11 +359,12 @@ async fn pick_game(handle: AppHandle) -> Res<Option<String>> {
 
 // ------------------------------------------------------------------ DLSS
 
+/// `title`: the dialog's title, in the window's language.
 #[tauri::command]
-async fn pick_dlss(handle: AppHandle) -> Res<Option<String>> {
+async fn pick_dlss(handle: AppHandle, title: String) -> Res<Option<String>> {
     let h = handle.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        let mut d = h.dialog().file().set_title("Dossier qui contient sl.interposer.dll (Streamline, bin\\x64)");
+        let mut d = h.dialog().file().set_title(title);
         if let Some(w) = h.get_webview_window("main") {
             d = d.set_parent(&w);
         }
@@ -368,7 +377,7 @@ async fn pick_dlss(handle: AppHandle) -> Res<Option<String>> {
     let r = Reglages::load(&app.paths)?;
     let dir = dir.display().to_string();
     if !r.dlss_dir_ok(&dir) {
-        return Err(format!("{} introuvable dans ce dossier.", r.dlss.fichier_requis));
+        return Err(Msg::new("err.dlssFileMissing").with("file", r.dlss.fichier_requis.as_str()).into());
     }
     let mut s = Settings::load(&app.paths);
     s.set("dlss_dir", dir.clone());
@@ -381,10 +390,28 @@ async fn pick_dlss(handle: AppHandle) -> Res<Option<String>> {
 fn set_mode(app: State<'_, App>, mode: String) -> Res<()> {
     let r = Reglages::load(&app.paths)?;
     if mode != "off" && !r.dlss.modes.iter().any(|m| m.id == mode) {
-        return Err(format!("Mode inconnu : {mode}"));
+        return Err(format!("Unknown mode: {mode}"));
     }
     let mut s = Settings::load(&app.paths);
     s.set("dlss_mode", mode);
+    s.save(&app.paths)
+}
+
+// ------------------------------------------------------------------ language
+
+/// The window's language from lanceur.json: "fr", else "en" (absent or unknown).
+fn lang_of(s: &Settings) -> &'static str {
+    if s.str("langue") == "fr" { "fr" } else { "en" }
+}
+
+/// « langue » in lanceur.json ("en" or "fr"); the other keys are kept.
+#[tauri::command]
+fn set_lang(app: State<'_, App>, lang: String) -> Res<()> {
+    if lang != "en" && lang != "fr" {
+        return Err(format!("Unknown language: {lang}"));
+    }
+    let mut s = Settings::load(&app.paths);
+    s.set("langue", lang);
     s.save(&app.paths)
 }
 
@@ -407,16 +434,16 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
     let s = Settings::load(p);
     let log = |name: &str| p.logs.join(name);
     let winget = |args: &[&str], name: &str| -> Res<Spec> {
-        let w = sys::find_winget().ok_or("winget est absent de ce Windows : installez « App Installer » depuis le Microsoft Store.")?;
+        let w = sys::find_winget().ok_or(Msg::new("err.noWinget"))?;
         let mut cmd = Command::new(w);
         cmd.args(["install", "-e", "--accept-package-agreements", "--accept-source-agreements"]).args(args);
         Ok(Spec { kind: kind.into(), cmd, log: log(name), game: false, capture_dir: None })
     };
-    let need_exe = || if p.exe.is_file() { Ok(()) } else { Err("VIctory n'est pas encore compilé (étape 1).".to_string()) };
+    let need_exe = || if p.exe.is_file() { Ok(()) } else { Err(String::from(Msg::new("err.notBuilt"))) };
     let need_game = || match game_check(p, &s) {
-        Some(c) if s.game_ok() && !c.complete => Err(c.problem),
+        Some(c) if s.game_ok() && !c.complete => Err(c.problem_err()),
         _ if game_ready(p, &s) => Ok(()),
-        _ => Err("Indiquez d'abord où est le jeu (étape 2).".to_string()),
+        _ => Err(String::from(Msg::new("err.noGame"))),
     };
     match kind {
         "rust" => winget(&["--id", "Rustlang.Rustup"], "installation_rust.txt"),
@@ -424,9 +451,9 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
             &["--id", "Microsoft.VisualStudio.2022.BuildTools", "--override", "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"],
             "installation_outils_cpp.txt",
         ),
-        "build" if p.packaged => Err("Cette version téléchargée contient déjà VIctory (engine\\victory.exe) : rien à compiler.".into()),
+        "build" if p.packaged => Err(Msg::new("err.alreadyIncluded").into()),
         "build" => {
-            let cargo = sys::find_cargo().ok_or("Rust n'est pas installé (étape 1).")?;
+            let cargo = sys::find_cargo().ok_or(Msg::new("err.noRust"))?;
             let mut cmd = Command::new(&cargo);
             cmd.args(["build", "--release", "--locked", "-p", "victory"]).current_dir(&p.root);
             if let Some(dir) = cargo.parent() {
@@ -457,7 +484,7 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
         "import" => {
             need_exe()?;
             let r = Reglages::load(p)?;
-            let list = r.pipelines_partagees.view(&p.root).ok_or("Pas de liste de pipelines partagée dans ce dossier.")?;
+            let list = r.pipelines_partagees.view(&p.root).ok_or(Msg::new("err.noSharedList"))?;
             let mut cmd = Command::new(&p.exe);
             cmd.args(["pipelines", "import"]).arg(&list.file);
             if s.bool("shaders_ready") {
@@ -495,7 +522,7 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
             *app.last_game_log.lock().unwrap() = Some(log.clone());
             Ok(Spec { kind: kind.into(), cmd, log, game: true, capture_dir: Some(p.captures.clone()) })
         }
-        _ => Err(format!("Tâche inconnue : {kind}")),
+        _ => Err(format!("Unknown task: {kind}")),
     }
 }
 
@@ -565,23 +592,24 @@ fn stop_job(app: State<'_, App>) {
 
 // ------------------------------------------------------------------ small actions
 
-/// "high": « Performances élevées » (the plan before is kept in ancien_plan); "revert": back to it.
+/// "high": « High performance » (the plan before is kept in ancien_plan); "revert": back to it. Returns what was
+/// done, for the window to say.
 #[tauri::command]
-async fn power(handle: AppHandle, action: String) -> Res<String> {
+async fn power(handle: AppHandle, action: String) -> Res<Msg> {
     tauri::async_runtime::spawn_blocking(move || {
         let app = handle.state::<App>();
         let mut s = Settings::load(&app.paths);
         if action == "revert" {
             let old = s.str("ancien_plan");
             if old.is_empty() || !sys::set_scheme(&old) {
-                return Err("Impossible de revenir à l'ancien mode d'alimentation.".into());
+                return Err(String::from(Msg::new("err.powerRevert")));
             }
             s.set("ancien_plan", "");
             s.save(&app.paths)?;
-            return Ok("Ancien mode d'alimentation rétabli.".into());
+            return Ok(Msg::new("power.reverted"));
         }
         if sys::power_line() == "offline" {
-            return Err("Le PC est sur batterie : branchez le chargeur.".into());
+            return Err(String::from(Msg::new("err.onBattery")));
         }
         let before = sys::active_scheme();
         if sys::set_scheme("SCHEME_MIN") {
@@ -589,11 +617,11 @@ async fn power(handle: AppHandle, action: String) -> Res<String> {
                 s.set("ancien_plan", before);
                 s.save(&app.paths)?;
             }
-            return Ok("Mode « Performances élevées » activé.".into());
+            return Ok(Msg::new("power.high"));
         }
         // Recent laptops (modern standby) only have Windows' slider.
         let _ = sys::shell_open("ms-settings:powersleep");
-        Err("Ce PC n'a pas le mode « Performances élevées » : dans Paramètres, choisissez « Mode d'alimentation : Performances optimales ».".into())
+        Err(String::from(Msg::new("err.noHighPlan")))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -617,7 +645,7 @@ fn open(app: State<'_, App>, target: String) -> Res<()> {
     let t = match target.as_str() {
         "logs" => p.logs.display().to_string(),
         "last_log" => {
-            let log = last_game_log(&app).ok_or("Aucune partie lancée pour le moment.")?;
+            let log = last_game_log(&app).ok_or(Msg::new("err.noGameYet"))?;
             return Command::new("notepad.exe").arg(log).spawn().map(|_| ()).map_err(|e| e.to_string());
         }
         "game_dir" => Path::new(&Settings::load(p).str("game_exe")).parent().map(|d| d.display().to_string()).unwrap_or_default(),
@@ -636,10 +664,10 @@ fn open(app: State<'_, App>, target: String) -> Res<()> {
         "issues" => "https://github.com/sagouindupm/Mandy/issues".into(),
         "releases" => "https://github.com/sagouindupm/Mandy/releases".into(),
         "feedback" => return sys::open_url(&feedback_url(&app)),
-        _ => return Err(format!("Cible inconnue : {target}")),
+        _ => return Err(format!("Unknown target: {target}")),
     };
     if t.is_empty() {
-        return Err("Rien à ouvrir.".into());
+        return Err(Msg::new("err.nothingToOpen").into());
     }
     sys::shell_open(&t)
 }
@@ -669,7 +697,7 @@ async fn backup_saves(handle: AppHandle) -> Res<String> {
         let app = handle.state::<App>();
         let data = paths::victory_dir("VICTORY_DATA_DIR", "data");
         if !data.is_dir() {
-            return Err("Aucune sauvegarde trouvée pour le moment.".to_string());
+            return Err(String::from(Msg::new("err.noSaves")));
         }
         let (y, mo, d, h, mi, s) = sys::local_time();
         let dst = app.paths.home.join("sauvegardes").join(format!("{y:04}-{mo:02}-{d:02}_{h:02}{mi:02}{s:02}"));
@@ -682,7 +710,8 @@ async fn backup_saves(handle: AppHandle) -> Res<String> {
 
 // ------------------------------------------------------------------ feedback
 
-/// The hardware profile as the player copies it into a feedback report (Réglages, « Copier »).
+/// The hardware profile as the player copies it into a feedback report (Settings, « Copy »): for developers, in
+/// English whatever the window's language. The tiers and the changed variables say what the reasons say.
 fn profile_text(p: &Profile, s: &Settings, r: &Reglages, dlss_ok: bool) -> String {
     let mode = s.str("dlss_mode");
     let mode = r
@@ -690,13 +719,12 @@ fn profile_text(p: &Profile, s: &Settings, r: &Reglages, dlss_ok: bool) -> Strin
         .modes
         .iter()
         .find(|m| m.id == mode && dlss_ok && p.dlss)
-        .map(|m| m.nom.clone())
-        .unwrap_or_else(|| "Recommandé (540p, upscaler du jeu)".into());
-    let mut lines = vec![format!("Profil détecté : Series S · {}", p.label), format!("Mode : {mode}"), format!("Crans : {}", p.tiers.join(", "))];
-    lines.extend(p.reasons.iter().map(|l| format!("- {l}")));
-    lines.extend(p.warnings.iter().map(|l| format!("! {l}")));
+        .map(|m| format!("DLSS {}", m.id))
+        .unwrap_or_else(|| "recommended (540p, game upscaler)".into());
+    let mut lines = vec![format!("Detected profile: Series S · {}", p.label), format!("Mode: {mode}"), format!("Tiers: {}", p.tiers.join(", "))];
+    lines.extend(p.warnings.iter().map(|m| format!("! {}", m.plain())));
     if !p.env.is_empty() {
-        lines.push(format!("Changé : {}", p.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")));
+        lines.push(format!("Changed: {}", p.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")));
     }
     lines.join("\n")
 }
@@ -714,29 +742,30 @@ fn url_encode(text: &str) -> String {
     out
 }
 
-/// The « retour d'expérience » issue form (.github/ISSUE_TEMPLATE/retour-experience.yml), filled with this PC.
+/// The feedback issue form (.github/ISSUE_TEMPLATE/feedback.yml), filled with this PC.
 /// The player reads it and sends it himself on GitHub.
 fn feedback_url(app: &App) -> String {
     let f = app.facts.lock().unwrap().clone();
     let hw = hardware_of(f.as_ref());
     let p = &app.paths;
     let s = Settings::load(p);
-    let gib = |b: f64| format!("{} Go", (b / (1u64 << 30) as f64).round());
-    let mut q: Vec<(&str, String)> = vec![("template", "retour-experience.yml".into())];
+    // The values in English (for developers); « [feedback] » is the form's own title prefix.
+    let gib = |b: f64| format!("{} GB", (b / (1u64 << 30) as f64).round());
+    let mut q: Vec<(&str, String)> = vec![("template", "feedback.yml".into())];
     let gpu = f.as_ref().map(|f| f.gpu_name.clone()).unwrap_or_default();
-    q.push(("title", format!("[retour] {}", if gpu.is_empty() { "ma config".into() } else { profile::short_gpu(&gpu) })));
+    q.push(("title", format!("[feedback] {}", if gpu.is_empty() { "my setup".into() } else { profile::short_gpu(&gpu) })));
     if let Some(f) = &f {
         q.push(("gpu", f.gpu_name.clone()));
         if f.vram > 0.0 {
             q.push(("vram", gib(f.vram)));
         }
-        q.push(("cpu", format!("{} ({} fils)", f.cpu_name, f.threads)));
+        q.push(("cpu", format!("{} ({} threads)", f.cpu_name, f.threads)));
         q.push(("windows", f.windows.clone()));
     }
     if hw.ram_bytes > 0 {
         q.push(("ram", gib(hw.ram_bytes as f64)));
     }
-    q.push(("version", format!("VIctory S {VERSION} ({})", if p.packaged { "version téléchargée" } else { "compilé depuis les sources" })));
+    q.push(("version", format!("VIctory S {VERSION} ({})", if p.packaged { "downloaded package" } else { "built from source" })));
     if let Ok(r) = Reglages::load(p) {
         let prof = settings::profile(&r, &hw);
         q.push(("profil", profile_text(&prof, &s, &r, r.dlss_dir_ok(&s.str("dlss_dir")))));
@@ -757,11 +786,11 @@ fn preview_mode(app: State<'_, App>) -> bool {
 async fn preview_shot(handle: AppHandle, name: String) -> Res<String> {
     tauri::async_runtime::spawn_blocking(move || {
         let app = handle.state::<App>();
-        let dir = app.preview.clone().ok_or("Pas en mode --preview.")?;
+        let dir = app.preview.clone().ok_or("Not in --preview mode.")?;
         if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
-            return Err(format!("Nom invalide : {name}"));
+            return Err(format!("Invalid name: {name}"));
         }
-        let w = handle.get_webview_window("main").ok_or("Pas de fenêtre.")?;
+        let w = handle.get_webview_window("main").ok_or("No window.")?;
         let hwnd = w.hwnd().map_err(|e| e.to_string())?;
         let out = dir.join(format!("launcher-{name}.png"));
         sys::capture_window(hwnd.0 as isize, &out).map(|p| p.display().to_string())
@@ -782,7 +811,7 @@ fn preview_done(handle: AppHandle) {
 /// (scripts/check-profils.ps1). What is not given is read from this PC. The older form
 /// `<file> <dlss_dir> <dlss_mode> [<ram_gb>]` still works. No window.
 fn print_env(args: &[String]) -> Result<(), String> {
-    let Some(file) = args.first() else { return Err("--print-env <fichier>".into()) };
+    let Some(file) = args.first() else { return Err("--print-env <file>".into()) };
     let paths = Paths::discover();
     let mut s = Settings::load(&paths);
     let (mut ram, mut vram, mut threads, mut gpu): (Option<u64>, Option<f64>, Option<usize>, Option<String>) = (None, None, None, None);
@@ -796,7 +825,7 @@ fn print_env(args: &[String]) -> Result<(), String> {
     } else {
         let mut it = rest.iter();
         while let Some(a) = it.next() {
-            let mut next = || it.next().cloned().ok_or(format!("{a} : valeur manquante"));
+            let mut next = || it.next().cloned().ok_or(format!("{a}: missing value"));
             match a.as_str() {
                 "--dlss" => {
                     s.set("dlss_dir", next()?);
@@ -806,7 +835,7 @@ fn print_env(args: &[String]) -> Result<(), String> {
                 "--vram-gb" => vram = next()?.parse().ok(),
                 "--threads" => threads = next()?.parse().ok(),
                 "--gpu" => gpu = Some(next()?),
-                other => return Err(format!("Option inconnue : {other}")),
+                other => return Err(format!("Unknown option: {other}")),
             }
         }
     }
@@ -881,6 +910,7 @@ pub fn run() {
             pick_game,
             pick_dlss,
             set_mode,
+            set_lang,
             run_job,
             stop_job,
             power,

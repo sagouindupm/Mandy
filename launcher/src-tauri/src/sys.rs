@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+use crate::msg::Msg;
 use crate::paths::{victory_dir, which};
 
 /// No console window for the helper programs (powershell, powercfg, taskkill...).
@@ -319,12 +320,12 @@ public static class SvCap {
 '@
 [SvCap]::SetProcessDPIAware() | Out-Null
 $p = Get-Process victory -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-if (-not $p) { 'ERR:Le jeu ne tourne pas.'; exit }
+if (-not $p) { 'ERR:gameNotRunning'; exit }
 $h = $p.MainWindowHandle
 $r = New-Object SvCap+RECT
 [SvCap]::GetClientRect($h, [ref]$r) | Out-Null
 $w = $r.R - $r.L; $hg = $r.B - $r.T
-if ($w -le 0 -or $hg -le 0) { 'ERR:La fenêtre du jeu est réduite.'; exit }
+if ($w -le 0 -or $hg -le 0) { 'ERR:gameMinimized'; exit }
 $bmp = New-Object System.Drawing.Bitmap $w, $hg
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $hdc = $g.GetHdc()
@@ -346,19 +347,23 @@ $bmp.Dispose()
 
 /// Saves a window (by handle) as a PNG: the launcher's own pages for the README (`--preview`).
 pub fn capture_window(hwnd: isize, out: &Path) -> Result<PathBuf, String> {
-    let find = "$p = Get-Process victory -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1\nif (-not $p) { 'ERR:Le jeu ne tourne pas.'; exit }\n$h = $p.MainWindowHandle";
+    let find = "$p = Get-Process victory -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1\nif (-not $p) { 'ERR:gameNotRunning'; exit }\n$h = $p.MainWindowHandle";
     if !CAPTURE_PS.contains(find) {
-        return Err("Capture impossible.".into());
+        return Err(Msg::new("err.captureFailed").into());
     }
     let script = CAPTURE_PS
         .replace(find, &format!("$h = [IntPtr]{hwnd}"))
         .replace("__OUT__", &out.display().to_string().replace('\'', "''"));
-    let res = powershell(&script)?;
-    let last = res.lines().map(str::trim).rfind(|l| l.starts_with("OK:") || l.starts_with("ERR:")).unwrap_or("ERR:Capture impossible.");
+    capture_result(&powershell(&script)?, out)
+}
+
+/// The script's last « OK: » or « ERR:<code> » line: the file, or the error for the window (« err.<code> »).
+fn capture_result(res: &str, out: &Path) -> Result<PathBuf, String> {
+    let last = res.lines().map(str::trim).rfind(|l| l.starts_with("OK:") || l.starts_with("ERR:")).unwrap_or("ERR:captureFailed");
     match last.strip_prefix("ERR:") {
-        Some(err) => Err(err.to_string()),
+        Some(code) => Err(Msg::new(&format!("err.{code}")).into()),
         None if out.is_file() => Ok(out.to_path_buf()),
-        None => Err("Capture impossible.".into()),
+        None => Err(Msg::new("err.captureFailed").into()),
     }
 }
 
@@ -367,13 +372,13 @@ pub fn open_url(url: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     if !url.starts_with("https://") {
-        return Err(format!("Adresse refusée : {url}"));
+        return Err(Msg::new("err.urlRefused").with("url", url).into());
     }
     let wide = |t: &str| t.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let (verb, file) = (wide("open"), wide(url));
     // SAFETY: NUL-terminated strings that outlive the call; no parent window.
     let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
-    if r as isize > 32 { Ok(()) } else { Err(format!("Impossible d'ouvrir {url}")) }
+    if r as isize > 32 { Ok(()) } else { Err(Msg::new("err.openFailed").with("url", url).into()) }
 }
 
 /// Saves a screenshot of the running game in `dir`; returns the file.
@@ -382,13 +387,7 @@ pub fn capture_game(dir: &Path) -> Result<PathBuf, String> {
     let (y, mo, d, h, mi, s) = local_time();
     let out = dir.join(format!("capture_{y:04}-{mo:02}-{d:02}_{h:02}{mi:02}{s:02}.png"));
     let script = CAPTURE_PS.replace("__OUT__", &out.display().to_string().replace('\'', "''"));
-    let res = powershell(&script)?;
-    let last = res.lines().map(str::trim).rfind(|l| l.starts_with("OK:") || l.starts_with("ERR:")).unwrap_or("ERR:Capture impossible.");
-    match last.strip_prefix("ERR:") {
-        Some(err) => Err(err.to_string()),
-        None if out.is_file() => Ok(out),
-        None => Err("Capture impossible.".into()),
-    }
+    capture_result(&powershell(&script)?, &out)
 }
 
 /// Pixel area of a PNG from its header (0 if not a PNG).

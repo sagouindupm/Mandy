@@ -1,22 +1,46 @@
 [
   {
-    "date": "27/11/2026",
-    "titre": "Nouveau lanceur",
-    "texte": "Le launcher VIctory S remplace le lanceur PowerShell : préparation pas à pas, réglages et journaux au même endroit."
+    "date": "2026-11-27",
+    "en": {
+      "title": "New launcher",
+      "text": "The VIctory S launcher replaces the PowerShell launcher: step-by-step setup, settings and logs in one place."
+    },
+    "fr": {
+      "title": "Nouveau lanceur",
+      "text": "Le launcher VIctory S remplace le lanceur PowerShell : préparation pas à pas, réglages et journaux au même endroit."
+    }
   },
   {
-    "date": "27/11/2026",
-    "titre": "Les arbres sont de retour",
-    "texte": "Le repli LDS (#27) rend traduisibles des programmes refusés jusqu'ici. Les arbres restent ; l'eau volumétrique, coûteuse, reste sautée."
+    "date": "2026-11-27",
+    "en": {
+      "title": "The trees are back",
+      "text": "The LDS fallback (#27) makes programs that were refused until now translatable. The trees stay; the costly volumetric water is still skipped."
+    },
+    "fr": {
+      "title": "Les arbres sont de retour",
+      "text": "Le repli LDS (#27) rend traduisibles des programmes refusés jusqu'ici. Les arbres restent ; l'eau volumétrique, coûteuse, reste sautée."
+    }
   },
   {
-    "date": "27/11/2026",
-    "titre": "~10 images/s sur RTX 3050",
-    "texte": "Base trustno1-coder/VIctory-NVIDIA réglée par Maykzera : 98 à 103 ms par image sur le bateau, shaders et pipelines préparés."
+    "date": "2026-11-27",
+    "en": {
+      "title": "~10 fps on RTX 3050",
+      "text": "The trustno1-coder/VIctory-NVIDIA base tuned by Maykzera: 98 to 103 ms per frame on the boat, with shaders and pipelines prepared."
+    },
+    "fr": {
+      "title": "~10 images/s sur RTX 3050",
+      "text": "Base trustno1-coder/VIctory-NVIDIA réglée par Maykzera : 98 à 103 ms par image sur le bateau, shaders et pipelines préparés."
+    }
   },
   {
-    "date": "27/11/2026",
-    "titre": "DLSS en option",
-    "texte": "Sur carte RTX, avec les DLL Streamline de NVIDIA : ultra performance mesuré à 90 ms par image sur RTX 3050, image propre."
+    "date": "2026-11-27",
+    "en": {
+      "title": "DLSS as an option",
+      "text": "On RTX cards, with NVIDIA's Streamline DLLs: ultra performance measured at 90 ms per frame on RTX 3050, with a clean image."
+    },
+    "fr": {
+      "title": "DLSS en option",
+      "text": "Sur carte RTX, avec les DLL Streamline de NVIDIA : ultra performance mesuré à 90 ms par image sur RTX 3050, image propre."
+    }
   }
 ]
