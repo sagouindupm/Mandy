@@ -425,11 +425,29 @@ fn title_priority(asked: i32) -> i32 {
     }
 }
 
-/// [`title_priority`].
+/// The highest priority a title thread is given on the PC: "above normal".
+/// The title asks for "highest" and "time critical" for threads that spin
+/// while they wait; on a 6-core PC with the process above normal those
+/// threads took every core ahead of the desktop, and Windows stopped
+/// answering the keyboard while the game ran (27/11, RTX 3050 + i5-12400F).
+/// `VICTORY_TITLE_PRIORITY_MOST=<n>` (-2..15) sets another ceiling; 15 is
+/// what the title asks for, uncapped.
+fn title_ceiling(asked: i32) -> i32 {
+    static MOST: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    let most = *MOST.get_or_init(|| {
+        std::env::var("VICTORY_TITLE_PRIORITY_MOST")
+            .ok()
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .map_or(1, |v| v.clamp(-2, 15))
+    });
+    asked.min(most)
+}
+
+/// [`title_priority`], under [`title_ceiling`].
 pub extern "system" fn SetThreadPriority(thread: *mut c_void, priority: i32) -> i32 {
     static AS_SET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let as_set = *AS_SET.get_or_init(|| std::env::var_os("VICTORY_TITLE_PRIORITIES").is_some_and(|v| v == "0"));
-    let priority = if as_set { priority } else { title_priority(priority) };
+    let priority = title_ceiling(if as_set { priority } else { title_priority(priority) });
     // SAFETY: the title passes a thread handle.
     unsafe { windows_sys::Win32::System::Threading::SetThreadPriority(thread, priority) }
 }
