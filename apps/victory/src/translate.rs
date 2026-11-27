@@ -409,6 +409,16 @@ pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>) -> Result<()> {
     let paths = crate::default_paths(paths)?;
     let threads =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
+    // The containers an imported pipeline list names and the book lacks are kept from these files
+    // (`victory pipelines import`): `victory warm` makes host pipelines of them.
+    #[cfg(windows)]
+    let keeper = match victory_hle::known_pipelines::list::Keeper::of(&crate::warm::folder()?) {
+        Ok(keeper) => keeper,
+        Err(e) => {
+            println!("the containers of booked pipelines are not kept: {e}");
+            None
+        }
+    };
     let started = std::time::Instant::now();
     let seen = Mutex::new(HashSet::new());
     let done = AtomicUsize::new(0);
@@ -431,6 +441,12 @@ pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>) -> Result<()> {
                             let hash = blake3::hash(&bytes);
                             if !lock(&seen).insert(hash) {
                                 continue;
+                            }
+                            #[cfg(windows)]
+                            if let Some(keeper) = &keeper
+                                && let Err(e) = keeper.offer(hash.as_bytes(), &bytes)
+                            {
+                                println!("known-shaders.bin not written: {e}");
                             }
                             match victory_hle::modules::d3d12x::precompile(&bytes) {
                                 Ok(_) => {
@@ -459,6 +475,14 @@ pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>) -> Result<()> {
     );
     for (why, (n, hash)) in failed {
         println!("  {n:>5}  {why}  (e.g. {hash})");
+    }
+    #[cfg(windows)]
+    if let Some(keeper) = keeper {
+        println!(
+            "{} containers of booked pipelines kept from your files, {} not found",
+            keeper.kept(),
+            keeper.wanted()
+        );
     }
     Ok(())
 }

@@ -34,10 +34,20 @@ Series S. Le détail des essais (gardés, rejetés, à faire) est dans **[docs/e
 2. Double-cliquer sur **`series-s\Sagouindupm.bat`**. Au premier lancement il demande où est
    `game_scarlett_master.exe` (votre copie du jeu).
 3. Menu, dans l'ordre la première fois :
-   - **[2] Préparer les shaders** : traduit tous les shaders une fois (15-30 min). Indispensable.
-   - **[1] Jouer** : chaque partie note les pipelines que le jeu crée.
-   - **[3] Construire les pipelines** (quelques minutes) : la partie suivante n'a plus d'à-coups ni de
-     dessins manquants. C'est ce qui fait passer de ~5 à ~10 fps ici.
+   - **[2] Préparer les shaders** : traduit tous les shaders une fois (15-30 min) et garde au passage
+     ceux que nomme la liste de pipelines publiée. Indispensable.
+   - **[3] Construire les pipelines** : dès la première fois, avant de jouer. Il importe la liste
+     publiée [`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt) (les pipelines dont le jeu
+     se sert jusqu'après la mission du bateau, sans une ligne du code du jeu : des empreintes seulement)
+     et les construit avec les shaders de **votre** copie du jeu. La première partie n'a plus
+     d'à-coups ni de dessins manquants : c'est ce qui fait passer de ~5 à ~10 fps ici.
+   - **[1] Jouer** : chaque partie note aussi les pipelines que le jeu crée ; refaire [3] après une
+     partie construit celles que la liste n'avait pas.
+
+   À la main : `victory pipelines import series-s\pipelines\series-s-rtx.txt --shaders <vos shaders>`
+   puis `victory warm --used` (mêmes variables que le lanceur). `victory pipelines export <fichier>
+   --used` écrit la liste de vos propres parties, `victory pipelines merge <sortie> <listes...>` en
+   réunit plusieurs (format décrit dans `crates/victory-gpu/src/pipeline/known/list.rs`).
 
 **Cartes NVIDIA** : réglez la **taille du cache de shaders sur « Illimitée »** (Panneau de configuration
 NVIDIA → Gérer les paramètres 3D). PC à moins de 24 Go de RAM : le lanceur place tout seul une partie de la

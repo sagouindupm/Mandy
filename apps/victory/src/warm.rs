@@ -21,7 +21,8 @@ const LONGEST: Duration = Duration::from_secs(180);
 /// As the runs count one that takes long.
 const SLOW_MS: f64 = 1000.0;
 
-fn folder() -> Result<PathBuf> {
+/// This cache's pipeline folder (the book, the early list).
+pub(crate) fn folder() -> Result<PathBuf> {
     let cfg = victory_core::Config::load()?;
     Ok(cfg.cache_subdir("shaders")?.with_file_name("pipelines"))
 }
@@ -50,11 +51,19 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     let bad: HashSet<&str> = bad.lines().filter_map(|l| l.split(' ').next()).collect();
     let early = std::fs::read_to_string(dir.join("early-pipelines.txt")).unwrap_or_default();
     let early: HashSet<&str> = early.lines().collect();
+    // A list imported before the player's own files gave its containers.
+    let lacking = known::lacking(&dir);
+    let mut waiting = 0;
     // Those earlier runs drew with first, the others in no order (by key).
     let mut all: Vec<usize> = (0..keys.len())
         .filter(|&n| {
             let key = keys[n].as_str();
-            (again || !done.contains(key)) && !bad.contains(key) && (!used || early.contains(key))
+            let wanted = (again || !done.contains(key)) && !bad.contains(key) && (!used || early.contains(key));
+            if wanted && lacking.contains(&n) {
+                waiting += 1;
+                return false;
+            }
+            wanted
         })
         .collect();
     all.sort_by_key(|&n| (!early.contains(keys[n].as_str()), &keys[n]));
@@ -62,7 +71,7 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
     let jobs = jobs.unwrap_or(cores * 2 / 3).max(1);
     println!(
-        "{} pipelines known, {} made before ({fingerprint}), {} bad; {} to make, {jobs} processes",
+        "{} pipelines known, {} made before ({fingerprint}), {} bad; {} to make, {jobs} processes; {waiting} skipped: their shaders are not in known-shaders.bin (victory shaders, or victory pipelines import --shaders)",
         keys.len(),
         done.len(),
         bad.len(),

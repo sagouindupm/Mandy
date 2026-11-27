@@ -6,6 +6,8 @@
 mod agility;
 mod census;
 mod inspect;
+#[cfg(windows)]
+mod pipelines;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod replay;
 mod run;
@@ -129,6 +131,14 @@ enum Command {
         #[arg(long, hide = true)]
         these: Option<String>,
     },
+    /// Lists of the title's pipelines without its shader code: export this
+    /// cache's book, merge lists, import one before a first game (then
+    /// `victory warm --used`).
+    #[cfg(windows)]
+    Pipelines {
+        #[command(subcommand)]
+        command: pipelines::Pipelines,
+    },
     /// Prepare, map and bind a title executable; with --execute, run it.
     Run {
         exe: PathBuf,
@@ -218,6 +228,8 @@ fn main() -> Result<()> {
         Command::Shaders { paths, jobs } => translate::precompile(paths, jobs),
         #[cfg(windows)]
         Command::Warm { jobs, limit, again, used, these } => warm::run(jobs, limit, again, used, these),
+        #[cfg(windows)]
+        Command::Pipelines { command } => pipelines::run(command),
         Command::Run {
             exe,
             unimplemented,
