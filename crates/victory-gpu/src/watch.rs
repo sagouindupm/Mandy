@@ -299,7 +299,7 @@ struct Journal {
     /// Page ranges asked ahead for a submission's refreshes ([`ask_ahead`])
     /// and the asking that did: `writes` answers for a range inside one
     /// from the journal, without another kernel call.
-    ahead: Vec<(usize, usize)>,
+    ahead: Ahead,
     ahead_asked: u64,
     /// The ahead asking stands for a whole submission ([`ask_once`]): no
     /// other ahead asking is made, and `ahead` stays, until
@@ -317,11 +317,68 @@ struct Journal {
 /// it, found it waiting for that lock (run pooloff1).
 static JOURNAL: RwLock<Journal> = RwLock::new(Journal {
     notes: Notes::new(),
-    ahead: Vec::new(),
+    ahead: Ahead::new(),
     ahead_asked: 0,
     kept: false,
     quiet: BTreeMap::new(),
 });
+
+/// The page ranges asked ahead ([`Journal::ahead`]), searched instead of scanned: every refresh
+/// of a submission asks whether its range lies inside one of them (7,000 a frame in the open
+/// world, against up to some thousand ranges), and a scan of them all made that quadratic. After
+/// edupode/cold-project-vi a4d9cc6 (edupo), which sorts them and looks at the few that start
+/// before; here the answer stays exact. Only the ranges no other one holds are kept: in order of
+/// their starts, their ends then rise too, so the range that starts last at or before a page
+/// reaches furthest of all those that do. A range one of them holds is held by that one, so
+/// [`Ahead::holds`] answers as a scan of every range asked would.
+#[derive(Default)]
+struct Ahead(Vec<(usize, usize)>);
+
+impl Ahead {
+    const fn new() -> Self {
+        Ahead(Vec::new())
+    }
+
+    /// The ranges `(first, last)` in any order.
+    fn of(mut ranges: Vec<(usize, usize)>) -> Self {
+        // By start, the longest first among equal starts: it holds the others.
+        ranges.sort_unstable_by(|x, y| x.0.cmp(&y.0).then(y.1.cmp(&x.1)));
+        let mut reach: Option<usize> = None;
+        ranges.retain(|&(_, last)| {
+            let keep = reach.is_none_or(|r| last > r);
+            if keep {
+                reach = Some(last);
+            }
+            keep
+        });
+        Ahead(ranges)
+    }
+
+    /// Whether `[first, last)` lies inside one of the ranges.
+    fn holds(&self, first: usize, last: usize) -> bool {
+        let at = self.0.partition_point(|r| r.0 <= first);
+        at > 0 && last <= self.0[at - 1].1
+    }
+
+    /// Adds `[first, last)` (as a push onto the scanned list did).
+    fn add(&mut self, first: usize, last: usize) {
+        if self.holds(first, last) {
+            return;
+        }
+        // The ones it holds: from its start on, those that end at or before its end.
+        let from = self.0.partition_point(|r| r.0 < first);
+        let to = from + self.0[from..].partition_point(|r| r.1 <= last);
+        self.0.splice(from..to, [(first, last)]);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+}
 
 fn journal() -> std::sync::RwLockReadGuard<'static, Journal> {
     if let Ok(j) = JOURNAL.try_read() {
@@ -624,12 +681,12 @@ fn ask_ahead_held(ranges: &[(usize, usize)], held: bool) {
         let now = note_shared(&written);
         let mut j = journal_mut();
         j.ahead_asked = now;
-        j.ahead = asked;
+        j.ahead = Ahead::of(asked);
         return;
     }
     let mut j = journal_mut();
     j.ahead_asked = next_asking();
-    j.ahead = asked;
+    j.ahead = Ahead::of(asked);
     let now = j.ahead_asked;
     for (page, parts) in written {
         j.notes.note(page, parts, now);
@@ -1005,20 +1062,21 @@ fn ask_once_quiet(ranges: &[(usize, usize)], frame: u64, keep: u64) {
     }
     drop(j);
     covered.sort_unstable();
-    let mut ahead: Vec<(usize, usize)> = Vec::new();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
     for &(first, end) in &covered {
-        match ahead.last_mut() {
+        match merged.last_mut() {
             Some(last) if first * QUIET_BLOCK <= last.1 => last.1 = last.1.max(end * QUIET_BLOCK),
-            _ => ahead.push((first * QUIET_BLOCK, end * QUIET_BLOCK)),
+            _ => merged.push((first * QUIET_BLOCK, end * QUIET_BLOCK)),
         }
     }
+    let mut ahead = Ahead::of(merged);
     tally_quiet(2, covered.len() as u64);
     for (first, last) in alone {
-        if !ahead.iter().any(|&(a, b)| a <= first && last <= b)
+        if !ahead.holds(first, last)
             && let Some(pages) = kernel_written(first, last)
         {
             found.extend(pages);
-            ahead.push((first, last));
+            ahead.add(first, last);
             tally_quiet(3, 1);
         }
     }
@@ -1081,11 +1139,11 @@ fn ask_rest(ranges: &[(usize, usize)], held: bool) {
             continue;
         }
         let (first, last) = (start / PAGE, end.div_ceil(PAGE));
-        if !ahead.iter().any(|&(a, b)| a <= first && last <= b)
+        if !ahead.holds(first, last)
             && let Some(pages) = kernel_written(first, last)
         {
             written.extend(pages);
-            ahead.push((first, last));
+            ahead.add(first, last);
         }
     }
     note_hot(&written);
@@ -1190,8 +1248,7 @@ pub(crate) fn asked(start: usize, end: usize) -> Option<(u64, Vec<(usize, u64)>)
     let (first, last) = (start / PAGE, end.div_ceil(PAGE));
     let j = journal();
     j.ahead
-        .iter()
-        .any(|&(a, b)| a <= first && last <= b)
+        .holds(first, last)
         .then(|| (j.ahead_asked, j.notes.range(first, last)))
 }
 
@@ -1205,8 +1262,7 @@ pub(crate) fn writes(start: usize, end: usize, guarded: bool) -> Option<(u64, Ve
     // Asked ahead with the submission's other ranges: the journal has it.
     let ahead = |j: &Journal| {
         j.ahead
-            .iter()
-            .any(|&(a, b)| a <= first && last <= b)
+            .holds(first, last)
             .then(|| (j.ahead_asked, j.notes.range(first, last)))
     };
     let fresh = || {
@@ -1349,7 +1405,7 @@ pub(crate) fn nothing_new(start: usize, end: usize, base: usize, copied: &[u64],
         crate::faultbook::note(crate::faultbook::What::Known, first, last, 1);
     }
     let j = journal();
-    if !known && !j.ahead.iter().any(|&(a, b)| a <= first && last <= b) {
+    if !known && !j.ahead.holds(first, last) {
         return false;
     }
     let Some(taken) = first.checked_sub(base).and_then(|from| copied.get(from..last - base)) else {
@@ -3662,6 +3718,82 @@ mod tests {
         MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
     };
     const MEM_WRITE_WATCH: u32 = 0x20_0000;
+
+    /// What the scan over every range asked answered.
+    fn scanned(ranges: &[(usize, usize)], first: usize, last: usize) -> bool {
+        ranges.iter().any(|&(a, b)| a <= first && last <= b)
+    }
+
+    #[test]
+    fn ahead_answers_as_the_scan_did() {
+        // Nested, overlapping, repeated and empty ranges, in no order.
+        let ranges = vec![
+            (10, 20),
+            (0, 100),
+            (12, 14),
+            (50, 60),
+            (5, 5),
+            (200, 210),
+            (205, 300),
+            (200, 210),
+            (150, 150),
+        ];
+        let ahead = Ahead::of(ranges.clone());
+        for first in 0..320 {
+            for last in first..first + 40 {
+                assert_eq!(
+                    ahead.holds(first, last),
+                    scanned(&ranges, first, last),
+                    "[{first}, {last})"
+                );
+            }
+        }
+        assert!(Ahead::of(Vec::new()).is_empty());
+        assert!(!Ahead::new().holds(0, 0));
+    }
+
+    #[test]
+    fn ahead_answers_as_the_scan_did_while_added_to() {
+        // A small generator of its own: ranges of random starts and lengths, asked and added
+        // to in turn, as `ask_rest` does, against the list it pushed onto before.
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n) as usize
+        };
+        for round in 0..200 {
+            let base: Vec<(usize, usize)> = (0..next(40))
+                .map(|_| {
+                    let a = next(500);
+                    (a, a + next(60))
+                })
+                .collect();
+            let mut list = base.clone();
+            let mut ahead = Ahead::of(base);
+            for _ in 0..200 {
+                let first = next(560);
+                let last = first + next(30);
+                assert_eq!(
+                    ahead.holds(first, last),
+                    scanned(&list, first, last),
+                    "round {round}: [{first}, {last})"
+                );
+                if !scanned(&list, first, last) && next(3) != 0 {
+                    list.push((first, last));
+                    ahead.add(first, last);
+                }
+                assert_eq!(ahead.is_empty(), list.is_empty());
+                assert!(
+                    ahead
+                        .0
+                        .windows(2)
+                        .all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1)
+                );
+            }
+        }
+    }
 
     #[test]
     fn written_pages_are_reported_to_every_asker() {

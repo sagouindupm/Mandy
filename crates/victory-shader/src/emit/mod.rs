@@ -614,7 +614,26 @@ pub fn emit(
                 [0x58, 0x1d, 0xab, 0x2c, 0xd8, 0xbc, 0xf2, 0x2e, 0x5c, 0x96, 0x4b, 0x98, 0xe9, 0x03, 0x48, 0xd1]
                     | [0x24, 0x31, 0xbb, 0xe7, 0xdc, 0x15, 0x4a, 0xd7, 0x59, 0xd2, 0x0b, 0xc9, 0x54, 0x82, 0x9c, 0x1c]
             );
-        let wide_on = wide_option.as_ref().map_or(scene_kernel, |v| v == "1");
+        // `VICTORY_WAVE_WIDE_DIGESTS=<digest>,…`: container digests (the 32 hex digits of the
+        // DXBC header's MD5; `VICTORY_WAVE_WHY=1` prints each program's as `WAVE64-DIGEST`)
+        // taken wave-wide too, like the two kernels above, while `VICTORY_WAVE_WIDE` stays
+        // unset for the rest (the form lost the card with particle programs, so only programs
+        // checked one by one get it). Unset: only the two kernels above. An explicit
+        // `VICTORY_WAVE_WIDE` still wins. After edupode/cold-project-vi bb6a956 (edupo):
+        // `7099a57fded142613b44f410463d6be6`, water_shading's
+        // CS_TransmissionVolumetrics_Tiled_LocalLights (logged as compute 6f225b641c5b0708),
+        // which the driver otherwise refuses as a wave64 pipeline.
+        let digest_hex: String = c.digest.iter().map(|b| format!("{b:02x}")).collect();
+        if why {
+            eprintln!("WAVE64-DIGEST {digest_hex}");
+        }
+        let listed = std::env::var("VICTORY_WAVE_WIDE_DIGESTS").is_ok_and(|v| {
+            v.split(',')
+                .any(|d| d.trim().eq_ignore_ascii_case(&digest_hex))
+        });
+        let wide_on = wide_option
+            .as_ref()
+            .map_or(scene_kernel || listed, |v| v == "1");
         // A single guest wave can iterate an active-lane loop until both host
         // halves have finished. The precise latch and convergence conditions
         // for the driver compute route are checked by widen().

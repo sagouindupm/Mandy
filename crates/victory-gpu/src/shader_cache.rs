@@ -94,6 +94,13 @@ fn build() -> [u8; 32] {
             }
             bytes.push(0);
         }
+        // The programs taken wave-wide by digest (after edupode/cold-project-vi bb6a956), only
+        // when asked for: unset, the key (and every cached translation) stays as it was.
+        if let Some(value) = std::env::var_os("VICTORY_WAVE_WIDE_DIGESTS") {
+            bytes.extend_from_slice(b"VICTORY_WAVE_WIDE_DIGESTS=");
+            bytes.extend_from_slice(value.as_encoded_bytes());
+            bytes.push(0);
+        }
         // And which clean-up passes ran over the translated code.
         bytes.extend_from_slice(&victory_shader::emit::shader_opt().to_le_bytes());
         bytes
