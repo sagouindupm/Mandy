@@ -3761,10 +3761,10 @@ impl State {
         }
     }
 
-    /// The launch stage (`crate::launch`) of the title pipeline's host
-    /// pipeline, if it has one.
+    /// The launch stage (`crate::launch`) of the host pipeline a draw binds
+    /// now (the one for the bound target formats), if it has one.
     fn bound_launch<'a>(&self) -> Option<&'a crate::pipeline::host::Launch> {
-        crate::pipeline::host_pipeline(self.pipeline as This)?.launch.as_ref()
+        crate::pipeline::host_pipeline_for(self.pipeline as This, &self.target_formats)?.launch.as_ref()
     }
 
     /// One indirect mesh record at `arguments` of the copy `args`, launched
@@ -3792,7 +3792,9 @@ impl State {
             why("a mesh record not 4-byte aligned");
             return false;
         }
-        // Another draw reads the scratch buffer from here on (`windows`).
+        // A draw after dispatches waits for them, as for the draws that read
+        // a batch (`batches`); and the window is left (`windows`).
+        self.synced();
         self.window = None;
         args.refresh(list, arguments, len);
         if !self.prepare_for(list, false, true) {

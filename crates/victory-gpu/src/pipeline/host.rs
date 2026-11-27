@@ -1383,6 +1383,120 @@ mod tests {
         );
     }
 
+    /// A mesh shader with the payload the translated ones declare, which
+    /// counts the groups it runs.
+    const COUNTING_MS: &str = "struct P { uint unused; };
+        struct V { float4 p : SV_Position; };
+        RWByteAddressBuffer runs : register(u0);
+        [outputtopology(\"triangle\")] [numthreads(1, 1, 1)]
+        void main(in payload P p, out vertices V v[3], out indices uint3 t[1]) {
+            uint was;
+            runs.InterlockedAdd(0, 1, was);
+            // One triangle of no area: nothing is drawn.
+            SetMeshOutputCounts(3, 1);
+            v[0].p = float4(0, 0, 0, 1);
+            v[1].p = float4(0, 0, 0, 1);
+            v[2].p = float4(0, 0, 0, 1);
+            t[0] = uint3(0, 1, 2);
+        }";
+
+    /// The amplification stage of `crate::launch` (its bytes as kept) runs
+    /// in front of a mesh shader with the translation's payload: a record
+    /// the card reads is bounded and charged as the clamps do, and a count
+    /// the CPU knows runs as given.
+    #[test]
+    fn mesh_records_are_launched_by_the_amplification_stage() {
+        let Some(host) = host() else {
+            return; // no host GPU here
+        };
+        if !host.mesh_shaders() {
+            eprintln!("no host mesh shader support; skipped");
+            return;
+        }
+        let Some(dxc) = dxc() else {
+            eprintln!("no PC dxc.exe; skipped");
+            return;
+        };
+        if crate::launch::bytes().is_empty() {
+            eprintln!("built without dxc: no launch stage; skipped");
+            return;
+        }
+        assert_eq!(victory_shader::emit::MESH_PAYLOAD_BYTES, 4, "the payload of launch.hlsl");
+        let dir = tempfile::tempdir().unwrap();
+        let ms = compile(&dxc, dir.path(), COUNTING_MS, "ms_6_5");
+        let mut params = vec![D3D12_ROOT_PARAMETER1 {
+            ParameterType: D3D12_ROOT_PARAMETER_TYPE_UAV,
+            Anonymous: D3D12_ROOT_PARAMETER1_0 {
+                Descriptor: D3D12_ROOT_DESCRIPTOR1 {
+                    ShaderRegister: 0,
+                    RegisterSpace: 0,
+                    Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
+                },
+            },
+            ShaderVisibility: D3D12_SHADER_VISIBILITY_MESH,
+        }];
+        params.extend(crate::launch::params());
+        let roots = [1, 2, 3];
+        let (root, root_blob) = root_signature(&host.device, &params, &[], false).unwrap();
+        let mut g = GraphicsState::default();
+        g.depth.DepthEnable = false.into();
+        let name = super::super::library::name("mesh launch test", &root_blob, &[&ms, crate::launch::bytes()], &g.describe());
+        let none = D3D12_SHADER_BYTECODE::default();
+        let pso = mesh_pipeline(&host.device, &root, crate::launch::code(), code(&ms), none, &MeshState::of(&g), false, &name)
+            .expect("the host takes the launch stage in front of a mesh shader with the payload");
+        let mapped = || {
+            let (buffer, data) = host.shared_buffer(256).unwrap();
+            (buffer, data.cast::<u32>())
+        };
+        let ((records, records_at), (runs, runs_at), (budget, budget_at)) = (mapped(), mapped(), mapped());
+        const BUDGET: u32 = 1 << 27;
+        // One launch: the record's three words (or a count the CPU gives as
+        // `direct`), the budget's first word; the groups run, and the
+        // budget's five words after.
+        let run = |direct: u32, record: [u32; 3], spent: u32| -> (u32, [u32; 5]) {
+            // SAFETY: the buffers are mapped, 256 bytes each, and the card
+            // is not using them (each run waits for its list).
+            unsafe {
+                for (i, w) in record.iter().enumerate() {
+                    records_at.add(i).write_volatile(*w);
+                }
+                runs_at.write_volatile(0);
+                for i in 0..5 {
+                    budget_at.add(i).write_volatile(if i == 0 { spent } else { 0 });
+                }
+            }
+            let list = host.new_list().unwrap();
+            // SAFETY: an open list, live objects.
+            unsafe {
+                list.list.SetGraphicsRootSignature(&root);
+                list.list.SetPipelineState(&pso);
+                list.list.SetGraphicsRootUnorderedAccessView(0, runs.GetGPUVirtualAddress());
+                let (record, budget) = (records.GetGPUVirtualAddress(), budget.GetGPUVirtualAddress());
+                crate::launch::tests::launch_in(&list, roots, direct, record, budget);
+            }
+            list.close();
+            host.execute(&[&list]);
+            // SAFETY: as above, after the run.
+            unsafe { (runs_at.read_volatile(), std::array::from_fn(|i| budget_at.add(i).read_volatile())) }
+        };
+        let (rest, exact) = (crate::launch::tests::REST, crate::launch::tests::EXACT);
+        // A record: its groups run and are charged, 128 each.
+        assert_eq!(run(rest, [37, 1, 1], 0), (37, [37 * 128, 37, 37, 0, 0]));
+        // One-dimensional, as the clamps make them.
+        assert_eq!(run(rest, [3, 5, 7], 0).0, 3);
+        // A slot the title has not filled: empty, not charged, not counted.
+        assert_eq!(run(rest, [u32::MAX, u32::MAX, u32::MAX], 0), (0, [0; 5]));
+        // The most a dispatch runs, charged as one cost of 2^22 or more.
+        assert_eq!(run(exact, [65_535, 1, 1], 0), (65_535, [65_535 * 128, 65_535, 65_535, 0, 65_535 * 128]));
+        // Past the budget: empty, refused; it takes the rest of the budget
+        // or nothing.
+        let spent = BUDGET - 100;
+        assert_eq!(run(rest, [1, 1, 1], spent), (0, [BUDGET, 1, 1, 1, 0]));
+        assert_eq!(run(exact, [1, 1, 1], spent), (0, [spent, 1, 1, 1, 0]));
+        // A count the CPU knows: no record read, no budget.
+        assert_eq!(run(5, [0, 0, 0], 0), (5, [0; 5]));
+    }
+
     fn targets(formats: &[DXGI_FORMAT]) -> D3D12_RT_FORMAT_ARRAY {
         let mut t = D3D12_RT_FORMAT_ARRAY {
             NumRenderTargets: formats.len() as u32,

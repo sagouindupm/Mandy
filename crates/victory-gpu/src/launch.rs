@@ -20,9 +20,11 @@
 //!
 //! Here the record is read by the draw itself: the pipeline's amplification
 //! stage loads its three words where the title's passes wrote them, bounds
-//! them (65,535 groups, one-dimensional), charges the list's budget (a
-//! record that does not fit runs empty and takes the rest), and launches
-//! the mesh groups. The title's own
+//! them as the clamps do (a record of more than 65,535 groups is a slot the
+//! title has not filled and runs empty; one-dimensional), charges the
+//! list's budget as the clamps do (a record that does not fit runs empty,
+//! and with `VICTORY_INDIRECT_REST` takes the rest), notes what the clamps
+//! note for the frame line, and launches the mesh groups. The title's own
 //! barrier (a wait for every shader write, `crate::list`) orders its passes
 //! before the draw, as on the console; nothing of ours runs between draws.
 //! A mesh dispatch the CPU knows (`DispatchMesh`) gives its count as a root
@@ -59,8 +61,11 @@ use crate::host::HostList;
 /// where the build found no compiler: then there is no stage ([`on`]).
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/launch.dxil"));
 
-/// The root constant that has the card read the record.
-const DIRECT_NONE: u32 = u32::MAX;
+/// The root constant that has the card read the record, a record that does
+/// not fit taking the rest of the budget (`crate::indirect::rest`).
+const RECORD_REST: u32 = u32::MAX;
+/// As [`RECORD_REST`], a record that does not fit taking nothing.
+const RECORD_EXACT: u32 = u32::MAX - 1;
 
 /// Where the amplification shader binds: `b0`, `t0`, `u0` in this space.
 const SPACE: u32 = victory_shader::emit::LAUNCH_SPACE;
@@ -145,7 +150,7 @@ pub(crate) fn record(list: &HostList, roots: [u32; 3], what: Launch) -> bool {
             let Some(budget) = budget else {
                 return false;
             };
-            (DIRECT_NONE, address, budget)
+            (record_mode(), address, budget)
         }
         // The stage reads neither the record nor the budget; live
         // addresses all the same where the list has them.
@@ -156,8 +161,14 @@ pub(crate) fn record(list: &HostList, roots: [u32; 3], what: Launch) -> bool {
     true
 }
 
+/// The root constant of a record ([`RECORD_REST`] or [`RECORD_EXACT`]).
+fn record_mode() -> u32 {
+    static MODE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| if crate::indirect::rest() != 0 { RECORD_REST } else { RECORD_EXACT })
+}
+
 /// Binds the stage's root parameters and launches its one group: `direct`
-/// (a group count, or [`DIRECT_NONE`]), the record's and the budget's
+/// (a group count, or a record mode), the record's and the budget's
 /// addresses.
 fn launch(
     list: &ID3D12GraphicsCommandList,
@@ -188,3 +199,40 @@ pub(crate) fn line(frames: f64) {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// The built bytes are a whole DXIL container, signed by the SDK's
+    /// validator (a digest), of an amplification shader of model 6.6.
+    #[test]
+    fn launch_code_is_a_signed_amplification_container() {
+        if CODE.is_empty() {
+            eprintln!("built without dxc: no launch stage; skipped");
+            return;
+        }
+        assert_eq!(&CODE[..4], b"DXBC");
+        assert!(CODE[4..20].iter().any(|&b| b != 0), "the container is not signed");
+        let size = u32::from_le_bytes(CODE[24..28].try_into().unwrap()) as usize;
+        assert_eq!(size, CODE.len());
+        // The program part: its version word, kind 14 (amplification) and
+        // model 6.6.
+        let parts = u32::from_le_bytes(CODE[28..32].try_into().unwrap()) as usize;
+        let dxil = (0..parts)
+            .map(|i| u32::from_le_bytes(CODE[32 + 4 * i..36 + 4 * i].try_into().unwrap()) as usize)
+            .find(|&at| &CODE[at..at + 4] == b"DXIL")
+            .expect("a DXIL part");
+        let version = u32::from_le_bytes(CODE[dxil + 8..dxil + 12].try_into().unwrap());
+        assert_eq!(version >> 16, 14, "not an amplification shader");
+        assert_eq!(version & 0xff, 0x66, "not shader model 6.6");
+    }
+
+    /// Runs `launch` in `list` for the tests of `crate::pipeline::host`.
+    pub(crate) fn launch_in(list: &HostList, roots: [u32; 3], direct: u32, record: u64, budget: u64) {
+        let l6 = windows::core::Interface::cast::<ID3D12GraphicsCommandList6>(&list.list).expect("a mesh list");
+        launch(&list.list, &l6, roots, (direct, record, budget));
+    }
+
+    pub(crate) const REST: u32 = RECORD_REST;
+    pub(crate) const EXACT: u32 = RECORD_EXACT;
+}
