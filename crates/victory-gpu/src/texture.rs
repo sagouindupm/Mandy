@@ -323,6 +323,10 @@ pub(crate) fn alias(list: &HostList, placed: This, source: This) -> bool {
     }
     card_writes(list, placed, to, None);
     crate::list::ensure_state(list, placed, COPY_DEST);
+    // Every level and layer is copied in (`crate::resource::unfilled_neutral`).
+    if let Some(copy) = crate::resource::made_copy(placed) {
+        copy.unfilled.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     let part = |texture: &ID3D12Resource, index: usize| D3D12_TEXTURE_COPY_LOCATION {
         // SAFETY: a borrowed pointer the location never releases.
         pResource: unsafe { std::mem::transmute_copy(texture) },
@@ -585,6 +589,10 @@ static HOST_WRITTEN: Mutex<Option<std::collections::HashSet<usize>>> = Mutex::ne
 
 /// A host copy or resolve writes `resource`.
 pub(crate) fn host_written(resource: This) {
+    // What the host copies in is its contents (`crate::resource::unfilled_neutral`).
+    if let Some(copy) = crate::resource::made_copy(resource) {
+        copy.unfilled.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     let new = {
         let mut set = HOST_WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
         set.get_or_insert_with(Default::default).insert(resource as usize)
@@ -946,6 +954,9 @@ pub(crate) fn upload_from(list: &HostList, resource: This, first: u32) {
         unsafe { list.list.barriers(&[aliasing]) };
     }
     crate::list::ensure_state(list, resource, COPY_DEST);
+    // Its contents are the title's from this list on, not what its piece of
+    // a block held (`crate::resource::unfilled_neutral`).
+    copy.unfilled.store(false, Relaxed);
     // The staging buffer lives as long as `staging`, which the deferred
     // refresh below holds until the list is reset.
     for (i, footprint) in staging.footprints.iter().enumerate() {

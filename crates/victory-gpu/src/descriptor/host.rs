@@ -2548,6 +2548,11 @@ impl HostHeap {
                 self.put(slot);
                 self.keep(slot, kept);
                 remade += 1;
+                // The neutral texture for now: made again when next looked at.
+                if shown_neutral() {
+                    self.quick_is(slot, 0);
+                    self.made.set(slot, 0);
+                }
             }
         }
         remade
@@ -2764,6 +2769,16 @@ impl HostHeap {
                 #[cfg(feature = "diagnostics")]
                 let was = shown;
                 self.quick_is(f.index, 0);
+                // The neutral texture for a host copy not filled yet: shown
+                // late, looked at again after the next submission.
+                if shown_neutral() {
+                    self.made.set(f.index, 0);
+                    self.keep(f.index, kept);
+                    let after = crate::host::submissions().0;
+                    let again = Flip { after, late: f.late.or(Some(crate::frame::current())), ..f };
+                    FLIPS.lock().unwrap_or_else(|e| e.into_inner()).push(again);
+                    continue;
+                }
                 self.made.set(f.index, f.key);
                 self.keep(f.index, kept);
                 #[cfg(feature = "diagnostics")]
@@ -3081,6 +3096,8 @@ impl HostHeap {
     /// host cannot.
     pub(crate) fn make_at(&self, index: u32, view: &View) {
         let kept = make_twinned(view, self.at(index), self.twin(index));
+        // (A dynamic slot is made for one draw: the next one makes it again.)
+        let _ = shown_neutral();
         if kept.is_none() {
             null_for(view, self.at(index));
         }
@@ -3635,6 +3652,13 @@ impl HostHeap {
             } else {
                 make_twinned(&view, self.at(index), self.twin(index))
             };
+            // Shown as the neutral texture for now: not made from the view,
+            // and due for the texture pass, which uploads it and makes the
+            // slot again.
+            let neutral = !later && shown_neutral();
+            if neutral {
+                self.made.set(index, 0);
+            }
             if kept.is_none() && !self.sampler {
                 null_for(&view, self.at(index));
             }
@@ -3643,9 +3667,12 @@ impl HostHeap {
             }
             self.twin_made(index, kept.is_some() && twinned(&view));
             self.keep(index, kept.flatten());
-            self.quick_is(index, if later { 0 } else { key });
+            self.quick_is(index, if later || neutral { 0 } else { key });
             drop(held);
             self.unmake_stale(index, stale);
+            if neutral && is_texture_view(&view) {
+                self.queue_texture(index, true, false, crate::frame::current());
+            }
         }
         Some(view)
     }
@@ -4565,6 +4592,20 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
     make_twinned(view, at, None)
 }
 
+thread_local! {
+    /// The last [`make_twinned`] on this thread showed the neutral texture
+    /// for a host copy that held another texture's bytes
+    /// (`crate::resource::unfilled_neutral`).
+    static SHOWN_NEUTRAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the last [`make_twinned`] on this thread showed the neutral
+/// texture in place of a host copy not filled yet: the slot is then not
+/// made from its view, and is made again when next looked at.
+fn shown_neutral() -> bool {
+    SHOWN_NEUTRAL.replace(false)
+}
+
 /// [`make`]; `twin`: where the raw twin of a buffer view goes
 /// ([`raw_twins`]; a constant buffer's is the same view again, other views
 /// have none).
@@ -4573,6 +4614,7 @@ fn make_twinned(
     at: D3D12_CPU_DESCRIPTOR_HANDLE,
     twin: Option<D3D12_CPU_DESCRIPTOR_HANDLE>,
 ) -> Option<Kept> {
+    SHOWN_NEUTRAL.set(false);
     let host = host()?;
     let device = &host.device;
     match view {
@@ -4614,6 +4656,23 @@ fn make_twinned(
             }
             crate::resource::shown_uncast(resource);
             if let Some(copy) = crate::resource::host_copy(resource) {
+                // What its piece of a block held before: the neutral texture
+                // until its upload is recorded (`VICTORY_UNFILLED_NEUTRAL=1`).
+                if copy.unfilled.load(std::sync::atomic::Ordering::Relaxed) {
+                    let n = crate::resource::UNFILLED_SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let on = crate::resource::unfilled_neutral();
+                    if n.is_power_of_two() {
+                        tracing::info!(
+                            so_far = n,
+                            neutral = on,
+                            "a slot made from a host copy that still holds another texture's bytes (its upload not recorded yet): shown as the neutral texture with VICTORY_UNFILLED_NEUTRAL=1"
+                        );
+                    }
+                    if on {
+                        SHOWN_NEUTRAL.set(true);
+                        return Some(neutral_for(view, at));
+                    }
+                }
                 let texture = &copy.texture;
                 // The title's views of textures with a stencil plane, as it
                 // describes them (format, dimension, component mapping, a

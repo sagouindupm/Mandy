@@ -1186,6 +1186,10 @@ pub(crate) struct HostTexture {
     /// Uploads recorded into this host copy so far: the second and later ones
     /// may leave parts out ([`crate::texture::delta`]).
     pub(crate) uploads: std::sync::atomic::AtomicU32,
+    /// Cut from a piece of a block another texture had before
+    /// (`crate::pool::on_used_piece`), and nothing has been recorded into
+    /// it yet: what it holds is that texture's bytes ([`unfilled_neutral`]).
+    pub(crate) unfilled: std::sync::atomic::AtomicBool,
     /// The texture's flags (asked once: the runtime takes 100 ns to say, and
     /// every texture of every draw is asked about).
     flags: u32,
@@ -1907,6 +1911,9 @@ fn hosted(this: This, make: bool) -> Option<Made> {
             HELD[3].fetch_add(footprint(&r.desc).map_or(0, |f| f.size), Relaxed);
         }
         host.filled = fills(&r.desc);
+        if crate::pool::on_used_piece(&host.texture) {
+            host.unfilled.store(true, Relaxed);
+        }
         if host.filled {
             KINDS[0].fetch_add(1, Relaxed);
             KINDS[1].fetch_add(host.bytes, Relaxed);
@@ -2588,6 +2595,7 @@ impl HostTexture {
             holds: Default::default(),
             ahead: crate::texture::ahead::fresh(),
             uploads: Default::default(),
+            unfilled: Default::default(),
             flags,
         }
     }
@@ -2614,6 +2622,7 @@ impl HostTexture {
             holds: Default::default(),
             ahead: crate::texture::ahead::fresh(),
             uploads: Default::default(),
+            unfilled: Default::default(),
             flags,
         }
     }
@@ -2631,6 +2640,39 @@ impl Drop for HostTexture {
         }
     }
 }
+
+/// Whether a slot that would show a host copy still holding what another
+/// texture left in its piece of a block ([`HostTexture::unfilled`]) shows
+/// the neutral texture instead, until something is recorded into the host
+/// copy (`VICTORY_UNFILLED_NEUTRAL=1`; off by default until measured).
+///
+/// A texture the title fills is cut from a block of the card's memory
+/// (`crate::pool`), on the rule that its every level is uploaded before
+/// anything reads it. A slot can be made from it before that: a slot that
+/// waited for the host copy is made as soon as the copy exists
+/// (`crate::descriptor::make_waiting`), and an upload is left out when its
+/// staging buffer cannot be had (no upload memory, the card or the PC
+/// full: frame generation on an 8 GB card). The shader then reads the
+/// previous owner's texels in this texture's format: coloured noise,
+/// "rainbow confetti" on skin. The neutral texture (mid grey, `neutral`)
+/// is what the slot shows until the upload is recorded; the slot is not
+/// counted as made, so the next look at it (the texture pass, a draw's
+/// table, the flip of a slot shown late) makes it again. Zeroing the piece
+/// on the card instead would cost a copy as large as the upload itself for
+/// every reused piece (the formats are block-compressed: no clear), in a
+/// list that does not exist when the host copy is made.
+/// [`UNFILLED_SHOWN`] counts such slots either way.
+#[cfg(windows)]
+pub(crate) fn unfilled_neutral() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_UNFILLED_NEUTRAL").is_some_and(|v| v == "1"))
+}
+
+/// Slots made from a host copy that held another texture's bytes
+/// ([`unfilled_neutral`]), since the start: shown as they were (switch
+/// off) or as the neutral texture (on).
+#[cfg(windows)]
+pub(crate) static UNFILLED_SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How many textures placed in title memory have a resource of ours
 /// (never released), for the memory line.
