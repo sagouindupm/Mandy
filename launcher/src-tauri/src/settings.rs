@@ -181,6 +181,7 @@ impl GameCheck {
     }
 
     /// The problem for developers and tests (`key(params)`).
+    #[cfg(test)]
     pub fn problem_text(&self) -> String {
         self.problem.as_ref().map(|m| m.to_string()).unwrap_or_default()
     }
