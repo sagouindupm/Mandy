@@ -975,6 +975,11 @@ impl Spans {
     /// The first span that starts inside `[start, end)` past the first
     /// [`HEAD`] bytes of it.
     fn next_start(&self, start: u64, end: u64) -> Option<u64> {
+        // (A texture no longer than its first block has no room for one;
+        // the range would begin past its end. After lines9686-rgb 32a8c87d.)
+        if start.saturating_add(HEAD) >= end {
+            return None;
+        }
         self.by_start.range(start.saturating_add(HEAD)..end).next().map(|(at, _)| *at)
     }
 
@@ -4732,6 +4737,29 @@ fn make_twinned(
                     && let Some(desc) = &mut desc
                 {
                     from_base(desc, copy.base);
+                }
+                // (`VICTORY_PACKED_LEVELS=1`) A texture whose larger levels lie
+                // where another texture starts is shown from its first own
+                // level (those levels are zeros in its host copy).
+                if let Some(first) = crate::texture::packed_first(resource)
+                    && first > copy.base
+                {
+                    // SAFETY: a live resource.
+                    let own = unsafe { texture.GetDesc() };
+                    let whole = D3D12_SHADER_RESOURCE_VIEW_DESC {
+                        Format: own.Format,
+                        ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+                        Shader4ComponentMapping: 5768,
+                        Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
+                            Texture2D: D3D12_TEX2D_SRV {
+                                MostDetailedMip: 0,
+                                MipLevels: u32::MAX,
+                                PlaneSlice: 0,
+                                ResourceMinLODClamp: 0.0,
+                            },
+                        },
+                    };
+                    crate::tiles::show_from(desc.get_or_insert(whole), first - copy.base, u32::from(own.MipLevels));
                 }
                 // SAFETY: a live texture and a slot of our heap.
                 unsafe {
