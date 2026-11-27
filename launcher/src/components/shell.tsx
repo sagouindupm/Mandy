@@ -63,9 +63,9 @@ export function Sidebar(props: {
     <aside className={`flex shrink-0 flex-col bg-sidebar transition-[width] duration-200 ${collapsed ? "w-[72px]" : "w-64"}`}>
       <div className="flex h-[88px] shrink-0 items-center gap-3 px-[18px]">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-badge text-[12px] font-black tracking-[-0.02em] text-black">
-          S|V
+          VS
         </div>
-        {!collapsed && <span className="truncate text-[13px] font-bold">Sagouindupm | VIctory</span>}
+        {!collapsed && <span className="truncate text-[13px] font-bold">VIctory S</span>}
       </div>
 
       <nav className="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto pb-4">

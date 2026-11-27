@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Sagouindupm VIctory",
+  "productName": "VIctory S",
   "mainBinaryName": "sagouindupm-launcher",
   "version": "0.1.0",
   "identifier": "fr.sagouindupm.launcher",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Sagouindupm | VIctory",
+        "title": "VIctory S",
         "width": 1100,
         "height": 720,
         "minWidth": 1024,
