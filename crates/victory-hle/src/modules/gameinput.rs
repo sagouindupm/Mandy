@@ -1,7 +1,8 @@
 //! `gameinput.dll`: input devices from the host. Gamepads come from XInput
 //! (host slots 0-3); while none is connected, the keyboard drives one
 //! stand-in gamepad (`FALLBACK_BUTTONS`). The keyboard is a device of its own
-//! too. A focused window also has a mouse. A poll thread records changes
+//! too. A focused window also has a mouse, captured by a click in the window
+//! and freed by Alt or Esc ([`cursor`]). A poll thread records changes
 //! and runs device callbacks on connect and disconnect.
 #![allow(non_snake_case)]
 // Title code calls these through the objects, passing pointers the real API
@@ -64,13 +65,16 @@ const HISTORY: usize = 256;
 const POLL: Duration = Duration::from_millis(8);
 
 /// The keyboard's stand-in gamepad (virtual key, button); README lists it.
-/// Sticks: W/A/S/D left, I/J/K/L right; triggers Z and C.
-const FALLBACK_BUTTONS: [(u8, u32); 14] = [
+/// Sticks: W/A/S/D left, I/J/K/L right; triggers Z and C. The X key held
+/// on the keyboard walks ([`WALK_KEY`]): Space is the X button then; the
+/// scripted keys (`VICTORY_KEYS`) keep X as the X button.
+const FALLBACK_BUTTONS: [(u8, u32); 15] = [
     (0x1B, MENU), // Esc
     (0x09, VIEW), // Tab
     (0x0D, A),    // Enter
     (0x08, B),    // Backspace
     (b'X', X),
+    (0x20, X), // Space
     (b'Y', Y),
     (0x26, UP), // arrows
     (0x28, DOWN),
@@ -81,6 +85,11 @@ const FALLBACK_BUTTONS: [(u8, u32); 14] = [
     (b'F', LEFT_STICK),
     (b'H', RIGHT_STICK),
 ];
+
+/// The key that, held on the keyboard, makes the stand-in pad's left stick
+/// walk: [`WALK_SPEED`] of a full push.
+const WALK_KEY: u8 = b'X';
+const WALK_SPEED: f32 = 0.5;
 
 /// A gamepad reading: triggers 0 to 1, sticks -1 to 1 (up positive).
 #[repr(C)]
@@ -138,6 +147,119 @@ fn mouse_delta(
     (current, delta)
 }
 
+/// The mouse cursor while the title window has focus: captured (hidden,
+/// held inside the window, its motion is the mouse device's) or free (the
+/// mouse device sees no motion and no buttons). A click in the window
+/// captures it, and so does the window getting focus some other way
+/// (Alt-Tab); Alt or Esc only frees it; losing focus or sizing and moving
+/// the window frees it too. The host poll and the title window's procedure
+/// (`lifecycle`) keep it. `VICTORY_MOUSE_CAPTURE=0`: never captured, the
+/// mouse device follows the free cursor as it did before.
+///
+/// Ported from the previous base (claude-GTA6's keyboard and mouse play,
+/// fxceless's fork; Alt and Esc only freeing it, sagouindupm).
+pub(crate) mod cursor {
+    use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static CAPTURED: AtomicBool = AtomicBool::new(false);
+    /// The title window has focus (kept by the host poll).
+    pub(crate) static FOCUSED: AtomicBool = AtomicBool::new(false);
+    /// The user is sizing or moving the window (between `WM_ENTERSIZEMOVE`
+    /// and `WM_EXITSIZEMOVE`): the cursor is theirs.
+    static SIZING: AtomicBool = AtomicBool::new(false);
+    /// How far inside the client area a captured cursor is held, so it
+    /// cannot reach the window's borders and start a size loop.
+    const INSET: i32 = 16;
+    /// The keys that free the cursor: left and right Alt, Esc.
+    pub(crate) const RELEASE_KEYS: [u8; 3] = [0xA4, 0xA5, 0x1B];
+
+    /// Capture is wanted at all: the mouse device is there and
+    /// `VICTORY_MOUSE_CAPTURE` is not `0`.
+    pub(crate) fn enabled() -> bool {
+        static ON: LazyLock<bool> = LazyLock::new(|| {
+            let on = |name| std::env::var_os(name).is_none_or(|v| v != "0");
+            on("VICTORY_GAMEPAD_MOUSE") && on("VICTORY_MOUSE_CAPTURE")
+        });
+        *ON
+    }
+
+    pub(crate) fn sizing() -> bool {
+        SIZING.load(Ordering::Relaxed)
+    }
+
+    /// The window entered (`true`) or left a size or move loop. A captured
+    /// cursor is freed first: clipped to a client area that shrinks under
+    /// it, it would drag the window down to its title bar. Afterwards a
+    /// click in the window captures it again.
+    pub(crate) fn size_move(entered: bool) {
+        if entered {
+            release();
+        }
+        SIZING.store(entered, Ordering::Relaxed);
+    }
+
+    /// Whether the window gaining focus captures the cursor: not when the
+    /// focus came from a mouse click (a click in the client area captures by
+    /// itself; one on a border or the title bar starts a size or move loop
+    /// and must not), and not during such a loop.
+    pub(crate) fn captures_on_focus(was_focused: bool, focused: bool, button_down: bool) -> bool {
+        focused && !was_focused && !button_down && !sizing()
+    }
+
+    /// Whether the cursor is held in the window now.
+    pub(crate) fn clips(focused: bool) -> bool {
+        focused && captured() && !sizing()
+    }
+
+    /// Where a captured cursor is held: the client rectangle (left, top,
+    /// right, bottom) shrunk by [`INSET`]; `None` for one too small for that.
+    pub(crate) fn clip_rect(client: (i32, i32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
+        let (l, t, r, b) = client;
+        let rect = (l + INSET, t + INSET, r - INSET, b - INSET);
+        (rect.2 > rect.0 && rect.3 > rect.1).then_some(rect)
+    }
+
+    pub(crate) fn captured() -> bool {
+        CAPTURED.load(Ordering::Relaxed)
+    }
+
+    /// Whether a capture may happen now: when capture is wanted at all
+    /// (`enabled`) and the window is not being sized or moved.
+    pub(crate) fn may_capture(enabled: bool) -> bool {
+        enabled && !sizing()
+    }
+
+    pub(crate) fn capture() {
+        if may_capture(enabled()) && !CAPTURED.swap(true, Ordering::Relaxed) {
+            tracing::info!("mouse cursor captured");
+        }
+    }
+
+    pub(crate) fn release() {
+        if CAPTURED.swap(false, Ordering::Relaxed) {
+            tracing::info!("mouse cursor released");
+        }
+    }
+
+    /// A click in the title window captures. Buttons held while it is
+    /// captured are no clicks for the title until they are let go (`host`).
+    pub(crate) fn click() {
+        capture();
+    }
+
+    /// Whether `held` (keys held on the keyboard) frees the cursor: Alt or
+    /// Esc. Freeing only: a click in the window captures it again.
+    pub(crate) fn releases(held: &[u8]) -> bool {
+        held.iter().any(|vk| RELEASE_KEYS.contains(vk))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_captured(on: bool) {
+        CAPTURED.store(on, Ordering::Relaxed);
+    }
+}
+
 /// Host input, or a fake in tests.
 trait Source: Send {
     /// The pad in host slot `slot`, `None` when the slot is empty.
@@ -147,18 +269,33 @@ trait Source: Send {
     fn mouse(&mut self) -> Option<MouseState> {
         None
     }
+    /// The walk key ([`WALK_KEY`]) is held on the keyboard, not scripted.
+    fn walking(&mut self) -> bool {
+        false
+    }
     /// Motor speeds: low frequency (left), high frequency (right).
     fn rumble(&mut self, slot: usize, low: u16, high: u16);
 }
 
-fn fallback(keys: &[KeyState]) -> PadState {
+/// The stand-in pad for `keys`; `walking`: the walk key is held on the
+/// keyboard, so it is no X button and the left stick goes at walk speed.
+fn fallback(keys: &[KeyState], walking: bool) -> PadState {
     let on = |vk: u8| {
-        if keys.iter().any(|k| k.virtual_key == vk) {
+        if keys.iter().any(|k| k.virtual_key == vk) && !(walking && vk == WALK_KEY) {
             1.0
         } else {
             0.0
         }
     };
+    let (mut left_x, mut left_y): (f32, f32) = (on(b'D') - on(b'A'), on(b'W') - on(b'S'));
+    if walking {
+        // Diagonals too: the stick's length is the walk speed.
+        let length = left_x.hypot(left_y);
+        if length > 0.0 {
+            left_x *= WALK_SPEED / length;
+            left_y *= WALK_SPEED / length;
+        }
+    }
     PadState {
         buttons: FALLBACK_BUTTONS
             .iter()
@@ -166,8 +303,8 @@ fn fallback(keys: &[KeyState]) -> PadState {
             .fold(0, |all, (_, bit)| all | bit),
         left_trigger: on(b'Z'),
         right_trigger: on(b'C'),
-        left_x: on(b'D') - on(b'A'),
-        left_y: on(b'W') - on(b'S'),
+        left_x,
+        left_y,
         right_x: on(b'L') - on(b'J'),
         right_y: on(b'I') - on(b'K'),
     }
@@ -468,14 +605,16 @@ impl Hub {
 
     /// Reads the host once; device callbacks run on the calling thread.
     fn poll(&self) {
-        let (pads, keys, mouse) = {
+        let (pads, keys, mouse, walking) = {
             let mut source = lock(&self.source);
             let pads: [_; PADS] = std::array::from_fn(|slot| source.pad(slot));
-            (pads, source.keys(), source.mouse())
+            // Keys first: Alt or Esc frees the cursor before the mouse is read.
+            let keys = source.keys();
+            (pads, keys, source.mouse(), source.walking())
         };
-        let events = self
-            .state()
-            .poll(&self.devices, self.one_pad, pads, keys, mouse);
+        let events =
+            self.state()
+                .poll(&self.devices, self.one_pad, pads, (keys, walking), mouse);
         self.deliver(events);
     }
 
@@ -520,14 +659,14 @@ impl State {
         devices: &[Device; DEVICES],
         one_pad: bool,
         pads: [Option<PadState>; PADS],
-        keys: Vec<KeyState>,
+        (keys, walking): (Vec<KeyState>, bool),
         mouse: Option<MouseState>,
     ) -> Vec<Event> {
         let now = now();
         let mut events = std::mem::take(&mut self.pending);
         self.update(devices, MOUSE, mouse.map(Value::Mouse), now, &mut events);
         if one_pad {
-            let pad = pads.into_iter().flatten().fold(fallback(&keys), merged);
+            let pad = pads.into_iter().flatten().fold(fallback(&keys, walking), merged);
             self.update(devices, FALLBACK, Some(Value::Pad(pad)), now, &mut events);
             self.update(devices, KEYBOARD, Some(Value::Keys(keys)), now, &mut events);
             return events;
@@ -536,7 +675,7 @@ impl State {
         for (slot, pad) in pads.into_iter().enumerate() {
             self.update(devices, slot, pad.map(Value::Pad), now, &mut events);
         }
-        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys)));
+        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys, walking)));
         self.update(devices, FALLBACK, fallback, now, &mut events);
         self.update(devices, KEYBOARD, Some(Value::Keys(keys)), now, &mut events);
         events
@@ -1172,13 +1311,25 @@ pub(crate) fn module() -> HleModule {
     }
 }
 
+/// The mouse buttons the title sees, and those still swallowed, from the
+/// buttons `held` now: none while the cursor is free; the ones held when it
+/// was captured (the click that captured it) stay swallowed until let go.
+#[cfg(any(windows, test))]
+fn captured_buttons(held: u32, captured: bool, was_captured: bool, swallowed: u32) -> (u32, u32) {
+    if !captured {
+        return (0, 0);
+    }
+    let swallowed = if was_captured { swallowed & held } else { held };
+    (held & !swallowed, swallowed)
+}
+
 /// Host input: XInput pads, and keyboard and mouse while our process has focus.
 #[cfg(windows)]
 mod host {
     use std::time::{Duration, Instant};
 
     use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
-    use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
+    use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
@@ -1192,7 +1343,8 @@ mod host {
         XInputSetState,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClientRect, GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId,
+        ClipCursor, GetClientRect, GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId,
+        SetCursorPos,
     };
 
     use super::*;
@@ -1239,6 +1391,97 @@ mod host {
         empty_until: [Option<Instant>; PADS],
         previous_cursor: Option<(i32, i32)>,
         mouse: MouseState,
+        /// The walk key is held on the keyboard ([`WALK_KEY`]).
+        walking: bool,
+        was_focused: bool,
+        was_captured: bool,
+        /// We clipped the cursor (`ClipCursor`), so we let it go.
+        clipped: bool,
+        /// Mouse buttons held when the cursor was captured (the click that
+        /// captured it): no clicks for the title until let go.
+        swallowed: u32,
+    }
+
+    /// The three mouse buttons the device reports, by bit.
+    const MOUSE_BUTTONS: [u16; 3] = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON];
+
+    impl Host {
+        /// Keeps the cursor's focus rules: freed when the title window loses
+        /// focus, captured when it gains it other than by a click.
+        fn focus(&mut self, focused: bool) {
+            cursor::FOCUSED.store(focused, Ordering::Relaxed);
+            if !focused {
+                cursor::release();
+            } else if !self.was_focused {
+                // SAFETY: plain queries.
+                let button_down = MOUSE_BUTTONS
+                    .into_iter()
+                    .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0);
+                if cursor::captures_on_focus(self.was_focused, focused, button_down) {
+                    cursor::capture();
+                }
+            }
+            self.was_focused = focused;
+        }
+
+        /// Holds a captured cursor inside `window`'s client area (`client`,
+        /// in its coordinates), or lets go of the clip we set.
+        fn clip(&mut self, window: Option<HWND>, client: &RECT) {
+            let held = window.filter(|_| cursor::clips(true)).and_then(|window| {
+                let mut corners = [
+                    POINT {
+                        x: client.left,
+                        y: client.top,
+                    },
+                    POINT {
+                        x: client.right,
+                        y: client.bottom,
+                    },
+                ];
+                // SAFETY: plain conversions for our own focused window.
+                unsafe {
+                    ClientToScreen(window, &mut corners[0]);
+                    ClientToScreen(window, &mut corners[1]);
+                }
+                let [a, b] = corners;
+                cursor::clip_rect((a.x, a.y, b.x, b.y))
+            });
+            match held {
+                Some((left, top, right, bottom)) => {
+                    let rect = RECT {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    };
+                    // SAFETY: a rectangle of the screen.
+                    unsafe { ClipCursor(&rect) };
+                    self.clipped = true;
+                }
+                None if self.clipped => {
+                    // SAFETY: lets go of the clip we set.
+                    unsafe { ClipCursor(std::ptr::null()) };
+                    self.clipped = false;
+                }
+                None => {}
+            }
+        }
+
+        /// Puts a captured cursor back at the middle of the client area, so
+        /// the next sample's motion is not stopped by the window's edge.
+        /// Returns where it is now, in client coordinates.
+        fn recentre(window: HWND, client: &RECT) -> Option<(i32, i32)> {
+            let centre = (client.right / 2, client.bottom / 2);
+            let mut point = POINT {
+                x: centre.0,
+                y: centre.1,
+            };
+            // SAFETY: plain conversion and cursor move for our own window.
+            let moved = unsafe {
+                ClientToScreen(window, &mut point) != 0 && SetCursorPos(point.x, point.y) != 0
+            };
+            moved.then_some(centre)
+        }
     }
 
     impl Source for Host {
@@ -1270,8 +1513,13 @@ mod host {
         }
 
         fn keys(&mut self) -> Vec<KeyState> {
+            let focused = focused_window().is_some();
+            self.focus(focused);
+            // The scripted keys are pressed with or without focus, and never
+            // capture, free the cursor or walk.
             let mut down = scripted();
-            if focused_window().is_some() {
+            self.walking = false;
+            if focused {
                 // Left/right modifier keys only, as devices report them; no
                 // mouse buttons (below 0x08).
                 let held: Vec<u8> = (0x08..=0xFE_u8)
@@ -1279,6 +1527,10 @@ mod host {
                     // SAFETY: plain queries.
                     .filter(|&vk| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0)
                     .collect();
+                if cursor::releases(&held) {
+                    cursor::release();
+                }
+                self.walking = held.contains(&WALK_KEY);
                 down.extend(held);
             }
             down.into_iter()
@@ -1310,23 +1562,50 @@ mod host {
                 };
                 sampled.then_some((point.x, point.y))
             });
-            let (cursor, (dx, dy)) =
-                mouse_delta(self.previous_cursor, position, (rect.right, rect.bottom));
-            self.previous_cursor = cursor;
+            let window = focused_window().filter(|_| position.is_some());
+            let capturing = cursor::enabled();
+            let captured = capturing && window.is_some() && cursor::clips(true);
+            self.clip(window.filter(|_| captured), &rect);
+            // A free cursor (capture on) turns nothing and clicks nothing;
+            // the next capture starts from where the cursor is then.
+            let previous = if capturing && !captured {
+                None
+            } else {
+                self.previous_cursor
+            };
+            let (mut cursor, (dx, dy)) = mouse_delta(previous, position, (rect.right, rect.bottom));
             if cursor.is_none() {
+                self.previous_cursor = None;
+                self.was_captured = false;
                 self.mouse = MouseState::default();
                 return None;
             }
+            if captured && let Some(window) = window {
+                cursor = Self::recentre(window, &rect).or(cursor);
+            }
+            self.previous_cursor = cursor;
             self.mouse.position_x += dx;
             self.mouse.position_y += dy;
-            self.mouse.buttons = 0;
-            for (bit, vk) in [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON].into_iter().enumerate() {
+            let mut held = 0;
+            for (bit, vk) in MOUSE_BUTTONS.into_iter().enumerate() {
                 // SAFETY: virtual-key state query.
                 if unsafe { GetAsyncKeyState(i32::from(vk)) } < 0 {
-                    self.mouse.buttons |= 1 << bit;
+                    held |= 1 << bit;
                 }
             }
+            self.mouse.buttons = if capturing {
+                let buttons = captured_buttons(held, captured, self.was_captured, self.swallowed);
+                self.swallowed = buttons.1;
+                buttons.0
+            } else {
+                held
+            };
+            self.was_captured = captured;
             Some(self.mouse)
+        }
+
+        fn walking(&mut self) -> bool {
+            self.walking
         }
 
         fn rumble(&mut self, slot: usize, low: u16, high: u16) {
@@ -1594,6 +1873,70 @@ mod tests {
             assert_eq!(motion, delta);
             previous = cursor;
         }
+    }
+
+    /// The cursor's rules around a size or move loop (dragging a border with
+    /// a captured cursor collapsed the window, the clip following the
+    /// shrinking client area), and the keys that free it.
+    #[test]
+    fn a_size_or_move_loop_frees_the_cursor_and_border_clicks_do_not_capture() {
+        // Focus from Alt-Tab captures; focus from a click does not (the
+        // click captures if it lands in the client area).
+        assert!(cursor::captures_on_focus(false, true, false));
+        assert!(!cursor::captures_on_focus(false, true, true));
+        assert!(!cursor::captures_on_focus(true, true, false));
+        assert!(!cursor::captures_on_focus(false, false, false));
+        // The clip stays inside the client area, away from the borders.
+        assert_eq!(
+            cursor::clip_rect((100, 50, 900, 650)),
+            Some((116, 66, 884, 634))
+        );
+        assert_eq!(cursor::clip_rect((0, 0, 1339, 30)), None, "a strip: no clip");
+        // A size loop frees a captured cursor, holds off captures and
+        // clipping, and leaves the cursor free when it ends.
+        cursor::set_captured(true);
+        assert!(cursor::clips(true) && cursor::may_capture(true));
+        cursor::size_move(true);
+        assert!(!cursor::captured() && !cursor::clips(true));
+        assert!(!cursor::may_capture(true), "no capture during the loop");
+        assert!(!cursor::captures_on_focus(false, true, false));
+        cursor::size_move(false);
+        assert!(!cursor::captured(), "still free after the loop");
+        assert!(cursor::may_capture(true), "a click in the window captures again");
+        assert!(!cursor::may_capture(false));
+        // Alt (either) or Esc frees; other keys do not.
+        assert!(cursor::releases(&[b'W', 0xA4]));
+        assert!(cursor::releases(&[0xA5]) && cursor::releases(&[0x1B]));
+        assert!(!cursor::releases(&[b'W', b'X', 0xA0]));
+    }
+
+    #[test]
+    fn the_capturing_click_is_no_click_until_let_go() {
+        // Free: nothing reaches the title.
+        assert_eq!(captured_buttons(1, false, false, 0), (0, 0));
+        // The left click that captured is swallowed while held...
+        assert_eq!(captured_buttons(1, true, false, 0), (0, 1));
+        // ...the right button pressed meanwhile is a click...
+        assert_eq!(captured_buttons(3, true, true, 1), (2, 1));
+        // ...and once the left is let go it clicks again.
+        assert_eq!(captured_buttons(2, true, true, 1), (2, 0));
+        assert_eq!(captured_buttons(3, true, true, 0), (3, 0));
+    }
+
+    #[test]
+    fn the_x_key_walks_and_space_is_the_x_button() {
+        // Scripted (or not held on the keyboard): X is the X button.
+        let pad = fallback(&[key(b'X'), key(b'W')], false);
+        assert_eq!((pad.buttons, pad.left_y), (X, 1.0));
+        // Held on the keyboard: no X button, the stick at walk speed, also
+        // on a diagonal.
+        let pad = fallback(&[key(b'X'), key(b'W')], true);
+        assert_eq!((pad.buttons, pad.left_x, pad.left_y), (0, 0.0, WALK_SPEED));
+        let pad = fallback(&[key(b'X'), key(b'W'), key(b'D')], true);
+        assert!((pad.left_x.hypot(pad.left_y) - WALK_SPEED).abs() < 1e-6);
+        assert!(pad.left_x > 0.0 && pad.left_y > 0.0);
+        // Walking still lets Space press X.
+        assert_eq!(fallback(&[key(b'X'), key(0x20)], true).buttons, X);
     }
 
     #[test]
