@@ -2496,6 +2496,7 @@ mod tests {
             free,
             shapes: Vec::new(),
             shape_index: Default::default(),
+            ownerless: Default::default(),
         };
         let (summary, by_kind) = kept(&views);
         let each = size_of::<(View, u32)>() as u64;
@@ -2550,6 +2551,7 @@ mod tests {
             free: Vec::new(),
             shapes: Vec::new(),
             shape_index: Default::default(),
+            ownerless: Default::default(),
         };
         let (_, before_kind) = kept(&before);
         for (k, name) in [
