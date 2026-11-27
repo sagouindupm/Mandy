@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="VIctory S: the Series S profile for low-end PCs">
-  <!-- VIctory S banner, drawn for this repository (GPL-3.0-or-later). The mark is the launcher's logo
-       (launcher/src/components/logo.tsx); the line is the sunset of the game window's title bar. -->
+  <!-- VIctory S banner, drawn for this repository (GPL-3.0-or-later). The mark is the launcher's logo, the
+       sagouin mascot (launcher/src/assets/sagouin.svg, inlined below); the line is the sunset of the game
+       window's title bar. -->
   <defs>
     <linearGradient id="sunset" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#FF3C78"/>
@@ -24,10 +25,32 @@
     <line x1="820" y1="280" x2="1280" y2="280"/>
     <line x1="880" y1="296" x2="1280" y2="296"/>
   </g>
-  <!-- the mark -->
+  <!-- the mark: the sagouin, shapes of launcher/src/assets/sagouin.svg (keep them in step) -->
   <g transform="translate(96 88) scale(2.25)">
     <rect width="64" height="64" rx="14" fill="#FF3C78"/>
-    <path d="M39.79 18.5 A9 9 0 1 0 32 32 A9 9 0 1 1 24.21 45.5" fill="none" stroke="#0B0B10" stroke-width="8"/>
+    <path d="M41 40 C52 46 52 55 42 57.5 C34 59.5 22 59.5 15 55.5 C9 52 10 45.5 16 45.5" fill="none" stroke="#0B0B10" stroke-width="4.5" stroke-linecap="round"/>
+    <path d="M41 40 C52 46 52 55 42 57.5 C34 59.5 22 59.5 15 55.5 C9 52 10 45.5 16 45.5" fill="none" stroke="#F5F1EA" stroke-width="4.5" stroke-dasharray="1.8 3"/>
+    <g>
+      <path d="M24 18.2 C17 14.5 12 12 6.5 11 C9 14 10.5 17 12 19.5 C8 20.5 4.5 23.5 2.5 27.5 C6 28 9 29 11.5 30.5 C8.5 33.5 6 37.5 5 42 C10.5 40.5 16 38.5 21.5 37 Z" fill="#F5F1EA"/>
+      <path d="M22.8 21.5 C19.5 22.2 17 24.6 16 28 C17.8 30.2 20.2 31.6 22.5 32 Z" fill="#6E5B4E"/>
+    </g>
+    <g transform="matrix(-1 0 0 1 64 0)">
+      <path d="M24 18.2 C17 14.5 12 12 6.5 11 C9 14 10.5 17 12 19.5 C8 20.5 4.5 23.5 2.5 27.5 C6 28 9 29 11.5 30.5 C8.5 33.5 6 37.5 5 42 C10.5 40.5 16 38.5 21.5 37 Z" fill="#F5F1EA"/>
+      <path d="M22.8 21.5 C19.5 22.2 17 24.6 16 28 C17.8 30.2 20.2 31.6 22.5 32 Z" fill="#6E5B4E"/>
+    </g>
+    <ellipse cx="32" cy="30" rx="15" ry="14" fill="#2A2A2E"/>
+    <path d="M18.93 27 A13.5 12 0 0 1 45.07 27" fill="none" stroke="#6E5B4E" stroke-width="2"/>
+    <path d="M21.66 27 A11 8.8 0 0 1 42.34 27" fill="none" stroke="#0B0B10" stroke-width="1.6"/>
+    <path d="M32 24 C36 23 41.5 23.5 43.5 28 C45 32.5 42.5 37.5 38.5 40.8 C36.5 42.6 34.4 43.4 32 43.4 C29.6 43.4 27.5 42.6 25.5 40.8 C21.5 37.5 19 32.5 20.5 28 C22.5 23.5 28 23 32 24 Z" fill="#6E5B4E"/>
+    <path d="M32 17 C35.6 19.5 35.8 24 32 29.5 C28.2 24 28.4 19.5 32 17 Z" fill="#F5F1EA"/>
+    <circle cx="26" cy="31.5" r="5" fill="#0B0B10"/>
+    <circle cx="38" cy="31.5" r="5" fill="#0B0B10"/>
+    <circle cx="27.7" cy="29.8" r="1.7" fill="#FFFFFF"/>
+    <circle cx="39.7" cy="29.8" r="1.7" fill="#FFFFFF"/>
+    <circle cx="24.4" cy="33.2" r="0.8" fill="#FFFFFF"/>
+    <circle cx="36.4" cy="33.2" r="0.8" fill="#FFFFFF"/>
+    <path d="M29.8 36.8 Q32 36 34.2 36.8 Q33.3 39 32 39.2 Q30.7 39 29.8 36.8 Z" fill="#0B0B10"/>
+    <path d="M32 39.2 L32 41.3 M29.4 41.2 Q30.8 42.3 32 41.3 Q33.2 42.3 34.6 41.2" fill="none" stroke="#0B0B10" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <!-- the wordmark -->
   <text x="276" y="178" fill="#FFFFFF" font-family="'Josefin Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="10">VIctory S</text>
