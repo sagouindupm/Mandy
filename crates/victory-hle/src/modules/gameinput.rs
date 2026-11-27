@@ -281,11 +281,36 @@ trait Source: Send {
     fn rumble(&mut self, slot: usize, low: u16, high: u16);
 }
 
+/// The letter a key stands for in the stand-in pad: by default the letter
+/// printed at that place on a US (QWERTY) keyboard, from the scan code, so
+/// that W/A/S/D, I/J/K/L and the other keys are at the same places on an
+/// AZERTY or QWERTZ keyboard (Z/Q/S/D there). `VICTORY_KEYBOARD=letters`:
+/// the letter the layout gives the key instead. Scripted keys
+/// (`VICTORY_KEYS`, scan codes past 0xFF) keep their letter.
+fn key_at(k: &KeyState) -> u8 {
+    static LETTERS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let letters =
+        *LETTERS.get_or_init(|| std::env::var("VICTORY_KEYBOARD").is_ok_and(|v| v.eq_ignore_ascii_case("letters")));
+    if letters || k.scan_code > 0xFF {
+        return k.virtual_key;
+    }
+    us_letter(k.scan_code as u8).unwrap_or(k.virtual_key)
+}
+
+/// The letter at a scan code's place on a US keyboard.
+fn us_letter(scan: u8) -> Option<u8> {
+    const ROWS: [(u8, &[u8]); 3] = [(0x10, b"QWERTYUIOP"), (0x1E, b"ASDFGHJKL"), (0x2C, b"ZXCVBNM")];
+    ROWS.iter().find_map(|&(first, row)| {
+        let i = scan.checked_sub(first)? as usize;
+        row.get(i).copied()
+    })
+}
+
 /// The stand-in pad for `keys`; `walking`: the walk key is held on the
 /// keyboard, so it is no X button and the left stick goes at walk speed.
 fn fallback(keys: &[KeyState], walking: bool) -> PadState {
     let on = |vk: u8| {
-        if keys.iter().any(|k| k.virtual_key == vk) && !(walking && vk == WALK_KEY) {
+        if keys.iter().any(|k| key_at(k) == vk) && !(walking && vk == WALK_KEY) {
             1.0
         } else {
             0.0
@@ -311,6 +336,43 @@ fn fallback(keys: &[KeyState], walking: bool) -> PadState {
         left_y,
         right_x: on(b'L') - on(b'J'),
         right_y: on(b'I') - on(b'K'),
+    }
+}
+
+/// The mouse as the stand-in pad's right stick, so that it turns the camera
+/// (the title reads no mouse for that): the stick follows the mouse's speed,
+/// averaged over ~80 ms so that a frame of the title sees the motion of the
+/// polls since the last. `VICTORY_MOUSE_LOOK=<gain>` (stick per pixel per
+/// 8 ms poll, 0.15; 0: off), `VICTORY_MOUSE_INVERT=1`: up looks down.
+#[derive(Clone, Copy, Debug, Default)]
+struct Look {
+    last: Option<(i64, i64)>,
+    x: f32,
+    y: f32,
+}
+
+impl Look {
+    fn moved(&mut self, mouse: Option<&MouseState>) -> PadState {
+        static GAIN: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+        let (gain, invert) = *GAIN.get_or_init(|| {
+            let gain = std::env::var("VICTORY_MOUSE_LOOK").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0.15f32);
+            let invert = if std::env::var("VICTORY_MOUSE_INVERT").is_ok_and(|v| v == "1") { -1.0 } else { 1.0 };
+            (gain.max(0.0), invert)
+        });
+        let (dx, dy) = match (self.last, mouse) {
+            (Some((x, y)), Some(m)) => (m.position_x - x, m.position_y - y),
+            _ => (0, 0),
+        };
+        self.last = mouse.map(|m| (m.position_x, m.position_y));
+        // A jump (the position reset when the cursor was freed) is no motion.
+        let (dx, dy) = if dx.abs() > 400 || dy.abs() > 400 { (0, 0) } else { (dx, dy) };
+        const ALPHA: f32 = 0.1;
+        self.x += ALPHA * ((dx as f32 * gain).clamp(-1.0, 1.0) - self.x);
+        self.y += ALPHA * ((-(dy as f32) * gain * invert).clamp(-1.0, 1.0) - self.y);
+        if gain == 0.0 || (self.x.abs() < 0.02 && self.y.abs() < 0.02) {
+            return PadState::default();
+        }
+        PadState { right_x: self.x.clamp(-1.0, 1.0), right_y: self.y.clamp(-1.0, 1.0), ..PadState::default() }
     }
 }
 
@@ -525,6 +587,9 @@ struct Slot {
 
 struct State {
     slots: [Slot; DEVICES],
+    /// The mouse's last cumulative position and the right stick it moves
+    /// ([`Look`]).
+    look: Look,
     callbacks: Vec<Registration>,
     /// Asynchronous enumerations, delivered by the next poll.
     pending: Vec<Event>,
@@ -577,6 +642,7 @@ impl Hub {
                 callbacks: Vec::new(),
                 pending: Vec::new(),
                 running: Vec::new(),
+                look: Look::default(),
             }),
             returned: Condvar::new(),
         }));
@@ -669,6 +735,8 @@ impl State {
         let now = now();
         let mut events = std::mem::take(&mut self.pending);
         self.update(devices, MOUSE, mouse.map(Value::Mouse), now, &mut events);
+        let look = self.look.moved(mouse.as_ref());
+        let fallback = |keys: &[KeyState], walking: bool| merged(fallback(keys, walking), look);
         if one_pad {
             let pad = pads.into_iter().flatten().fold(fallback(&keys, walking), merged);
             self.update(devices, FALLBACK, Some(Value::Pad(pad)), now, &mut events);
@@ -1885,6 +1953,38 @@ mod tests {
             Some(Provenance::Hle)
         );
         assert_eq!(r.classify("GameInput.dll", &ImportSymbol::Ordinal(2)), None);
+    }
+
+    #[test]
+    fn keys_are_read_by_their_place_on_a_us_keyboard() {
+        // AZERTY: the key printed Z sits where W is (scan 0x11), Q where A is.
+        assert_eq!(us_letter(0x11), Some(b'W'));
+        assert_eq!(us_letter(0x1E), Some(b'A'));
+        assert_eq!(us_letter(0x10), Some(b'Q'));
+        assert_eq!(us_letter(0x2C), Some(b'Z'));
+        assert_eq!(us_letter(0x26), Some(b'L'));
+        assert_eq!(us_letter(0x39), None);
+        let z_on_azerty = KeyState { scan_code: 0x11, code_point: u32::from(b'z'), virtual_key: b'Z', dead_key: false };
+        assert_eq!(key_at(&z_on_azerty), b'W');
+        let scripted = KeyState { scan_code: u32::from(b'W') + 0x100, code_point: 0, virtual_key: b'W', dead_key: false };
+        assert_eq!(key_at(&scripted), b'W');
+    }
+
+    #[test]
+    fn the_mouse_turns_the_right_stick_and_settles() {
+        let mut look = Look::default();
+        let at = |x: i64, y: i64| MouseState { position_x: x, position_y: y, ..MouseState::default() };
+        assert_eq!(look.moved(Some(&at(0, 0))), PadState::default());
+        let mut pad = PadState::default();
+        for i in 1..=20 {
+            pad = look.moved(Some(&at(i * 6, -i * 6)));
+        }
+        assert!(pad.right_x > 0.5 && pad.right_y > 0.5, "{pad:?}");
+        // A reset of the position is no motion; then it settles.
+        for _ in 0..80 {
+            pad = look.moved(Some(&at(0, 0)));
+        }
+        assert_eq!(pad, PadState::default());
     }
 
     #[test]
