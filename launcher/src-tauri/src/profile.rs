@@ -364,13 +364,13 @@ mod tests {
         // (machine, threads, CARD_BUFFERS_MB, TEXTURE_MAX, WINDOWS_BAR_MB, dlss, NVIDIA shader facts, warnings)
         type Row<'a> = (Hardware, &'a str, &'a str, Option<&'a str>, Option<&'a str>, bool, bool, usize);
         let rows: [Row; 7] = [
-            (hw("NVIDIA GeForce RTX 3050", 8, 12, 32), "4/3/3/4", "1536", None, None, true, true, 0),
+            (hw("NVIDIA GeForce RTX 3050", 8, 12, 32), "4/3/3/4", "1024", None, None, true, true, 0),
             (hw("NVIDIA GeForce GTX 1660 SUPER", 6, 8, 16), "3/2/2/3", "768", Some("2048"), Some("3072"), false, true, 0),
             (hw("NVIDIA GeForce RTX 4050 Laptop GPU", 6, 16, 16), "4/3/3/4", "768", Some("2048"), Some("3072"), true, true, 0),
             (hw("NVIDIA GeForce RTX 4070", 12, 20, 32), "6/4/4/6", "2048", None, None, true, true, 0),
             (hw("AMD Radeon RX 6600", 8, 12, 16), "3/2/2/3", "1024", None, Some("3072"), false, false, 1),
             (hw("Intel(R) UHD Graphics 770", 1, 12, 16), "3/2/2/3", "768", Some("2048"), Some("3072"), false, false, 1),
-            (hw("NVIDIA GeForce RTX 3080", 10, 16, 32), "6/4/4/6", "1536", None, None, true, true, 0),
+            (hw("NVIDIA GeForce RTX 3080", 10, 16, 32), "6/4/4/6", "1024", None, None, true, true, 0),
         ];
         for (h, th, buf, tex, bar, dlss, nv, warn) in rows {
             let e = env_of(&r, &h);

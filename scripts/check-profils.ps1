@@ -18,13 +18,13 @@ function New-Pc($gpu, $vram, $threads, $ram) {
 }
 # Machine, THIN/UNDER/VIEW/WORKERS threads, CARD_BUFFERS_MB, TEXTURE_MAX, WINDOWS_BAR_MB, DLSS, NVIDIA facts, warnings.
 $rows = @(
-    @{ Pc = New-Pc 'NVIDIA GeForce RTX 3050' 8 12 32;              Threads = '4/3/3/4'; Buf = '1536'; Tex = $null;  Bar = $null;  Dlss = $true;  Nv = $true;  Warn = 0 },
+    @{ Pc = New-Pc 'NVIDIA GeForce RTX 3050' 8 12 32;              Threads = '4/3/3/4'; Buf = '1024'; Tex = $null;  Bar = $null;  Dlss = $true;  Nv = $true;  Warn = 0 },
     @{ Pc = New-Pc 'NVIDIA GeForce GTX 1660 SUPER' 6 8 16;         Threads = '3/2/2/3'; Buf = '768';  Tex = '2048'; Bar = '3072'; Dlss = $false; Nv = $true;  Warn = 0 },
     @{ Pc = New-Pc 'NVIDIA GeForce RTX 4050 Laptop GPU' 6 16 16;   Threads = '4/3/3/4'; Buf = '768';  Tex = '2048'; Bar = '3072'; Dlss = $true;  Nv = $true;  Warn = 0 },
     @{ Pc = New-Pc 'NVIDIA GeForce RTX 4070' 12 20 32;             Threads = '6/4/4/6'; Buf = '2048'; Tex = $null;  Bar = $null;  Dlss = $true;  Nv = $true;  Warn = 0 },
     @{ Pc = New-Pc 'AMD Radeon RX 6600' 8 12 16;                   Threads = '3/2/2/3'; Buf = '1024'; Tex = $null;  Bar = '3072'; Dlss = $false; Nv = $false; Warn = 1 },
     @{ Pc = New-Pc 'Intel(R) UHD Graphics 770' 1 12 16;            Threads = '3/2/2/3'; Buf = '768';  Tex = '2048'; Bar = '3072'; Dlss = $false; Nv = $false; Warn = 1 },
-    @{ Pc = New-Pc 'NVIDIA GeForce RTX 3080' 10 16 32;             Threads = '6/4/4/6'; Buf = '1536'; Tex = $null;  Bar = $null;  Dlss = $true;  Nv = $true;  Warn = 0 }
+    @{ Pc = New-Pc 'NVIDIA GeForce RTX 3080' 10 16 32;             Threads = '6/4/4/6'; Buf = '1024'; Tex = $null;  Bar = $null;  Dlss = $true;  Nv = $true;  Warn = 0 }
 )
 
 $noDlss = [pscustomobject]@{ dlss_mode = ''; dlss_dir = '' }

@@ -68,8 +68,9 @@
         "VICTORY_RENDER_SCALE": "0.5",
         "VICTORY_OWN_UPSCALER": "1",
         "VICTORY_COMPOSE": "1",
-        "VICTORY_CARD_BUFFERS_MIN_MB": "1",
-        "VICTORY_CARD_BUFFERS_MB": "1536",
+        "VICTORY_CARD_BUFFERS_MIN_KB": "64",
+        "VICTORY_CARD_BUFFERS_MB": "1024",
+        "VICTORY_CARD_ROOM_FOR_TARGETS_MB": "1280",
         "VICTORY_WAVE_WIDE_DIGESTS": "7099a57fded142613b44f410463d6be6",
         "VICTORY_VRAM_RESERVE": "max",
         "VICTORY_AMBIENT_SETTLE": "250,3"
@@ -185,19 +186,20 @@
       ]
     },
     "carte": {
-      "note": "Card buffers according to its memory. Never 2048 MB under 11 GB (3 fps measured on 8 GB cards with 2 GB of buffers): a 10 GB card stays at 1536. VICTORY_TEXTURE_MAX only counts once PR #30 is merged; unknown to the engine before that, it has no effect. Card memory unknown: the settings of the groups.",
+      "note": "Card buffers according to its memory. Never 2048 MB under 11 GB (3 fps measured on 8 GB cards with 2 GB of buffers): a 10 GB card stays at 1024 like 8 GB (64 KiB buffers on the card, 1024 MB of them and 1280 MB of room for render targets: 75 ms against 93 on the RTX 3050, card refusals 67 -> 15, characters textured). VICTORY_TEXTURE_MAX only counts once PR #30 is merged; unknown to the engine before that, it has no effect. Card memory unknown: the settings of the groups.",
       "crans": [
         {
           "id": "6_go",
           "nom": "6 Go ou moins",
           "moins_de_go": 7,
-          "env": { "VICTORY_CARD_BUFFERS_MB": "768", "VICTORY_TEXTURE_MAX": "2048" }
+          "env": { "VICTORY_CARD_BUFFERS_MB": "768", "VICTORY_TEXTURE_MAX": "2048",
+     "VICTORY_CARD_ROOM_FOR_TARGETS_MB": "1024" }
         },
         {
           "id": "8_go",
           "nom": "8 à 10 Go",
           "moins_de_go": 11,
-          "env": { "VICTORY_CARD_BUFFERS_MB": "1536" }
+          "env": { "VICTORY_CARD_BUFFERS_MB": "1024" }
         },
         {
           "id": "12_go",
