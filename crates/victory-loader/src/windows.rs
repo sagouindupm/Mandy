@@ -84,6 +84,22 @@ pub fn load(prepared: &PreparedImage, dir: &Path) -> Result<LoadedImage> {
         // SAFETY: just mapped, and no title code has run.
         unsafe { crate::tls::redirect(loaded.base(), &loaded.info) }?;
     }
+    // LOCAL (victory-perf, via our wt5): opt-in title patches, each checked against the 1.0.2.1 hash and its bytes.
+    if std::env::var_os(crate::hooks::NO_WATCHDOG_ENV).is_some() {
+        // SAFETY: just mapped, and no title code has run.
+        let applied = unsafe { crate::hooks::disarm_watchdog(loaded.base(), &prepared.original_hash) };
+        tracing::info!(applied, "title watchdog hooks ({})", crate::hooks::NO_WATCHDOG_ENV);
+    }
+    // SAFETY: just mapped, and no title code has run.
+    let levers = unsafe { crate::hooks::resolution_levers(loaded.base(), &prepared.original_hash) };
+    if levers > 0 {
+        tracing::warn!(
+            applied = levers,
+            "title resolution levers ({}, {})",
+            crate::hooks::RENDER_SCALE_ENV,
+            crate::hooks::OWN_UPSCALER_ENV
+        );
+    }
     tracing::info!(
         base = format_args!("{:#x}", loaded.base()),
         preferred = format_args!("{:#x}", loaded.info.image_base),
@@ -183,13 +199,8 @@ impl ImportResolver for WithTitleDlls<'_> {
 }
 
 fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<()> {
-    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
-        return Ok(());
-    }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("renaming to {}", path.display()))?;
-    Ok(())
+    crate::publish::write_if_changed(path, bytes)
+        .with_context(|| format!("publishing {}", path.display()))
 }
 
 impl LoadedImage {

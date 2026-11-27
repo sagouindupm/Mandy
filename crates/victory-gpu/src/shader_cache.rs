@@ -1,7 +1,7 @@
 //! Translated shaders kept on disk (decision 0003): under the configured
 //! cache folder, keyed by the container's content and by the translator
-//! that translated it (its source fingerprint and settings, see `build`), so
-//! a changed translator never serves an old translation. Entries go through
+//! (the BLAKE3 of its sources) and its settings, so a changed translator
+//! never serves an old translation. Entries go through
 //! `victory-pipeline`'s content-addressed cache, which writes them
 //! atomically; an entry that does not read back is translated again.
 //!
@@ -37,183 +37,135 @@ pub(crate) fn counts() -> (u64, u64) {
     (HITS.load(Ordering::Relaxed), MISSES.load(Ordering::Relaxed))
 }
 
-/// What identifies the translation, besides the container: the shader
-/// crate's fingerprint (its source, every switch it reads, the host facts the
-/// device gave it, the loop limit, barrier waits and clean-up passes) and
-/// this file's encoding of the result. Not the whole executable any more: a
-/// rebuild that leaves the translator alone keeps its translations (each new
-/// build used to translate the title's thousands of shaders again, which kept
-/// the first minutes of every test run short of pipelines).
-/// `VICTORY_SHADER_CACHE_KEY=exe` restores the old key (the executable's hash).
-/// Worked out per lookup, so a translation made before the device said its
-/// wave size is never filed under the later key.
+/// What identifies a translation beside its container: the translator
+/// (the BLAKE3 of its sources, `build.rs`), the settings it runs with, and
+/// what it was told of the host. Not our executable: a rebuild of anything
+/// else used to translate every shader again.
 fn build() -> [u8; 32] {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    let limit = victory_shader::emit::loop_limit();
-    if limit != victory_shader::emit::DEFAULT_LOOP_LIMIT {
-        WARNED.call_once(|| tracing::warn!(limit, "VICTORY_SHADER_LOOP_LIMIT: translated loops stop sooner"));
-    }
-    static EXE: OnceLock<Option<[u8; 32]>> = OnceLock::new();
-    let exe = EXE.get_or_init(|| {
-        if std::env::var_os("VICTORY_SHADER_CACHE_KEY").is_some_and(|v| v == "exe") {
-            match std::env::current_exe().and_then(std::fs::read) {
-                Ok(bytes) => Some(*blake3::hash(&bytes).as_bytes()),
-                Err(e) => {
-                    tracing::warn!(error = %e, "cannot read our executable; keying on the translator");
-                    None
-                }
+    // The view heap's null slot differs by host GPU: a translation cached
+    // without the clamp must not be served (`host_settings` below).
+    crate::descriptor::host::probe_view_limit();
+    static FIXED: OnceLock<Vec<u8>> = OnceLock::new();
+    let fixed = FIXED.get_or_init(|| {
+        let limit = victory_shader::emit::loop_limit();
+        if limit != victory_shader::emit::DEFAULT_LOOP_LIMIT {
+            tracing::warn!(
+                limit,
+                "VICTORY_SHADER_LOOP_LIMIT: translated loops stop sooner"
+            );
+        }
+        let mut bytes = env!("VICTORY_TRANSLATOR").as_bytes().to_vec();
+        bytes.extend_from_slice(&limit.to_le_bytes());
+        // Which group barriers wait is part of the translation too.
+        bytes.push(victory_shader::emit::group_sync());
+        // So are the switches that pick the form of a wave64 program:
+        // without them here a run with `VICTORY_WAVE_WIDE=0` was
+        // served the translations an earlier run of the same
+        // executable had cached with the switch unset.
+        for name in [
+            "VICTORY_BVH_MISS",
+            // LOCAL: colours and image stores with NaN made 0.
+            "VICTORY_NAN_SCRUB",
+            // LOCAL (fxceless #1216): constant buffer slots marked.
+            "VICTORY_CONSTANT_MARKS",
+            "VICTORY_WAVE_WIDE",
+            "VICTORY_WAVE_DEEP_SKIPS",
+            "VICTORY_WAVE_OWN_BITS",
+            "VICTORY_WAVE_LOCAL",
+            "VICTORY_F16_NEAREST",
+            "VICTORY_HELPER_OWN",
+            "VICTORY_FIRSTLANE_OWN",
+            "VICTORY_FIRST_HALF",
+            "VICTORY_STRICT_JOINS",
+            "VICTORY_MESH_OUTPUT_STRICT",
+            "VICTORY_BVH_FENCES",
+            "VICTORY_BVH_BOUNDS",
+        ] {
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.push(b'=');
+            if let Some(value) = std::env::var_os(name) {
+                bytes.extend_from_slice(value.as_encoded_bytes());
             }
-        } else {
-            None
+            bytes.push(0);
         }
+        // And which clean-up passes ran over the translated code.
+        bytes.extend_from_slice(&victory_shader::emit::shader_opt().to_le_bytes());
+        bytes
     });
-    let mut h = blake3::Hasher::new();
-    h.update(b"victory shader cache key 2\0");
-    if let Some(exe) = exe {
-        h.update(exe);
+    let mut hash = blake3::Hasher::new();
+    hash.update(fixed);
+    for value in victory_shader::emit::host_settings() {
+        hash.update(&value.to_le_bytes());
     }
-    h.update(&victory_shader::emit::translation_fingerprint());
-    h.update(include_bytes!("shader_cache.rs"));
-    // The switches this file reads for the translator that change every
-    // program: the shader crate's fingerprint does not see them. The
-    // per-program lists (`VICTORY_WAVE_WIDE_ONLY`, `VICTORY_FIRSTLANE_OWN_ONLY`)
-    // are in the key of the programs they name only ([`program_key`]).
-    for name in ["VICTORY_HEAP_USAGE", "VICTORY_NAN_SCRUB"] {
-        h.update(name.as_bytes());
-        h.update(b"=");
-        if let Some(value) = std::env::var_os(name) {
-            h.update(value.as_encoded_bytes());
-        }
-        h.update(b"\0");
-    }
-    *h.finalize().as_bytes()
+    *hash.finalize().as_bytes()
 }
 
-/// A container translated with the forms this file allows it by its hash
-/// (the wave-wide form, the host wave's own first lane: [`WAVE_WIDE`],
-/// [`FIRSTLANE_OWN`]); for runs and the offline warm-up alike, which share
-/// the cache.
-fn translate_listed(c: &[u8]) -> Result<HostShader, String> {
-    let hash = blake3::hash(c).to_hex();
-    // By the hash the log names it by: the per-program switches
-    // (`VICTORY_WAVE_DEEP_SKIPS_NOT`, `_ONLY`) and `VICTORY_WAVE_WHY` see it.
-    victory_shader::emit::for_program(&hash[..16], || victory_shader::emit::with_wave_wide(listed(&WAVE_WIDE, "VICTORY_WAVE_WIDE_ONLY", &WAVE_WIDE_DEFAULT, &hash), || {
-        victory_shader::emit::with_firstlane_own(
-            listed(&FIRSTLANE_OWN, "VICTORY_FIRSTLANE_OWN_ONLY", &FIRSTLANE_OWN_DEFAULT, &hash),
-            || victory_shader::emit::translate(c),
-        )
-    }))
-    .map_err(|e| e.to_string())
+/// What tells one set of translations from another ([`build`]).
+pub(crate) fn translation() -> [u8; 32] {
+    build()
 }
 
-/// The offline warm-up (`victory translate --warm`): `container` is
-/// translated into the cache unless it is there already. `Ok(true)`: it
-/// was translated now. Needs [`use_shader_cache`] and the same host facts
-/// the run will have (`victory_shader::emit::translation_fingerprint`).
-pub fn warm(container: &[u8]) -> Result<bool, String> {
-    use victory_shader::emit;
-    let cache = CACHE.get().ok_or("no shader cache")?;
-    let ran = AtomicBool::new(false);
-    // By its hash and under its own key, as at run time ([`host_shader`]):
-    // the per-program switches.
-    let hash = blake3::hash(container).to_hex()[..16].to_owned();
-    let translate = |c: &[u8]| {
-        ran.store(true, Ordering::Relaxed);
-        translate_listed(c)
-    };
-    let off = !emit::deep_skips_allowed(Some(&hash)) && emit::wave64_retried(container);
-    cached(cache, &program_key(&build(), off, &hash), container, translate).map(|_| ran.load(Ordering::Relaxed))
+/// Puts the translation of `container` into the cache before any title asks
+/// for it (`victory shaders`): whether it was there already, or why it does
+/// not translate. The host is opened first, as a run does: what the card
+/// can do decides the form of some programs.
+pub fn precompile(container: &[u8]) -> Result<bool, String> {
+    let _ = crate::host::host();
+    let misses = MISSES.load(Ordering::Relaxed);
+    host_shader(container)?;
+    // (Counts other threads' misses too: the caller only adds them up.)
+    Ok(MISSES.load(Ordering::Relaxed) == misses)
 }
 
 /// The translation of a console shader container, from the cache when
 /// there is one.
 pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
-    use victory_shader::emit;
-    // The hash the log names the shader by (`pipeline.rs`), which the
-    // per-program switches take (and [`translate_listed`] passes on).
-    let hash = blake3::hash(container).to_hex()[..16].to_owned();
-    let translate = translate_listed;
-    match CACHE.get() {
-        Some(cache) => {
-            // (`wave64_retried` second: it parses the container, and only a
-            // program a list names, or with `VICTORY_WAVE_DEEP_SKIPS=0`
-            // any, gets there)
-            let off = !emit::deep_skips_allowed(Some(&hash)) && emit::wave64_retried(container);
-            cached(cache, &program_key(&build(), off, &hash), container, translate)
-        }
+    let translate = |c: &[u8]| victory_shader::emit::translate(c).map_err(|e| e.to_string());
+    let shader = match CACHE.get() {
+        Some(cache) => cached(cache, &build(), container, translate),
         None => translate(container),
-    }
+    }?;
+    #[cfg(feature = "diagnostics")]
+    let shader = paired_override(container, shader);
+    Ok(shader)
 }
 
-/// The containers (by the 16-digit hash the log names shaders with) whose
-/// wave64 compute program may take the wave-wide form on a host of 32-lane
-/// waves (`victory_shader::emit::with_wave_wide`): `VICTORY_WAVE_WIDE_ONLY`,
-/// a list of hashes, or by default the four programs of this title that
-/// come out of it with 32-lane waves and otherwise do not run at all on
-/// such a host (the driver refuses their 64-lane form: water transmission
-/// volumetrics, both kinds; particle visibility; the tiling of the
-/// screen-space reflection pass). `VICTORY_WAVE_WIDE_ONLY=none` allows none.
-static WAVE_WIDE: OnceLock<Vec<String>> = OnceLock::new();
-const WAVE_WIDE_DEFAULT: [&str; 4] = ["5dc3b25986622949", "6f225b641c5b0708", "369cbe906ea72764", "2cc4c197ee29e291"];
-
-/// The containers whose first-lane reads where not every lane runs take the
-/// host wave's own first lane (`victory_shader::emit::with_firstlane_own`):
-/// `VICTORY_FIRSTLANE_OWN_ONLY`, or by default the three programs of the
-/// ray-tracing structure builder (`XboxBvhBuilder.dll`) that need it to
-/// translate for 32-lane waves. Their scans read a sum of scalars, the same
-/// in every lane of the console wave, which is where the host wave's own
-/// first lane is exact; without them the builder's other 49 programs cannot
-/// run either (its stages run all or none, `crate::pipeline`).
-static FIRSTLANE_OWN: OnceLock<Vec<String>> = OnceLock::new();
-// (As the title passes them, then as `victory translate` finds them in the DLL.)
-const FIRSTLANE_OWN_DEFAULT: [&str; 6] = [
-    "39321a95223001ed",
-    "77360df21e12ea43",
-    "9fc111d3be79364f",
-    "dc78c5de69c7c155",
-    "322ed4ad832bdea6",
-    "d441b097704ab616",
-];
-
-/// Whether `hash` (a container's, in hex) is on the list `env` names (hashes
-/// separated by commas, `none` for none), or on `default` without it.
-fn listed(list: &OnceLock<Vec<String>>, env: &str, default: &[&str], hash: &str) -> bool {
-    let list = list.get_or_init(|| match std::env::var(env) {
-        Ok(v) => v.split(',').map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty() && h != "none").collect(),
-        Err(_) => default.iter().map(|h| h.to_string()).collect(),
-    });
-    list.iter().any(|h| hash.starts_with(h.as_str()))
-}
-
-/// The key of one program's entries: the build's, mixed with the
-/// per-program decision when the program is kept out of the wave64 form
-/// "without skips, scalars followed" (`VICTORY_WAVE_DEEP_SKIPS_NOT`,
-/// `_ONLY`: `victory_shader::emit::deep_skips_allowed`). Only for a wave64
-/// compute program on a host of 32-lane waves, the only ones it can change.
-/// So the lists are in no key: changing one translates again only the
-/// programs whose decision it changes, and a program allowed the form keeps
-/// the key it had without any list. The same for the programs
-/// `VICTORY_WAVE_WIDE_ONLY` and `VICTORY_FIRSTLANE_OWN_ONLY` name (`hash`:
-/// the 16 digits the log names the program by): trying another list on the
-/// water translates those few programs again, not the whole cache.
-fn program_key(build: &[u8; 32], deep_skips_off: bool, hash: &str) -> [u8; 32] {
-    let wide = listed(&WAVE_WIDE, "VICTORY_WAVE_WIDE_ONLY", &WAVE_WIDE_DEFAULT, hash);
-    let firstlane = listed(&FIRSTLANE_OWN, "VICTORY_FIRSTLANE_OWN_ONLY", &FIRSTLANE_OWN_DEFAULT, hash);
-    if !deep_skips_off && !wide && !firstlane {
-        return *build;
+/// Try cache entries made by the paired-wave translator for the 32-lane,
+/// one-million-descriptor host. The normal translation remains our source
+/// of binding metadata and remains in the translation cache.
+#[cfg(feature = "diagnostics")]
+fn paired_override(container: &[u8], mut shader: HostShader) -> HostShader {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let Some(dir) = DIR.get_or_init(|| std::env::var_os("VICTORY_PAIRED_SHADER_DIR").map(PathBuf::from)) else {
+        return shader;
+    };
+    if shader.stage != HwStage::Cs || victory_shader::emit::host_settings() != [32, 999_999, 0, 0] {
+        return shader;
     }
-    let mut h = blake3::Hasher::new();
-    h.update(build);
-    if deep_skips_off {
-        h.update(b"VICTORY_WAVE_DEEP_SKIPS off for this program");
+    let digest = blake3::hash(container).to_hex();
+    let hash = &digest[..16];
+    let path = dir.join(format!("{hash}.vsh"));
+    let mut bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return shader,
+        Err(e) => {
+            tracing::warn!(hash, error = %e, "could not read paired shader");
+            return shader;
+        }
+    };
+    // Paired VSH1 entries predate the half-view list. These programs have
+    // none. The equality check includes the list on our side.
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    if let Some(mut paired) = decode(&bytes) {
+        let dxil = std::mem::replace(&mut paired.dxil, shader.dxil.clone());
+        if paired == shader && dxil.starts_with(b"DXBC") {
+            shader.dxil = dxil;
+            tracing::info!(hash, "using paired Wave32 bytecode with matching shader bindings");
+            return shader;
+        }
     }
-    if wide {
-        h.update(b"the wave-wide form allowed for this program");
-    }
-    if firstlane {
-        h.update(b"the host wave's own first lane for this program");
-    }
-    *h.finalize().as_bytes()
+    tracing::warn!(hash, "paired shader entry did not match the translated shader bindings");
+    shader
 }
 
 /// The cache entry's converter: the build and the container in, the
@@ -531,53 +483,6 @@ mod tests {
             }
         }
         files
-    }
-
-    #[test]
-    fn only_the_programs_a_list_names_change_key() {
-        let build = [7u8; 32];
-        // Not in the default lists: the build's key.
-        assert_eq!(program_key(&build, false, "0000000000000000"), build);
-        // A water program the default wave-wide list names: a key of its own,
-        // so another list translates it again without touching the rest.
-        let wide = program_key(&build, false, WAVE_WIDE_DEFAULT[0]);
-        if std::env::var_os("VICTORY_WAVE_WIDE_ONLY").is_none() {
-            assert_ne!(wide, build);
-            assert_ne!(wide, program_key(&build, true, WAVE_WIDE_DEFAULT[0]));
-        }
-    }
-
-    #[test]
-    fn a_program_kept_out_of_the_deep_skips_form_has_a_key_of_its_own() {
-        let build = [7u8; 32];
-        assert_eq!(program_key(&build, false, "0000000000000000"), build, "allowed: the build's key, as without lists");
-        let off = program_key(&build, true, "0000000000000000");
-        assert_ne!(off, build);
-        assert_eq!(program_key(&build, true, "0000000000000000"), off, "the same decision, the same key");
-        assert_ne!(program_key(&[8; 32], true, "0000000000000000"), off, "and still the build's");
-
-        // So only the program whose decision changed is translated again.
-        let dir = tempfile::tempdir().unwrap();
-        let cache = Cache::open(dir.path()).unwrap();
-        let runs = AtomicU64::new(0);
-        let translate = |_: &[u8]| {
-            runs.fetch_add(1, Ordering::Relaxed);
-            Ok(shader())
-        };
-        let [a, b] = [b"program a".as_slice(), b"program b"];
-        for c in [a, b] {
-            cached(&cache, &program_key(&build, false, "0000000000000000"), c, translate).unwrap();
-        }
-        assert_eq!(runs.load(Ordering::Relaxed), 2);
-        // a listed: a translated again, b from the cache
-        cached(&cache, &program_key(&build, true, "0000000000000000"), a, translate).unwrap();
-        cached(&cache, &program_key(&build, false, "0000000000000000"), b, translate).unwrap();
-        assert_eq!(runs.load(Ordering::Relaxed), 3);
-        // the list emptied again: both from the cache
-        for c in [a, b] {
-            cached(&cache, &program_key(&build, false, "0000000000000000"), c, translate).unwrap();
-        }
-        assert_eq!(runs.load(Ordering::Relaxed), 3);
     }
 
     #[test]

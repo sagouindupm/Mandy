@@ -643,7 +643,6 @@ dependencies = [
  "victory-pe",
  "victory-shader",
  "walkdir",
- "windows-sys",
 ]
 
 [[package]]
@@ -691,9 +690,7 @@ name = "victory-hle"
 version = "0.1.0"
 dependencies = [
  "opus-pure",
- "serde",
  "tempfile",
- "toml",
  "tracing",
  "victory-formats",
  "victory-gpu",

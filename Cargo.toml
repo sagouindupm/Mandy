@@ -77,3 +77,12 @@ debug = "line-tables-only"
 # kept in its own folder so it does not evict the plain release build.
 [profile.diag]
 inherits = "release"
+
+# The play build for speed (scripts/build-perf.ps1): release without the
+# `diagnostics` feature, the whole program optimized as one (fat LTO, one
+# code generation unit), for the player's processor (`-C target-cpu`, set
+# by the script). Its own folder, target/perf.
+[profile.perf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

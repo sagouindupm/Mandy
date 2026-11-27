@@ -792,6 +792,9 @@ impl<'a> Lanes<'a> {
             .iter()
             .enumerate()
             .map(|(n, block)| {
+                // Reachability is fixed within the block. Vector instructions
+                // with the same EXEC therefore need the same guard.
+                let mut last_guard = None;
                 block
                     .insts
                     .iter()
@@ -801,8 +804,16 @@ impl<'a> Lanes<'a> {
                         | (_, Fields::Sop { .. } | Fields::Sopp { .. } | Fields::Smem { .. }) => {
                             None
                         }
-                        (&Some(e), _) if b.implies(cond[n], e) => None,
-                        (&Some(e), _) => Some(b.given(e, cond[n])),
+                        (&Some(e), _) => {
+                            if let Some((prev, guard)) = last_guard
+                                && prev == e
+                            {
+                                return guard;
+                            }
+                            let guard = (!b.implies(cond[n], e)).then(|| b.given(e, cond[n]));
+                            last_guard = Some((e, guard));
+                            guard
+                        }
                     })
                     .collect()
             })
@@ -917,46 +928,6 @@ impl<'a> Lanes<'a> {
                     })
                 };
                 let derived = exec_write(lo, k.0) || exec_write(hi, k.1);
-                // Halves copied apart from one pair (`s_mov_b32` each, as a wave64 mask parked
-                // in a VGPR's lanes comes back when its slot is not always used as a pair):
-                // the pair they copy.
-                if m.is_none() {
-                    let copy = |v: Value| -> Option<Value> {
-                        let (b, i) = self.defs.get(&v).copied()?;
-                        let inst = &p.blocks[b].insts[i];
-                        match &inst.fields {
-                            Fields::Sop { src, .. } if inst.name() == "s_mov_b32" => match src.first() {
-                                Some(&Operand::Scalar { code, .. }) => inst.read(Reg::S(code)),
-                                _ => None,
-                            },
-                            _ => None,
-                        }
-                    };
-                    let (mut a, mut b) = k;
-                    let mut pair = None;
-                    for _ in 0..8 {
-                        let (Some(x), Some(y)) = (copy(a), copy(b)) else { break };
-                        (a, b) = (x, y);
-                        // (the low and the high dword of what one instruction writes)
-                        let halves = self.defs.get(&a).filter(|&d| self.defs.get(&b) == Some(d)).is_some_and(|&(bl, i)| {
-                            let w = &p.blocks[bl].insts[i].writes;
-                            w.iter().any(|&(r, v)| {
-                                v == a
-                                    && matches!(r, Reg::S(c) if c.checked_add(1).is_some_and(|h| w.contains(&(Reg::S(h), b))))
-                            })
-                        });
-                        if halves {
-                            pair = Some((a, b));
-                            break;
-                        }
-                    }
-                    if let Some(pair) = pair {
-                        let r = self.mask(pair);
-                        let cache = if r.1 { &mut self.masks } else { &mut self.other };
-                        cache.insert(k, r.0);
-                        return r;
-                    }
-                }
                 // shortcut: the atom names the pair by its low dword, and
                 // lowering takes the high dword written beside it. For halves
                 // written apart (two `s_mov_b32`) lanes 32-63 are wrong unless
@@ -1618,6 +1589,37 @@ mod tests {
     }
 
     #[test]
+    fn guards_follow_exec_and_block_reachability() {
+        let p = build(
+            &[
+                0x7DA4_0080, // v_cmpx_eq_u32 exec, 0, v0
+                0x7E02_0280, // v_mov_b32 v1, 0
+                0x7E04_0280, // v_mov_b32 v2, 0
+                0xBF88_0005, // s_cbranch_execz -> end
+                0x7E06_0280, // v_mov_b32 v3, 0
+                0x7DA4_0880, // v_cmpx_eq_u32 exec, 0, v4
+                0x7E06_0280, // v_mov_b32 v3, 0
+                0xBE82_0480, // s_mov_b64 s[2:3], 0
+                0x7E0A_0280, // v_mov_b32 v5, 0
+                S_ENDPGM,
+            ],
+            true,
+        );
+        let s = structure(&p).unwrap();
+        let lane = |block: usize, i: usize| {
+            Atom::Lane(p.blocks[block].insts[i].write(Reg::S(EXEC)).unwrap())
+        };
+        let a = s.guards[0][1].unwrap();
+        let b = s.guards[1][2].unwrap();
+        assert_eq!(s.bools.node(a), Some((lane(0, 0), Bool::FALSE, Bool::TRUE)));
+        assert_eq!(s.guards[0], [None, Some(a), Some(a), None]);
+        // The fallthrough already implies the first compare. Only the second
+        // compare needs testing, and the scalar move never needs a guard.
+        assert_eq!(s.bools.node(b), Some((lane(1, 1), Bool::FALSE, Bool::TRUE)));
+        assert_eq!(s.guards[1], [None, None, Some(b), None, Some(b)]);
+    }
+
+    #[test]
     fn divergent_loop_exits_per_lane() {
         let p = build(
             &[
@@ -1727,32 +1729,6 @@ mod tests {
                 Some((Atom::Lane(lo), Bool::FALSE, Bool::TRUE)),
                 "{reader:#x}: vcc_hi was zeroed after the compare"
             );
-        }
-    }
-
-    /// A wave64 mask whose halves come back apart (the two `s_mov_b32` a VGPR-lane slot
-    /// restores when it is not always used as a pair, `PS_VoxelizeVisiblity`) is the mask they
-    /// copy, not an opaque one; halves of different pairs are not.
-    #[test]
-    fn a_mask_copied_half_by_half_is_the_mask() {
-        for (hi, same) in [(0xBEA5_0323u32, true), (0xBEA5_0322, false)] {
-            let p = build(
-                &[
-                    0xD4C2_0022,
-                    0x0002_0080, // v_cmp_eq_u32 s[34:35], 0, v0
-                    0xBEA4_0322, // s_mov_b32 s36, s34
-                    hi,          // s_mov_b32 s37, s35 (or s34)
-                    0xD501_0001,
-                    0x0092_0480, // v_cndmask_b32 v1, 0, v2, s[36:37]
-                    S_ENDPGM,
-                ],
-                true,
-            );
-            let s = structure(&p).unwrap();
-            let cmp = p.blocks[0].insts[0].write(Reg::S(34)).unwrap();
-            let copy = p.blocks[0].insts[3].read(Reg::S(36)).unwrap();
-            assert!(s.masks.contains_key(&cmp));
-            assert_eq!(s.masks.get(&copy) == s.masks.get(&cmp), same, "{hi:#x}");
         }
     }
 

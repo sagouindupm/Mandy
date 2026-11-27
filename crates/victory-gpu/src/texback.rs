@@ -8,8 +8,8 @@
 //! the title read those two kinds), and boats sank.
 //!
 //! For textures of the kinds in `VICTORY_TEXTURE_BACK` (comma-separated
-//! `<width>x<height>f<format>`; `1` for the four water formats found by
-//! the upstream trace), a list in which shaders write one copies it
+//! `<width>x<height>f<format>`; unset or `1`: the four water formats found by
+//! the upstream trace; `0`: none), a list in which shaders write one copies it
 //! into a read-back buffer of ours when it closes, and once the list has run
 //! the texels are tiled into the texture's title memory in the console's
 //! layout, as the console's GPU would have left them.
@@ -32,9 +32,8 @@ fn kinds() -> &'static [(u64, u32, u32)] {
     KINDS.get_or_init(|| {
         const DEFAULT: &str = "256x256f41,256x256f16,64x64f16,128x128f36";
         let list = match std::env::var("VICTORY_TEXTURE_BACK").as_deref() {
-            Ok("1") => DEFAULT.to_owned(),
+            Ok("1") | Err(_) => DEFAULT.to_owned(),
             Ok(spec) => spec.to_owned(),
-            Err(_) => String::new(),
         };
         let kinds: Vec<(u64, u32, u32)> = list
             .split(',')
@@ -277,9 +276,12 @@ fn stale() {
 
 /// Tiles a read-back's texels into its title allocation.
 fn write(landing: &Landing) {
+    use crate::land::{count, spent, stat};
     static COPIED: AtomicU64 = AtomicU64::new(0);
+    let asked = std::time::Instant::now();
     let _mapping = crate::watch::title_memory_reading();
     let _ticket_guard = TICKETS.lock().unwrap_or_else(|e| e.into_inner());
+    let working = spent(stat::TB_WAIT, asked);
     if !landing.ticket.valid.load(Ordering::Acquire) {
         stale();
         return;
@@ -304,6 +306,8 @@ fn write(landing: &Landing) {
         }
     }
     crate::host::copy_mapped(at as *mut u8, tiled.as_ptr(), size, true);
+    spent(stat::TB_WORK, working);
+    count(stat::TB_WRITTEN, 1);
     let copied = COPIED.fetch_add(1, Ordering::Relaxed) + 1;
     if copied == 1 || copied.is_multiple_of(128) {
         tracing::info!(copied, bytes = size, "texture readback landed");
@@ -320,7 +324,9 @@ struct Writer {
 impl Writer {
     fn send(&self, landing: Landing) {
         let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
-        waiting.insert(landing.ticket.at, landing);
+        if waiting.insert(landing.ticket.at, landing).is_some() {
+            crate::land::count(crate::land::stat::TB_REPLACED, 1);
+        }
         drop(waiting);
         self.more.notify_one();
     }

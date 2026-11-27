@@ -226,8 +226,6 @@ pub(crate) struct Module {
     named: Vec<(String, Vec<Md>)>,
     /// See [`Tag`]: by instruction.
     tags: HashMap<u32, Tag>,
-    /// See [`Module::splice`]: (block, body length then, head, rest).
-    splices: Vec<(usize, usize, usize, usize)>,
 }
 
 impl Module {
@@ -335,12 +333,6 @@ impl Module {
         }
     }
 
-    /// Function names declared in this module (test inspection).
-    #[cfg(test)]
-    pub fn func_names(&self) -> Vec<String> {
-        self.funcs.iter().map(|f| f.name.clone()).collect()
-    }
-
     /// A function declaration (or `main` with `body`), found by name.
     pub fn function(&mut self, name: &str, ty: Ty, attr: Option<Attr>, body: bool) -> V {
         if let Some(&i) = self.func_ids.get(name) {
@@ -397,39 +389,6 @@ impl Module {
     pub fn new_block(&mut self) -> usize {
         self.blocks.push(Block::default());
         self.blocks.len() - 1
-    }
-
-    /// Control flow (a loop) between what `block` holds so far and what is added to it later,
-    /// for callers that go on adding to `block`: returns (`head`, `rest`). `block` goes on to
-    /// `head` here, which the caller fills and leaves for `rest` (and itself); what comes after
-    /// moves to `rest` with `block`'s exit at [`Module::apply_splices`].
-    pub fn splice(&mut self, block: usize) -> (usize, usize) {
-        let (head, rest) = (self.new_block(), self.new_block());
-        self.splices.push((block, self.blocks[block].body.len(), head, rest));
-        (head, rest)
-    }
-
-    /// Carries out the [`Module::splice`]s, the latest point in a block first: each block's
-    /// code after the point and its exit move to `rest`, and the phis that came from the block
-    /// come from `rest` (the only way out of it now).
-    pub fn apply_splices(&mut self) {
-        let mut splices = std::mem::take(&mut self.splices);
-        splices.sort_by_key(|&(b, at, _, _)| std::cmp::Reverse((b, at)));
-        for (b, at, head, rest) in splices {
-            let after = self.blocks[b].body.split_off(at);
-            self.blocks[rest].body = after;
-            self.blocks[rest].term = self.blocks[b].term.replace(Term::Br(head));
-            for blk in 0..self.blocks.len() {
-                for k in 0..self.blocks[blk].phis.len() {
-                    let i = self.blocks[blk].phis[k] as usize;
-                    if let Op::Phi(incoming) = &mut self.insts[i].op {
-                        for (_, from) in incoming.iter_mut().filter(|(_, from)| *from == b) {
-                            *from = rest;
-                        }
-                    }
-                }
-            }
-        }
     }
 
     pub fn type_of(&self, v: V) -> Ty {
@@ -768,7 +727,7 @@ impl Module {
             let blk = &self.blocks[b];
             if let (Some(Term::Br(h)), true, [p]) = (
                 blk.term,
-                blk.phis.is_empty() && blk.body.is_empty(),
+                blk.phis.iter().all(|&i| !live[i as usize]) && blk.body.is_empty(),
                 &preds[b][..],
             ) && pos[h] < pos[b]
                 && !succs(*p).contains(&h)
@@ -1235,6 +1194,45 @@ mod tests {
         assert!(live[ids(read)] && live[ids(sum)]);
         assert!(!live[ids(unread)] && !live[ids(cyc_a)] && !live[ids(cyc_b)]);
         assert_eq!(live, live_by_passes(&m));
+    }
+
+    #[test]
+    fn empty_latch_with_dead_phis_is_folded() {
+        // Two identical loops except one has an unread phi in its empty latch;
+        // both must fold the latch and emit identical bitcode.
+        let build = |with_dead_phi: bool| {
+            let mut m = Module::default();
+            let i32t = m.int(32);
+            let void = m.void();
+            let fty = m.func_ty(void, vec![i32t]);
+            let f = m.function("sink", fty, Some(Attr::NoUnwind), false);
+            let main_ty = m.func_ty(void, vec![]);
+            m.function("main", main_ty, None, true);
+            let (entry, head, body, latch, exit) = (
+                m.new_block(),
+                m.new_block(),
+                m.new_block(),
+                m.new_block(),
+                m.new_block(),
+            );
+            let (z, one, ten) = (m.i32(0), m.i32(1), m.i32(10));
+            m.terminate(entry, Term::Br(head));
+            let i = m.phi(head, i32t);
+            m.terminate(head, Term::Br(body));
+            let next = m.bin(body, Bin::Add, i, one);
+            let cond = m.cmp(body, pred::IULT, next, ten);
+            m.terminate(body, Term::CondBr(cond, latch, exit));
+            if with_dead_phi {
+                let dead = m.phi(latch, i32t);
+                m.set_phi(dead, vec![(next, body)]);
+            }
+            m.terminate(latch, Term::Br(head));
+            m.set_phi(i, vec![(z, entry), (next, latch)]);
+            let _ = m.call(exit, f, vec![next]);
+            m.terminate(exit, Term::Ret);
+            m.write()
+        };
+        assert_eq!(build(false), build(true));
     }
 
     #[test]

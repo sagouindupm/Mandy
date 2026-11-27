@@ -7,6 +7,24 @@ ajoutez une ligne**, même si le résultat est négatif.
 *Everything measured, kept or rejected, and what is left to try. Read this before you start; add a
 row after every test, negative results included.*
 
+## 27/11/2026 : changement de base
+
+Mesuré sur la machine de référence (RTX 3050 8 Go, i5-12400F, 32 Go), mission du bateau, **chaque build
+préparé comme un joueur** : son propre dossier de cache, shaders traduits, un passage qui note les pipelines
+(`VICTORY_PIPELINE_BOOK=1`), `victory warm --used`, puis deux passages mesurés.
+
+| Build | 1er passage mesuré | 2e passage | Image |
+|---|---|---|---|
+| Notre ancienne base (fxceless + nos correctifs, PR #18) | 213-322 ms | — | visages bons, eau blanche en cinématique |
+| WASDeKeys/victory-low-end-pc (cool_fox) | 163 ms | **108 ms** | ciel et fonds en aplats, eau noire tachée de blanc |
+| **Maykzera/victory-rtx3060 (lignée trustno1)** | 103 ms | **98 ms (10,2 fps, p90 132)** | **eau réaliste en cinématique et en jeu, visages détaillés** |
+
+Nos mesures précédentes des autres forks (trustno1 à « 5 s par image », avatarmanz à 377 ms) étaient
+fausses : pipelines non construites, `VICTORY_PIPELINE_WAIT_MS=10000` (gels de 12 s) et dossier de cache
+partagé entre builds. Leur architecture (fils de traduction des listes, soumissions préparées ensemble,
+lectures faites sur la carte) prépare une image en 34-62 ms contre 100-130 ms pour notre ancienne base :
+d'où le changement de base. Notre ancienne branche reste en historique.
+
 ## Comment on mesure
 
 - Machine de référence : **RTX 3050 8 Go, i5-12400F, 32 Go de RAM, Windows 11**, `--console series-s`,
@@ -126,6 +144,9 @@ accélérée : à profiler).
 | kelvaroq complet (fxceless f85101b + patches 0000-0064), ses réglages par défaut, sans DLSS | stellarr-studio | images lourdes ~300 ms : pas mieux ; on a pris le 0041 |
 | Réglages du « run 279 » fxceless qu'on avait sans les activer : `INDIRECT_WINDOW=1 CARD_REHASH_RUNS=1 BACK_OWN_VIEW=1 STAGING_POOL=0 CARD_WINDOWS_MB=1024` | fxceless | 295 ms, comme sans |
 | Eau : `VICTORY_WAVE_WIDE_ONLY` sans les deux programmes de volumétrie (5dc3…, 6f22…) | cool_fox PR #24, fxceless PR #695 | l'eau blanche des cinématiques reste blanche : ce n'est pas la cause. En jeu l'eau reste bonne et le passage était plus rapide (212 ms, un seul passage) : à confirmer |
+| Eau blanche des cinématiques : `VICTORY_WAVE_DEEP_SKIPS=0` partout | — | écran blanc, visages noirs, rectangles noirs : pire |
+| Eau blanche des cinématiques : sans les 1 000 shaders de résolution RT (`rt_off_hashes.txt` de trustno1) | trustno1 | eau toujours blanche en cinématique ; en jeu correcte, 242 ms |
+| Eau blanche des cinématiques : `VICTORY_WAVE_WIDE_ONLY=none` | — | toute l'image en aplats (bandes de couleur) : un des 4 programmes par défaut est nécessaire ; eau toujours blanchâtre |
 
 ## À essayer (par ordre d'intérêt)
 
@@ -144,7 +165,7 @@ Prenez une ligne, ouvrez une *issue* « [en cours] … » pour que personne ne f
 | 6 | Visages noirs par moments | image | PR #927 portée (visages qui bougent) ; reste à voir s'il y en a encore : avatarmanz e4245f3c (« black-face texture fixes », gros commit lié à d'autres) | M |
 | 7 | ~~Soleil noir, ciel en bandes~~ | fait (`VICTORY_NAN_SCRUB=1`) | | |
 | 8 | Buffers périmés avec `UNWATCHED_FRAMES=2` | image | codec_d 18bdf79 : dépend de `pool.rs`/`residency.rs` qu'on n'a pas (6 conflits dans `draw.rs`) ; porter seulement la partie `draw.rs` | M |
-| 9 | Eau peu profonde blanche, rectangles fantômes sur l'eau | image | `docs/deserialize-pipelines.md`, captures `VICTORY_CAPTURE_AT` | M |
+| 9 | **Eau blanche en cinématique**, eau peu profonde blanche, rectangles fantômes | image | les 4 programmes de l'eau tournent bien en cinématique (liés vers 220 s) ; ni la volumétrie, ni les deep skips, ni le RT, ni les listes wave-wide n'y font rien (voir Rejeté). Suite : capture d'une image de cinématique (`VICTORY_CAPTURE_AT`, build diagnostics) et suivre qui écrit la cible HDR de l'eau ; `docs/deserialize-pipelines.md` | M-L |
 | 10 | Variables à mesurer | sans code | `VICTORY_WIDE_REFRESH=1` (1 passage : 221 ms), `VICTORY_TEXTURE_STAGE_MS=24 VICTORY_WINDOW_KB=1024 VICTORY_WINDOW_TAILS=1` (1 passage : 217 ms, p90 383 ms au lieu de ~500 : à confirmer), `VICTORY_JOIN_COPIES=1`, `VICTORY_INDIRECT_WINDOW=1`, `VICTORY_CARD_REHASH_RUNS=1` | S |
 | 11 | Mémoire de la carte écrite directement (Resizable BAR) | -2 Go de mémoire partagée | cold-project-vi 0030cd4 | M-L |
 | 12 | **Autres machines** | on ne connaît que la RTX 3050 | mesures sur AMD, 12 Go, autres processeurs : très utiles | S |

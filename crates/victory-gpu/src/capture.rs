@@ -27,7 +27,8 @@ pub(crate) fn listed(n: u64) -> bool {
                 .filter_map(|f| f.trim().parse().ok())
                 .collect()
         })
-        .contains(&n);
+        .contains(&n)
+        || n == KEY_FRAME.load(std::sync::atomic::Ordering::Relaxed);
     // `VICTORY_CAPTURE_WORLD`: also the 2nd and the 6th frame after the first
     // one that ran 500 draws or more (a title's first 3D frames: their
     // numbers depend on how long the menus were shown), and the 30th and
@@ -47,32 +48,7 @@ pub(crate) fn listed(n: u64) -> bool {
     });
     let first = WORLD.load(std::sync::atomic::Ordering::Relaxed);
     let after = n.wrapping_sub(first);
-    named || at_time(n) || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
-}
-
-/// `VICTORY_CAPTURE_AT` (comma-separated seconds from the first frame): the
-/// first frame at or after each moment is listed too. Cutscenes run on the
-/// clock, so a moment finds the same shot in builds of different speeds,
-/// where a frame number does not.
-fn at_time(n: u64) -> bool {
-    type At = (std::time::Instant, Vec<f64>, Vec<u64>);
-    static AT: std::sync::Mutex<Option<At>> = std::sync::Mutex::new(None);
-    let mut at = AT.lock().unwrap_or_else(|e| e.into_inner());
-    let (began, pending, chosen) = at.get_or_insert_with(|| {
-        let list = std::env::var("VICTORY_CAPTURE_AT").unwrap_or_default();
-        let times = list.split(',').filter_map(|t| t.trim().parse().ok()).collect();
-        (std::time::Instant::now(), times, Vec::new())
-    });
-    if chosen.contains(&n) {
-        return true;
-    }
-    let now = began.elapsed().as_secs_f64();
-    let due = pending.iter().any(|&t| t <= now);
-    if due {
-        pending.retain(|&t| t > now);
-        chosen.push(n);
-    }
-    due
+    named || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
 }
 
 /// With a capture folder, for the frames [`listed`]: `what` is added to
@@ -145,21 +121,8 @@ fn world_on() -> bool {
     *ON.get_or_init(|| std::env::var_os("VICTORY_CAPTURE_WORLD").is_some())
 }
 
-/// Every how many world frames a picture is saved with
-/// `VICTORY_CAPTURE_WORLD` (`VICTORY_CAPTURE_WORLD_EVERY`, 8 unless said).
-///
-/// A saved frame is read back at once and written as a PNG inside the
-/// present: run 225's frame log has every saved frame of the cell at 371 ms
-/// against a usual 136 (the present's own copy and show 137 ms instead of
-/// 2, and 123 ms more waiting for the card). At every 8th frame that was
-/// the regular dip of every test run, and a fifth of its time. A run that
-/// measures speed asks for 64 or more.
-fn world_every() -> u64 {
-    static EVERY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *EVERY.get_or_init(|| {
-        std::env::var("VICTORY_CAPTURE_WORLD_EVERY").ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(8)
-    })
-}
+/// LOCAL: the frame F9 asked for ([`frame_drew`]); `u64::MAX`: none.
+static KEY_FRAME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
 
 /// The first frame that ran 500 draws or more (`VICTORY_CAPTURE_WORLD`).
 static WORLD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
@@ -167,6 +130,24 @@ static WORLD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u
 /// At the present of `frame`: the draws run on the host so far.
 pub(crate) fn frame_drew(frame: u64, drawn: u64) {
     use std::sync::atomic::Ordering::Relaxed;
+    // LOCAL: with a capture folder, F9 captures the next frame as a listed
+    // one (its picture, its ops and, with VICTORY_DUMP_TARGETS=1, every
+    // target it drew): to catch a picture fault the moment it shows.
+    if folder().is_some() {
+        static WAS_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        // SAFETY: a plain query of the keyboard's state.
+        let down = unsafe {
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(i32::from(
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_F9,
+            ))
+        } < 0;
+        if down && !WAS_DOWN.swap(true, Relaxed) {
+            KEY_FRAME.store(frame + 1, Relaxed);
+            tracing::info!(frame = frame + 1, "F9: this frame is captured");
+        } else if !down {
+            WAS_DOWN.store(false, Relaxed);
+        }
+    }
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let before = LAST.swap(drawn, Relaxed);
     if world_on()
@@ -192,7 +173,7 @@ pub(crate) fn wanted(n: u64) -> bool {
     // cutscene (its shots do not fall on the same frame numbers from run to
     // run, so single frames cannot be compared between runs).
     let first = WORLD.load(std::sync::atomic::Ordering::Relaxed);
-    let in_world = world_on() && first != u64::MAX && n > first && (n - first).is_multiple_of(world_every());
+    let in_world = world_on() && first != u64::MAX && n > first && (n - first).is_multiple_of(8);
     folder().is_some() && (n.is_power_of_two() || listed(n) || before_world || in_world)
 }
 
@@ -219,6 +200,27 @@ fn save_as(name: &str, width: u32, height: u32, pitch: usize, bgra: bool, rows: 
             }
         }
     }
+    let png = encode(w, h, &raw);
+    let path = folder.join(format!("{name}.png"));
+    match std::fs::write(&path, png) {
+        Ok(()) => tracing::info!(path = %path.display(), "frame saved"),
+        Err(e) => tracing::warn!(error = %e, path = %path.display(), "frame not saved"),
+    }
+}
+
+/// A PNG of `width * height` pixels of 8-bit RGB.
+pub(crate) fn png(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
+    let row = width as usize * 3;
+    let mut raw = Vec::with_capacity((row + 1) * height as usize);
+    for line in rgb.chunks_exact(row.max(1)) {
+        raw.push(0);
+        raw.extend_from_slice(line);
+    }
+    encode(width, height, &raw)
+}
+
+/// A PNG of rows of RGB, each behind its filter byte.
+fn encode(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
     let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut header = Vec::new();
     header.extend(w.to_be_bytes());
@@ -226,15 +228,11 @@ fn save_as(name: &str, width: u32, height: u32, pitch: usize, bgra: bool, rows: 
     header.extend([8, 2, 0, 0, 0]); // 8-bit RGB
     chunk(&mut png, b"IHDR", &header);
     let mut compressed = vec![0u8; zlib_rs::compress_bound(raw.len())];
-    let (idat, rc) = zlib_rs::compress_slice(&mut compressed, &raw, zlib_rs::DeflateConfig::new(3));
+    let (idat, rc) = zlib_rs::compress_slice(&mut compressed, raw, zlib_rs::DeflateConfig::new(3));
     debug_assert_eq!(rc, zlib_rs::ReturnCode::Ok);
     chunk(&mut png, b"IDAT", idat);
     chunk(&mut png, b"IEND", &[]);
-    let path = folder.join(format!("{name}.png"));
-    match std::fs::write(&path, png) {
-        Ok(()) => tracing::info!(path = %path.display(), "frame saved"),
-        Err(e) => tracing::warn!(error = %e, path = %path.display(), "frame not saved"),
-    }
+    png
 }
 
 fn chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -382,7 +380,7 @@ static TARGETS: std::sync::Mutex<Vec<(usize, std::sync::Arc<crate::resource::Hos
 
 fn dump_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| folder().is_some() && std::env::var_os("VICTORY_DUMP_TARGETS").is_some())
+    *ON.get_or_init(|| folder().is_some() && crate::switch::on("VICTORY_DUMP_TARGETS"))
 }
 
 /// Notes a title texture the frame being built renders to or writes.
@@ -466,13 +464,6 @@ fn dump_one(
         }
         let pitch = f.RowPitch as usize;
         let rows = std::slice::from_raw_parts(data.cast::<u8>(), pitch * f.Height as usize);
-        // Tiny targets (exposure, averages): their first row as raw words,
-        // which the normalized picture cannot show.
-        if f.Width * f.Height <= 64 {
-            let n = (f.Width as usize * 16).min(rows.len()).min(64);
-            let words: Vec<f32> = rows[..n].as_chunks::<4>().0.iter().map(|w| f32::from_le_bytes(*w)).collect();
-            tracing::info!(frame, ?resource, format = f.Format.0, w = f.Width, h = f.Height, ?words, "tiny target, first row as f32 words");
-        }
         // A 24-bit depth plane comes back as 32-bit words: which depth values
         // (low 24 bits) and which top bytes it holds, the most common first.
         if matches!(d.Format.0, 44..=47) {
@@ -626,11 +617,6 @@ fn to_rgba(format: u32, w: usize, h: usize, pitch: usize, rows: &[u8]) -> Option
         26 => (4, Box::new(move |b| {
             let v = u32_at(b, 0);
             [small_float(v & 0x7ff, 6), small_float(v >> 11 & 0x7ff, 6), small_float(v >> 22, 5)]
-        })),
-        67 => (4, Box::new(move |b| {
-            let v = u32_at(b, 0);
-            let scale = 2f32.powi((v >> 27) as i32 - 24);
-            [0, 9, 18].map(|shift| ((v >> shift) & 0x1ff) as f32 * scale)
         })),
         9..=10 => (8, Box::new(move |b| [half(u16_at(b, 0)), half(u16_at(b, 1)), half(u16_at(b, 2))])),
         11..=14 => (8, Box::new(move |b| [0, 1, 2].map(|i| f32::from(u16_at(b, i))))),

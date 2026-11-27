@@ -10,16 +10,27 @@ provides the Xbox OS services (HLE), translates the console's GPU commands and A
 to D3D12 and DXIL, and keeps the title's unified memory and the PC's separate CPU/GPU memories
 in sync.
 
-**This fork's single goal:** the best frame rate and picture on a **low-end PC in the Series S
-profile** (`--console series-s`): 8 GB card, mid-range 6-core CPU, 32 GB RAM. The reference machine
-is an RTX 3050 8 GB + i5-12400F. Today ~4-5 fps (about 210 ms a frame); the target is 15 fps
-(66 ms) with a picture close to the console's.
+**This fork's single goal:** the best frame rate and a picture faithful to the Series S on a
+**low-end PC in the Series S profile** (`--console series-s`): 8 GB card, mid-range 6-core CPU,
+16-32 GB RAM. The reference machine is an RTX 3050 8 GB + i5-12400F. Since 27/11/2026 the tree is
+based on the trustno1-coder/VIctory-NVIDIA lineage (avatarmanz architecture, Maykzera's RTX 3060
+tuning): ~10 fps in the boat cutscene and on the boat in game (98-103 ms a frame, shaders and
+pipelines prepared). Targets: 10-12 fps in cutscenes, 22 fps in game, picture 1:1 with the Series S.
+
+**Before measuring anything, prepare like a player does** (or your numbers are meaningless):
+`victory shaders <shaders>` with `VICTORY_HOST_WAVE=32 VICTORY_VIEW_LIMIT=999999` (NVIDIA), one
+run with `VICTORY_PIPELINE_BOOK=1`, then `victory warm --used`, then measure the next runs. Give a
+build of another fork its own `VICTORY_CACHE_DIR`: builds share the pipeline library and its
+start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` (12 s freezes); 150 is right.
 
 ## Hard rules
 
 - **Never add game files**, dumps, raw logs or decompiled title code to the repository. Never patch
   the title's executable on disk.
 - **GPL-3.0-or-later only.** No GPL-2.0-only code (XCL, the original Mandy) or incompatible licences.
+  The upstream lineage carried an XCL-derived `crates/victory-loader/src/console_insn*.rs`: it is
+  removed here and AMD-only instructions are emulated by our own code in `crash.rs` and
+  `code_room.rs`. Never bring it back.
 - **Keep authorship.** When porting another fork's work, `git cherry-pick -x` or write
   "after <author> <commit>" in the message. Never present someone else's work as new.
 - **Measure, don't guess.** A speed change needs a median of at least two alternating runs from the
@@ -43,13 +54,14 @@ is an RTX 3050 8 GB + i5-12400F. Today ~4-5 fps (about 210 ms a frame); the targ
 | `crates/victory-loader`, `victory-pe` | loading the title's PE, in-memory hooks |
 | `crates/victory-hle` | Xbox OS services: memory (`modules/xmem.rs`), input (`modules/gameinput.rs`, `controls.rs`), saves, audio |
 | `crates/victory-shader` | GCN/RDNA → DXIL translation (`src/emit/`: `lower.rs`, `wave.rs` for wave64 on 32-lane NVIDIA cards) |
-| `crates/victory-gpu/src/host.rs` (~9,500 lines) | submissions, "flights" sent ahead (`late`), settles (waits for the card), the relay thread that copies results back into title memory, the card-side copies' compare (`CARD_COMPARE`) |
+| `crates/victory-gpu/src/host.rs` (~10,500 lines) | submissions, "flights" sent ahead (`late`), settles (waits for the card), the relay thread that copies results back into title memory, the card-side copies' compare (`CARD_COMPARE`) |
 | `crates/victory-gpu/src/draw.rs` | per-draw state, the pass over heap buffer slots (`heap_buffers`) |
 | `crates/victory-gpu/src/descriptor/host.rs` | host descriptor heaps mirroring the title's (`HostHeap::mirror`, striped locks `Made`) |
 | `crates/victory-gpu/src/shadow.rs` | host copies of title memory (CPU side, card side), dirty ranges, merges under shader writes |
 | `crates/victory-gpu/src/queue.rs`, `queue2.rs` | presents, Series S two-plane compose, the copy queue |
 | `crates/victory-gpu/src/texture.rs`, `resource.rs` | textures, uploads, format stand-ins |
-| `crates/victory-gpu/src/profile.rs` | a sampling profiler: `VICTORY_PROFILE=1`, `VICTORY_PROFILE_OUT=<file>`, keep `victory.pdb` beside the exe |
+| `crates/victory-gpu/src/list/thin.rs`, `host/card_steps.rs`, `land.rs` | the avatarmanz architecture: list calls translated by our threads (`VICTORY_THIN`), reads of title memory under flights done on the card (`VICTORY_CARD_STEPS`), landing on helper threads |
+| `crates/victory-gpu/src/pipeline/known.rs`, `apps/victory/src/warm.rs` | the pipeline book (`VICTORY_PIPELINE_BOOK=1`) and `victory warm` |
 | `series-s/` | the launchers and every setting we ship |
 | `scripts/bench/` | the measuring scripts |
 

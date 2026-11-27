@@ -365,31 +365,6 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
     use std::sync::atomic::{AtomicU32, Ordering};
     static CALLS: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
     let calls = CALLS[usize::from(SLOT == 0x218)].fetch_add(1, Ordering::Relaxed) + 1;
-    // Which descriptions come back again and again (the title asks anew
-    // each frame for a pipeline it did not get): calls by the first
-    // stage's code address, the most asked logged every 4096 calls.
-    #[cfg(windows)]
-    if !desc.is_null() {
-        static ASKED: std::sync::Mutex<Option<std::collections::HashMap<(usize, u64), (u64, u64)>>> =
-            std::sync::Mutex::new(None);
-        let mut w = [0u8; 16];
-        // Words 5 and 6: the first stage's code address and size.
-        if crate::host::read_into(desc.wrapping_add(40), &mut w) {
-            let code = u64::from_le_bytes(w[..8].try_into().unwrap_or_default());
-            let size = u64::from_le_bytes(w[8..].try_into().unwrap_or_default());
-            let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
-            let m = asked.get_or_insert_with(Default::default);
-            let e = m.entry((SLOT, code)).or_insert((0, size));
-            e.0 += 1;
-            if calls.is_multiple_of(4096) {
-                let mut top: Vec<_> = m.iter().filter(|(k, _)| k.0 == SLOT).map(|(k, v)| (v.0, k.1, v.1)).collect();
-                top.sort_by_key(|t| std::cmp::Reverse(t.0));
-                top.truncate(6);
-                let top: Vec<String> = top.iter().map(|(n, c, s)| format!("{n}x code {c:#x}+{s:#x}")).collect();
-                tracing::warn!(slot = format_args!("{SLOT:#x}"), calls, distinct = m.len(), ?top, "deserialized pipelines asked for most");
-            }
-        }
-    }
     if !out.is_null() {
         // SAFETY: the title's out pointer (a local of its own).
         unsafe { *out = std::ptr::null() };
@@ -410,8 +385,6 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
         #[cfg(not(windows))]
         let words = |_: usize| None::<Vec<u64>>;
         let description = words(desc as usize);
-        #[cfg(windows)]
-        dump_unknown(SLOT, calls, desc as usize, description.as_deref());
         let first = description
             .as_ref()
             .and_then(|w| words(w[0] as usize));
@@ -426,39 +399,17 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
     E_NOTIMPL
 }
 
-/// `VICTORY_DUMP_UNKNOWN_PIPELINES=<folder>` (diagnostics): the first
-/// descriptions [`unknown_pipeline`] logs are written there, 512 bytes of
-/// each, and every `(address, size)` pair in them (a word above 4 GiB then
-/// one under 256 KiB) as a file of its own, to work out their layout.
-/// Title data: keep it out of the repository.
-#[cfg(windows)]
-fn dump_unknown(slot: usize, calls: u32, desc: usize, words: Option<&[u64]>) {
-    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    let Some(dir) = DIR.get_or_init(|| std::env::var_os("VICTORY_DUMP_UNKNOWN_PIPELINES").map(Into::into)) else {
-        return;
-    };
-    let (Some(words), true) = (words, desc != 0) else {
-        return;
-    };
-    let read = |at: usize, n: usize| -> Option<Vec<u8>> {
-        let mut b = vec![0u8; n];
-        crate::host::read_into(at as *const u8, &mut b).then_some(b)
-    };
-    let _ = std::fs::create_dir_all(dir);
-    let name = format!("{slot:x}_{calls}");
-    if let Some(b) = read(desc, 512) {
-        let _ = std::fs::write(dir.join(format!("{name}_desc.bin")), b);
-    }
-    for i in 1..words.len().saturating_sub(1) {
-        let (at, size) = (words[i], words[i + 1]);
-        if at > 0xffff_ffff
-            && size > 0
-            && size < 0x40000
-            && let Some(b) = read(at as usize, size as usize)
-        {
-            let _ = std::fs::write(dir.join(format!("{name}_w{i}_{at:x}_{size:x}.bin")), b);
+/// The host device's state: the console's device is removed when the host's is
+/// (VIctory 13185f5: the default answer, E_NOTIMPL, reads as a lost device).
+extern "system" fn removed_reason(_: This) -> HRESULT {
+    #[cfg(windows)]
+    if let Some(host) = crate::host::host() {
+        // SAFETY: a plain query.
+        if let Err(e) = unsafe { host.device.GetDeviceRemovedReason() } {
+            return e.code().0;
         }
     }
+    S_OK
 }
 
 /// IUnknown 3, object methods 4, device methods 76 (0x18-0x290), then the
@@ -493,6 +444,7 @@ static FUNCTIONS: Table<160> = {
     f[28] = resource::create_heap as *const (); // 0xe0
     f[29] = resource::create_placed as *const (); // 0xe8
     f[36] = fence::create as *const (); // 0x120
+    f[37] = removed_reason as *const (); // 0x128
     f[38] = resource::copyable_footprints as *const (); // 0x130
     f[39] = query::create as *const (); // 0x138
     f[41] = signature::create as *const (); // 0x148
