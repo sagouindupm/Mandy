@@ -499,7 +499,7 @@ mod tests {
         let b = std::fs::read(root.join("series-s/reglages.json")).unwrap();
         let r: Reglages = serde_json::from_slice(b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&b)).unwrap();
         let v = r.pipelines_partagees.view(&root).expect("series-s/pipelines/series-s-rtx.txt");
-        assert_eq!(v.count, Some(2874));
+        assert_eq!(v.count, Some(3535));
         assert!(v.mark.starts_with("series-s-rtx.txt:"), "{}", v.mark);
     }
 
