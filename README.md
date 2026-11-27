@@ -52,9 +52,9 @@ offer, without asking you anything. You see it under the Play button and, with t
 
 **Setup** tab, **"Prepare everything"** button. The launcher finds the game (`game_scarlett_master.exe` from
 your copy), **translates the shaders** for your card, then **builds ahead of time the pipelines** of the shared
-list [`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt): the 2,874 pipelines the
-game uses until after the boat mission, described by hashes only (no game code), built with the shaders of
-**your** copy. Only once, about 25 minutes on our machine (18 min of translation, 6 min of building). Each step
+list [`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt): the 3,535 pipelines the
+game uses from a new game to the boat mission, described by hashes only (no game code), built with the shaders of
+**your** copy. Only once, about 30 minutes on our machine (24 min of translation, 5 min of building). Each step
 has its own status and button, so you can redo it by hand.
 
 You need the **complete copy**: the exe with all its archives next to it (`shaders.rpf`, `levels.rpf` and the
