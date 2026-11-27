@@ -2,6 +2,17 @@
   {
     "date": "2026-11-27",
     "en": {
+      "title": "0.2: frame generation",
+      "text": "Settings, “Frame generation (FSR 3)”: about twice the frames shown on NVIDIA RTX and GTX 16 cards. And a low video memory mode for 6 GB cards."
+    },
+    "fr": {
+      "title": "0.2 : génération d'images",
+      "text": "Réglages, « Génération d'images (FSR 3) » : environ deux fois plus d'images affichées sur les cartes NVIDIA RTX et GTX 16. Et un mode mémoire vidéo réduite pour les cartes de 6 Go."
+    }
+  },
+  {
+    "date": "2026-11-27",
+    "en": {
       "title": "New launcher",
       "text": "The VIctory S launcher replaces the PowerShell launcher: step-by-step setup, settings and logs in one place."
     },
