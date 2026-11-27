@@ -3,6 +3,8 @@ name: Release
 # A tag v<version> (the version of launcher/src-tauri/tauri.conf.json) builds the downloadable package with
 # scripts/package-release.ps1 and attaches VIctory-S-<version>.zip to the GitHub Release of that tag
 # (created as a pre-release if it does not exist yet).
+# Since 0.2 it stops at its first step with an explanation: the package includes dlssg-to-fsr3, built from source
+# locally (scripts/release/fg-README.txt), so releases are packaged on the maintainer's PC and attached by hand.
 on:
   push:
     tags: ['v*']
@@ -22,6 +24,16 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
+      # Since 0.2 the package carries dlssg-to-fsr3 (fg\, frame generation on RTX 20/30 and GTX 16), built from
+      # source at commit 0e253f63 with Visual Studio, vcpkg, the Vulkan SDK and the FidelityFX SDK's two backends
+      # (scripts/release/fg-README.txt). That build is not done here yet: the release is packaged locally
+      # (scripts\package-release.ps1 -Fsr3Build <the build>) and its zip attached to the release by hand. Stop at
+      # once and say so, rather than publish a package without frame generation or fail later with a vaguer error.
+      - name: dlssg-to-fsr3 (fg\) is built locally
+        shell: pwsh
+        run: |
+          Write-Output "::error title=Package locally::Since 0.2 the package includes dlssg-to-fsr3 (fg\), built from source (scripts/release/fg-README.txt); CI does not build it. Package locally: powershell -ExecutionPolicy Bypass -File scripts\package-release.ps1 -Fsr3Build <dlssg-to-fsr3 build>, then attach dist\VIctory-S-<version>.zip to the release by hand."
+          exit 1
       - uses: actions/checkout@v5
       # The version and components pinned in rust-toolchain.toml.
       - run: rustup toolchain install
