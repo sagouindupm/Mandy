@@ -74,6 +74,7 @@ fn build() -> [u8; 32] {
             "VICTORY_WAVE_LOCAL",
             "VICTORY_LDS_FLAGS",
             "VICTORY_LDS_REGION_RACE",
+            "VICTORY_LDS_LEGACY",
             "VICTORY_LDS_WRITE_ONLY_OK",
             "VICTORY_SPLIT_LDS_COALESCE",
             "VICTORY_NV_FLOAT",
