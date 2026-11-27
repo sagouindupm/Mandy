@@ -11348,8 +11348,11 @@ mod refresh_once_tests {
 }
 
 /// The window's title: Sagouindupm | VIctory, the console profile, the frame
-/// rate, then the card (its name, its memory in use of its budget) and the
-/// shaders translated so far.
+/// rate (with frame generation on, " · 22 shown": the frames presented,
+/// "~22" when that is the multiplier asked for rather than DLSS-G's own
+/// count, see `crate::ffx::framegen::shown_per_rendered`), then the card
+/// (its name, its memory in use of its budget) and the shaders translated
+/// so far.
 fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
     static CARD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let card = CARD.get_or_init(|| {
@@ -11372,9 +11375,31 @@ fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
         .map(|[budget, used, _, _]| format!(" {:.1}/{:.1} Go", used as f64 / 1e9, budget as f64 / 1e9))
         .unwrap_or_default();
     let shaders = crate::pipeline::kept()[2];
+    let shown = shown_text(fps, crate::ffx::framegen::shown_per_rendered());
     format!(
-        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders"
+        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps{shown}  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders"
     )
+}
+
+/// " · 22 shown" after the frame rate: `fps` times the frames shown per
+/// rendered one, "~" before it when that is an estimate; nothing without
+/// frame generation.
+fn shown_text(fps: f64, shown: Option<(u32, bool)>) -> String {
+    match shown {
+        Some((per, exact)) => format!(" · {}{:.0} shown", if exact { "" } else { "~" }, fps * f64::from(per)),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod caption_tests {
+    #[test]
+    fn frames_shown_after_the_frame_rate() {
+        assert_eq!(super::shown_text(11.2, None), "");
+        assert_eq!(super::shown_text(11.2, Some((2, true))), " · 22 shown");
+        assert_eq!(super::shown_text(11.2, Some((2, false))), " · ~22 shown");
+        assert_eq!(super::shown_text(10.0, Some((3, true))), " · 30 shown");
+    }
 }
 
 /// The title bar in the sunset pink of the title's own art (#FF3C78) with a

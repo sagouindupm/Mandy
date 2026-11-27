@@ -426,6 +426,15 @@ struct Fg {
 
 /// Set by [`start`]: frame generation running, if it could start.
 static FG: OnceLock<Option<Mutex<Fg>>> = OnceLock::new();
+/// Frames shown per rendered one as set at [`start`] (`VICTORY_FRAMEGEN_X`,
+/// clamped to what the card generates), for the window's title.
+static CONFIGURED: AtomicU32 = AtomicU32::new(0);
+/// What DLSS-G last said of itself ([`present_end`], every 30 presents):
+/// the frames it presented for the last rendered one
+/// (`numFramesActuallyPresented`), and whether it works (status 0) with its
+/// mode on.
+static PRESENTED: AtomicU32 = AtomicU32::new(0);
+static WORKING: AtomicBool = AtomicBool::new(false);
 /// Our swap chain is Streamline's proxy (the factory was upgraded).
 static PROXY: AtomicBool = AtomicBool::new(false);
 
@@ -436,6 +445,25 @@ fn fg() -> Option<&'static Mutex<Fg>> {
 /// Whether frame generation runs (Streamline presents through its proxy).
 pub(crate) fn active() -> bool {
     fg().is_some()
+}
+
+/// Frames shown per rendered one, for the window's title
+/// (`crate::host::caption_text`): `None` unless frame generation runs and
+/// DLSS-G last said it works with its mode on. Then DLSS-G's own count
+/// (`numFramesActuallyPresented`, exact: `true`) when it is above 1, else
+/// the multiplier asked for (`false`, an estimate): dlssg-to-fsr3, which
+/// runs FSR 3 behind DLSS-G's calls on RTX 20/30, leaves that count at 1.
+pub(crate) fn shown_per_rendered() -> Option<(u32, bool)> {
+    if !active() || !WORKING.load(Ordering::Relaxed) {
+        return None;
+    }
+    Some(shown_from(PRESENTED.load(Ordering::Relaxed), CONFIGURED.load(Ordering::Relaxed)))
+}
+
+/// [`shown_per_rendered`] once frame generation is known to work: DLSS-G's
+/// count when above 1, else the configured multiplier (2 at least).
+fn shown_from(presented: u32, configured: u32) -> (u32, bool) {
+    if presented > 1 { (presented, true) } else { (configured.max(2), false) }
 }
 
 /// Whether upscales are worth reading for frame generation: it is asked for
@@ -635,6 +663,7 @@ pub(crate) fn start(device: &ID3D12Device, factory: IDXGIFactory2) -> IDXGIFacto
         return factory;
     }
     PROXY.store(true, Ordering::Relaxed);
+    CONFIGURED.store(fg.frames + 1, Ordering::Relaxed);
     tracing::info!(shown_per_rendered = fg.frames + 1, "framegen: our swap chain is made through Streamline's proxy; frame generation on");
     // SAFETY: SL's proxy, an IDXGIFactory2 with one reference, now ours.
     unsafe { IDXGIFactory2::from_raw(raw) }
@@ -1131,6 +1160,8 @@ pub(crate) fn present_end(frame: u64) {
         }
         if r == 0 {
             fg.status = state.status;
+            PRESENTED.store(state.frames_presented, Ordering::Relaxed);
+            WORKING.store(state.status == 0 && fg.on == Some(true), Ordering::Relaxed);
         }
     }
     if let Some(sleep) = fg.reflex_sleep
@@ -1151,6 +1182,7 @@ pub(crate) fn before_resize() {
     // SAFETY: structures that outlive the call.
     let _ = unsafe { (fg.set_options)(&viewport, &options) };
     fg.on = None;
+    WORKING.store(false, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -1174,6 +1206,18 @@ mod tests {
         }
         assert!(missing_files(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn frames_shown_fall_back_to_the_multiplier() {
+        // NVIDIA's DLSS-G counts what it presented.
+        assert_eq!(shown_from(2, 2), (2, true));
+        assert_eq!(shown_from(3, 2), (3, true));
+        // dlssg-to-fsr3 leaves the count at 1 (or 0 before a frame): the
+        // multiplier asked for, as an estimate.
+        assert_eq!(shown_from(1, 2), (2, false));
+        assert_eq!(shown_from(0, 3), (3, false));
+        assert_eq!(shown_from(1, 0), (2, false));
     }
 
     #[test]
