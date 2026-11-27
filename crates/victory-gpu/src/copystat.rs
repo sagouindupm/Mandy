@@ -854,7 +854,8 @@ fn log_memory() {
     );
     {
         let [textures, staging] = crate::pool::memory();
-        tracing::info!("memory in blocks (VICTORY_TEXTURE_POOL=0 turns them off): {textures} MB of textures, {staging} MB of their staging buffers");
+        let capped = crate::resource::CAPPED.load(Relaxed);
+        tracing::info!("memory in blocks (VICTORY_TEXTURE_POOL=0 turns them off): {textures} MB of textures, {staging} MB of their staging buffers; {capped} host copies made without their largest levels (VICTORY_TEXTURE_MAX)");
     }
     let targets = crate::resource::targets_census();
     tracing::info!(
