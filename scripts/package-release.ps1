@@ -101,8 +101,16 @@ Test-Package $files
 
 # ------------------------------------------------------------------ zip, puis la même vérification sur le zip
 Write-Host "==> $name.zip" -ForegroundColor Magenta
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+# Entrée par entrée, avec des « / » : Windows PowerShell 5.1 (CreateFromDirectory) écrirait des « \ » que d'autres
+# outils de décompression lisent mal.
+$z = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach ($f in Get-ChildItem -Recurse -File $out) {
+        $entry = "$name/" + $f.FullName.Substring($out.Length + 1).Replace('\', '/')
+        [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $f.FullName, $entry, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+} finally { $z.Dispose() }
 $z = [IO.Compression.ZipFile]::OpenRead($zip)
 try {
     $inZip = $z.Entries | Where-Object { $_.Name } | ForEach-Object {
