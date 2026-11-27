@@ -69,7 +69,10 @@
         "VICTORY_OWN_UPSCALER": "1",
         "VICTORY_COMPOSE": "1",
         "VICTORY_CARD_BUFFERS_MIN_MB": "1",
-        "VICTORY_CARD_BUFFERS_MB": "1536"
+        "VICTORY_CARD_BUFFERS_MB": "1536",
+        "VICTORY_WAVE_WIDE_DIGESTS": "7099a57fded142613b44f410463d6be6",
+        "VICTORY_VRAM_RESERVE": "max",
+        "VICTORY_AMBIENT_SETTLE": "250,3"
       }
     },
     {
@@ -83,12 +86,11 @@
   ],
   "pipelines_sautees": {
     "variable": "VICTORY_SKIP_PIPELINES",
-    "note": "The ~1,000 ray tracing resolve passes (no ray structure on NVIDIA, file below, relative to the repository root), then the heat haze 731a39171b568298 (foxhound: it smears blocks of pixels, on the water too): 84 ms against 93 on an RTX 3050, clean picture. Then the programs that the LDS fallback (#27) makes translatable but that cost ~30 ms without the trees (water volumetrics 5dc3/6f22, underwater 926c, transmission 1f1f, 21f7, 7c9a); the trees stay.",
+    "note": "The ~1,000 ray tracing resolve passes (no ray structure on NVIDIA, file below, relative to the repository root), then the heat haze 731a39171b568298 (foxhound: it smears blocks of pixels, on the water too): 84 ms against 93 on an RTX 3050, clean picture. Then the programs that the LDS fallback (#27) makes translatable but that cost ~30 ms without the trees (water volumetrics 5dc3, underwater 926c, transmission 1f1f, 21f7, 7c9a); the trees stay. The water local-lights volumetrics 6f22 runs again, wave-wide (VICTORY_WAVE_WIDE_DIGESTS, from edupode): 92 ms against 103, clean water.",
     "fichier": "scripts/rt_off_hashes.txt",
     "en_plus": [
       "731a39171b568298",
       "5dc3b25986622949",
-      "6f225b641c5b0708",
       "926c46bab3b86bd6",
       "1f1fbd86759b3da2",
       "21f7ad7863620328",
