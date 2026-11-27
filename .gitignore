@@ -76,3 +76,6 @@
 *.swp
 Thumbs.db
 .DS_Store
+
+# Agent worktrees
+/.claude/worktrees/
