@@ -12,7 +12,7 @@ in sync.
 
 **This fork's single goal:** the best frame rate and a picture faithful to the Series S on a
 **low-end PC in the Series S profile** (`--console series-s`): 8 GB card, mid-range 6-core CPU,
-16-32 GB RAM. The reference machine is an RTX 3050 8 GB + i5-12400F. Since 27/11/2026 the tree is
+16-32 GB RAM. The reference machine is an RTX 3050 8 GB + i5-12400F. Since 2026-11-27 the tree is
 based on the trustno1-coder/VIctory-NVIDIA lineage (avatarmanz architecture, Maykzera's RTX 3060
 tuning): ~10 fps in the boat cutscene and on the boat in game (98-103 ms a frame, shaders and
 pipelines prepared). Targets: 10-12 fps in cutscenes, 22 fps in game, picture 1:1 with the Series S.
@@ -40,9 +40,9 @@ library and its start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` 
 - **New behaviour goes behind a `VICTORY_…` environment switch**, documented in a comment where it
   is read, **off by default** until measured. That is the house convention: every switch is
   described where it is read (`grep -rn "VICTORY_NAME" crates`).
-- **Record every result in [docs/essais.md](docs/essais.md)**, negative ones included, in the same
+- **Record every result in [docs/test-log.md](docs/test-log.md)**, negative ones included, in the same
   PR. Check it before proposing an idea: many obvious ideas were already measured and rejected.
-- **Coordinate:** before starting, check the open issues for `[en cours]` / `[in progress]` claims on
+- **Coordinate:** before starting, check the open issues for `[in progress]` claims (older ones may say `[en cours]`) on
   the same task or code area (see [CONTRIBUTING.md](CONTRIBUTING.md)). Don't edit an area someone
   else has claimed; suggest your user comments on their issue instead.
 - Say "AI-assisted" in the PR description.
@@ -65,7 +65,7 @@ library and its start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` 
 | `crates/victory-gpu/src/pipeline/known.rs`, `apps/victory/src/warm.rs` | the pipeline book (`VICTORY_PIPELINE_BOOK=1`) and `victory warm` |
 | `crates/victory-gpu/src/pipeline/known/list.rs`, `apps/victory/src/pipelines.rs` | shared pipeline lists without shader code (`victory pipelines export/import/merge/info`); `series-s/pipelines/` holds the one we ship. A list holds keys, stages, shader hashes and graphics states only: never put containers or `known-shaders.bin` in the repository |
 | `series-s/` | the launchers and every setting we ship: `reglages.json` (the one place for the Series S settings, read by both launchers; `materiel` holds the automatic hardware profiles), `reglages.ps1` (applies it for the console launcher), `Sagouindupm.ps1` (console), `Sagouindupm-Launcher.bat` (starts the graphical launcher) |
-| `launcher/` | the graphical launcher for novices: Tauri 2 (Rust commands in `src-tauri/src`, its own Cargo workspace) and React + shadcn/ui (`src/`); `launcher/news.json` feeds its « Nouveautés » card |
+| `launcher/` | the graphical launcher for novices: Tauri 2 (Rust commands in `src-tauri/src`, its own Cargo workspace) and React + shadcn/ui (`src/`); `launcher/news.json` feeds its news card |
 | `launcher/src-tauri/src/profile.rs`, `scripts/check-profils.ps1` | the hardware profile (threads, card memory, RAM, vendor) computed from `materiel`; the same in `reglages.ps1`, compared by the script |
 | `scripts/package-release.ps1`, `.github/workflows/release.yml` | the downloadable zip (`VIctory S.exe` + `engine\victory.exe`), built for any x86-64-v3 CPU; a `v*` tag publishes it |
 | `scripts/bench/` | the measuring scripts |
@@ -92,7 +92,7 @@ The log prints, about once a second:
 
 ## Where help is needed
 
-The ranked list is **"À essayer" in [docs/essais.md](docs/essais.md)**. In short:
+The ranked list is **"To try" in [docs/test-log.md](docs/test-log.md)**. In short:
 1. CPU preparation (~100 ms) and the lock shared by the heap pass and the title's recording threads.
 2. The ~40-50 ms a frame the submitting thread waits for a buffer copy into memory that shaders in
    flight write ("title memory read" settles).
@@ -104,7 +104,7 @@ The ranked list is **"À essayer" in [docs/essais.md](docs/essais.md)**. In shor
 Other forks worth mining (all GPL-3.0; credit them): avatarmanz/VIctory-7900XTX, cool_fox mirrors
 (e.g. DoubleGhosty/cool_fox), trustno1-coder/VIctory-NVIDIA, edupode/cold-project-vi,
 uiliannn/VItoriaBr, fxceless/victory-fork. Their whole builds ran slower than ours on the reference
-machine, but single ideas from them won (see "Gardé").
+machine, but single ideas from them won (see "Kept").
 
 ## Working efficiently
 

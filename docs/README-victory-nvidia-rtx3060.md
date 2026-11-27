@@ -1,9 +1,9 @@
-> **victory-rtx3060**: fork de [trustno1-coder/VIctory-NVIDIA](https://github.com/trustno1-coder/VIctory-NVIDIA)
-> com o trabalho numa RTX 3060 (Ryzen 5 5600X, 32 GB): **14–17 fps** no mundo aberto depois de aquecer (médias de 13,6–15,0 por rodada de 6 min, picos de 23) no modo Series S,
-> medidor de ritmo de quadros (1% low, P99), vigia das etapas gráficas, cache de shaders feito antes
-> que vale na NVIDIA, log em arquivo e captura de quadro para replay.
-> Resultados, uso e problemas conhecidos: **[docs/rtx3060.md](docs/rtx3060.md)**.
-> Nenhum arquivo de jogo está incluído: use a sua própria cópia. Licença: GPL-3.0-or-later.
+> **victory-rtx3060**: fork of [trustno1-coder/VIctory-NVIDIA](https://github.com/trustno1-coder/VIctory-NVIDIA)
+> with the work done on an RTX 3060 (Ryzen 5 5600X, 32 GB): **14–17 fps** in the open world after warm-up (averages of 13.6–15.0 per 6 min run, peaks of 23) in Series S mode,
+> a frame pacing meter (1% low, P99), a graphics stage watch, a shader cache built ahead of time
+> that is valid on NVIDIA, a log file and frame capture for replay.
+> Results, usage and known issues: **[docs/rtx3060.md](docs/rtx3060.md)**.
+> No game files are included: use your own copy. License: GPL-3.0-or-later.
 
 # VIctory on NVIDIA
 

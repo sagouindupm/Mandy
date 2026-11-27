@@ -1,290 +1,290 @@
-# Perfil "NVIDIA Compatibility" e diagnóstico de tela preta (2026-11-25)
+# "NVIDIA Compatibility" profile and black screen diagnosis (2026-11-25)
 
-Máquina: Windows 11, Ryzen 5 5600X, **RTX 3060 12 GB** (driver 621.40 / UMD 32.0.16.2140),
-32 GB de RAM, 24 GB de arquivo de paginação, PowerShell 5.1.
+Machine: Windows 11, Ryzen 5 5600X, **RTX 3060 12 GB** (driver 621.40 / UMD 32.0.16.2140),
+32 GB of RAM, 24 GB paging file, PowerShell 5.1.
 
-O executável do título **não foi executado, lido nem modificado** neste trabalho. Tudo o que está
-abaixo foi validado com programas próprios e com a suíte de testes do VIctory.
+The title's executable was **not run, read or modified** in this work. Everything below was
+validated with our own programs and with the VIctory test suite.
 
-## Por que este fork e não o VIctory-7900XTX
+## Why this fork and not VIctory-7900XTX
 
-Os dois têm a mesma base (o 7900XTX é um fork deste). A diferença é onde cada um foi medido:
+Both share the same base (7900XTX is a fork of this one). The difference is where each was measured:
 
-| | VIctory-7900XTX | victory-fork (este) |
+| | VIctory-7900XTX | victory-fork (this one) |
 |---|---|---|
-| Testado em | RX 7900 XTX, 64 GB | **RTX 4070 12 GB, 32 GB** |
-| Memória em jogo | 40–46 GB privados ("64 GB recomendados") | 23–27 GB |
-| Ajustes de `play.ps1` | RDNA 3 | conjunto medido em NVIDIA (`diagnostics/README.md`) |
+| Tested on | RX 7900 XTX, 64 GB | **RTX 4070 12 GB, 32 GB** |
+| Memory in game | 40–46 GB private ("64 GB recommended") | 23–27 GB |
+| `play.ps1` settings | RDNA 3 | set measured on NVIDIA (`diagnostics/README.md`) |
 
-Com 32 GB de RAM, o 7900XTX já está fora do que o próprio autor recomenda.
+With 32 GB of RAM, 7900XTX is already outside what its own author recommends.
 
-## O que a RTX 3060 aceita e recusa (medido)
+## What the RTX 3060 accepts and refuses (measured)
 
-`victory-gfxcheck` (programa próprio, `E:\GTA6.Xbox.v1.0.2.1\victory-gfxcheck`): **12 de 12 testes
-passaram.** Fatos que importam para a camada:
+`victory-gfxcheck` (our own program, `E:\GTA6.Xbox.v1.0.2.1\victory-gfxcheck`): **12 of 12 tests
+passed.** Facts that matter for the layer:
 
-| Fato | Valor medido | Consequência no VIctory |
+| Fact | Measured value | Consequence in VIctory |
 |---|---|---|
-| Ondas (wave lanes) | mín 32, máx 32 | Programas wave64 do console precisam das formas de 32 lanes do tradutor |
-| Compute `[WaveSize(64)]` | **recusado**, `E_INVALIDARG` (0x80070057) | Um programa traduzido assim perde seus dispatches: o tradutor escolhe 32 lanes por `set_host_max_wave` |
-| Heap de views visível ao shader | 1.000.000 aceito; 2^20, 2^21, 2^22 **recusados** | Sem "raw twins"; `probe_view_limit` limita índices ao slot nulo 999.999 |
-| Shader model | 6.8 | Atende (pede-se 6.6) |
-| Mesh shaders | tier 1 (DispatchMesh testado com leitura de volta) | Atende |
-| Ray tracing | tier 1.2 | Disponível; desligado por padrão |
-| Binding / heap tier | 3 / 2 | Atende |
-| Atômicos 64 bits em recursos tipados | sim | Atende |
-| VRAM | orçamento 11.342 MiB; 4 GiB alocados e devolvidos sem vazamento | Evict/MakeResident funcionam |
-| Sincronização | 2.000 idas e voltas CPU↔GPU (1,5 µs); 200 cadeias direct→compute→copy sem deadlock | Sem deadlock nas filas |
-| Apresentação | 300 frames com vsync, todos os `Present` = S_OK | SwapChain flip-discard funciona |
+| Waves (wave lanes) | min 32, max 32 | The console's wave64 programs need the translator's 32-lane forms |
+| Compute `[WaveSize(64)]` | **refused**, `E_INVALIDARG` (0x80070057) | A program translated that way loses its dispatches: the translator picks 32 lanes through `set_host_max_wave` |
+| Shader-visible view heap | 1,000,000 accepted; 2^20, 2^21, 2^22 **refused** | No "raw twins"; `probe_view_limit` clamps indices to the null slot 999,999 |
+| Shader model | 6.8 | Meets it (6.6 required) |
+| Mesh shaders | tier 1 (DispatchMesh tested with read-back) | Meets it |
+| Ray tracing | tier 1.2 | Available; off by default |
+| Binding / heap tier | 3 / 2 | Meets it |
+| 64-bit atomics on typed resources | yes | Meets it |
+| VRAM | budget 11,342 MiB; 4 GiB allocated and released without a leak | Evict/MakeResident work |
+| Synchronization | 2,000 CPU↔GPU round trips (1.5 µs); 200 direct→compute→copy chains without deadlock | No deadlock in the queues |
+| Presentation | 300 frames with vsync, every `Present` = S_OK | Flip-discard swap chain works |
 
-Tradução de shaders do próprio VIctory (`cargo test -p victory-shader --features host`):
-**217 passaram, 0 falharam, 3 ignorados**. Os testes que executam DXIL traduzido rodaram na RTX 3060
-(ex.: `wave64_tests ... ran on the hardware device`). Os testes "diff" que comparam com um
-compilador de console foram pulados: esse compilador não existe nesta máquina.
+VIctory's own shader translation (`cargo test -p victory-shader --features host`):
+**217 passed, 0 failed, 3 ignored**. The tests that execute translated DXIL ran on the RTX 3060
+(e.g. `wave64_tests ... ran on the hardware device`). The "diff" tests that compare against a
+console compiler were skipped: that compiler does not exist on this machine.
 
-Conclusão: **placa, driver, DirectX 12 e o tradutor funcionam nesta máquina.** A tela preta não
-vem de uma incompatibilidade básica da RTX 3060.
+Conclusion: **the card, the driver, DirectX 12 and the translator work on this machine.** The
+black screen does not come from a basic incompatibility of the RTX 3060.
 
-## O que se sabe da execução que ficou preta
+## What is known about the run that stayed black
 
-Não havia nenhum log gravado (o log vai só para o console). O que restou no cache
-(`%LOCALAPPDATA%\victory\cache`) da execução das 21:29–21:39 com o 7900XTX:
+No log was written (the log only goes to the console). What was left in the cache
+(`%LOCALAPPDATA%\victory\cache`) from the 21:29–21:39 run with 7900XTX:
 
-- 25.718 shaders traduzidos no cache (tradução completa).
-- A DLL `amd_fidelityfx_upscaler_xbox` carregada tarde (21:36): o título passou da inicialização.
-- Biblioteca de pipelines de **109 KB** e 16 pipelines na lista "early"; 5 delas levaram
-  **1,0–1,3 s cada** para o driver compilar. Uma biblioteca completa tem ~3.400 pipelines e 366 MB.
+- 25,718 shaders translated in the cache (full translation).
+- The `amd_fidelityfx_upscaler_xbox` DLL loaded late (21:36): the title got past initialization.
+- A **109 KB** pipeline library and 16 pipelines in the "early" list; 5 of them took
+  **1.0–1.3 s each** for the driver to compile. A complete library has ~3,400 pipelines and 366 MB.
 
-Leitura: o título fez poucas pipelines, a GPU ficou em 3 %, e o driver NVIDIA estava com cache
-frio. O próprio fork documenta "frames pretos enquanto as pipelines são refeitas" num cache frio.
-Isso é **compatível** com a tela preta, mas **não está provado**: só um log da próxima execução
-diz qual etapa parou. Por isso o watchdog abaixo.
+Reading: the title made few pipelines, the GPU sat at 3 %, and the NVIDIA driver had a cold
+cache. The fork itself documents "black frames while pipelines are rebuilt" on a cold cache.
+This is **consistent** with the black screen, but **not proven**: only a log from the next run
+says which stage stopped. Hence the watchdog below.
 
-## O que foi adicionado
+## What was added
 
-### 1. Watchdog de tela preta — `crates/victory-gpu/src/gfxwatch.rs` (novo)
+### 1. Black screen watchdog — `crates/victory-gpu/src/gfxwatch.rs` (new)
 
-Registra, uma vez e com os segundos desde a criação do device, cada etapa alcançada:
+Records, once and with the seconds since device creation, each stage reached:
 
-1. device D3D12 criado · 2. primeiro shader traduzido · 3. primeira pipeline do host criada ·
-4. primeira command list do título enviada · 5. primeiro draw · 6. primeiro dispatch ·
-7. primeiro Present do título · 8. swap chain criada na janela · 9. primeiro frame mostrado
-(Present S_OK) · 10. primeiro frame que não é preto
+1. D3D12 device created · 2. first shader translated · 3. first host pipeline created ·
+4. first title command list submitted · 5. first draw · 6. first dispatch ·
+7. first title Present · 8. swap chain created on the window · 9. first frame shown
+(Present S_OK) · 10. first frame that is not black
 
-A cada 5 s, se a janela ficou 10 s sem frame, grava uma linha `BLACK WINDOW` com: última etapa,
-etapas não alcançadas, Presents do título / do host / pretos / com falha, último HRESULT, listas,
-draws, dispatches, shaders ok/falhos, pipelines ok/recusadas/ainda sendo feitas, VRAM, memória
-compartilhada, memória privada do processo, e se o device foi removido — mais um veredito em
-palavras (ex.: "o título ainda não apresentou enquanto pipelines são feitas: compilação de
-pipelines na primeira execução").
+Every 5 s, if the window has gone 10 s without a frame, it writes a `BLACK WINDOW` line with: last
+stage, stages not reached, title / host / black / failed Presents, last HRESULT, lists,
+draws, dispatches, shaders ok/failed, pipelines ok/refused/still being made, VRAM, shared
+memory, process private memory, and whether the device was removed — plus a verdict in
+words (e.g. "the title has not presented yet while pipelines are being made: pipeline
+compilation on the first run").
 
-`VICTORY_GFX_WATCH=<segundos>` (padrão 5; `0` desliga). Só lê contadores atômicos: nenhum lock
-das threads do título.
+`VICTORY_GFX_WATCH=<seconds>` (default 5; `0` turns it off). It only reads atomic counters: no lock
+on the title's threads.
 
-Ganchos (uma linha cada): `host.rs` (device pronto, swap chain criada, resultado do Present),
-`queue.rs` (Present do título, ExecuteCommandLists), `pipeline.rs` (shader traduzido ou não),
-`pipeline/make.rs` (pipeline criada ou recusada), `lib.rs` (módulo).
+Hooks (one line each): `host.rs` (device ready, swap chain created, Present result),
+`queue.rs` (title Present, ExecuteCommandLists), `pipeline.rs` (shader translated or not),
+`pipeline/make.rs` (pipeline created or refused), `lib.rs` (module).
 
-Testes de regressão: `gfxwatch::tests` (3), todos passando.
+Regression tests: `gfxwatch::tests` (3), all passing.
 
-### 2. Perfil NVIDIA Compatibility — `scripts/play-nvidia.ps1` (novo)
+### 2. NVIDIA Compatibility profile — `scripts/play-nvidia.ps1` (new)
 
-- Detecta a GPU (Win32_VideoController); recusa rodar sem NVIDIA salvo `-Force`.
-- Usa o conjunto de opções medido na RTX 4070 12 GB / 32 GB (`diagnostics/README.md`), todas
-  verificadas como existentes no código.
-- `VICTORY_D3D12_DRED=faults` (rastreio barato de perda do device) e o watchdog ligados.
-- `-Console SeriesS` passa `--console series-s` (o título pede menos memória); padrão Series X,
-  que é o testado.
-- `-RayTracing` opcional (`VICTORY_BVH_BUILDER=1`), desligado por padrão.
-- `-Plain`: só os padrões do build, para isolar problemas.
-- Avisa se a memória de commit livre for menor que 30 GB.
-- **Grava o log completo** em `%LOCALAPPDATA%\victory\logs\run-<data>.log` (fora da árvore de
-  código, como exige `docs/asset-policy.md`), com a GPU, o driver e todas as opções no topo; na
-  janela mostra só etapas, watchdog, avisos e erros; ao sair, imprime as últimas linhas de etapa.
+- Detects the GPU (Win32_VideoController); refuses to run without NVIDIA unless `-Force`.
+- Uses the set of options measured on the RTX 4070 12 GB / 32 GB (`diagnostics/README.md`), all
+  checked to exist in the code.
+- `VICTORY_D3D12_DRED=faults` (cheap device-loss tracing) and the watchdog turned on.
+- `-Console SeriesS` passes `--console series-s` (the title asks for less memory); default Series X,
+  which is the tested one.
+- Optional `-RayTracing` (`VICTORY_BVH_BUILDER=1`), off by default.
+- `-Plain`: only the build defaults, to isolate problems.
+- Warns if free commit memory is below 30 GB.
+- **Writes the full log** to `%LOCALAPPDATA%\victory\logs\run-<date>.log` (outside the source
+  tree, as `docs/asset-policy.md` requires), with the GPU, the driver and every option at the top; the
+  window only shows stages, watchdog, warnings and errors; on exit, it prints the last stage lines.
 
-O que é específico de NVIDIA já é decidido pelo código a partir do que a placa informa (32 lanes,
-heap de 1.000.000, views de constantes de 64 KiB, dispatches indiretos de até 65.535 grupos); o
-perfil AMD (`VIctory-7900XTX\scripts\play.ps1`) não foi alterado.
+What is NVIDIA-specific is already decided by the code from what the card reports (32 lanes,
+1,000,000 heap, 64 KiB constant views, indirect dispatches of up to 65,535 groups); the
+AMD profile (`VIctory-7900XTX\scripts\play.ps1`) was not changed.
 
-### 3. Testes gráficos independentes — `E:\GTA6.Xbox.v1.0.2.1\victory-gfxcheck` (novo)
+### 3. Standalone graphics tests — `E:\GTA6.Xbox.v1.0.2.1\victory-gfxcheck` (new)
 
-Crate próprio (fora das duas árvores do VIctory). Testes: janela; device, adaptador e recursos;
-cor sólida pela swap chain com leitura de volta; triângulo; upload e amostragem de textura;
-compute com verificação dos 1.024 valores e do número de lanes; mesh shader; criação de pipelines
-(32 compute distintas, gráfica, mesh, e WaveSize(64)); sincronização CPU↔GPU e entre filas com
-timeout (detecta deadlock); heaps de descriptors nos tamanhos que a camada pede; 300 frames
-contínuos com tempos; alocação de até 4 GB de VRAM, residency e devolução. Relatório também em
+Our own crate (outside both VIctory trees). Tests: window; device, adapter and features;
+solid colour through the swap chain with read-back; triangle; texture upload and sampling;
+compute checking all 1,024 values and the lane count; mesh shader; pipeline creation
+(32 distinct compute, graphics, mesh, and WaveSize(64)); CPU↔GPU and cross-queue synchronization with
+timeout (detects deadlock); descriptor heaps at the sizes the layer asks for; 300 continuous
+frames with timings; allocation of up to 4 GB of VRAM, residency and release. Report also in
 `%LOCALAPPDATA%\victory\gfxcheck\`.
 
-## Memória com 32 GB de RAM e 12 GB de VRAM
+## Memory with 32 GB of RAM and 12 GB of VRAM
 
-- Medido neste fork, numa máquina igual em RAM/VRAM: 23–27 GB do PC e 9,2–9,6 GB dos 10,3 GB de
-  orçamento da placa em jogo, sem estouro de orçamento em nenhuma amostra.
-- Aqui: 11,3 GB de orçamento de VRAM, 19 GB de RAM livre e 41 GB de commit livre antes de rodar.
-  A folga é pequena: feche navegadores e outros programas.
-- O arquivo de paginação evita falhas de commit (erro 1455), mas não substitui RAM: o que for
-  paginado fica lento. `-Console SeriesS` é a alavanca para pedir menos memória ao título.
+- Measured in this fork, on a machine with the same RAM/VRAM: 23–27 GB of PC memory and 9.2–9.6 GB of the card's 10.3 GB
+  budget in game, with no budget overrun in any sample.
+- Here: 11.3 GB VRAM budget, 19 GB of free RAM and 41 GB of free commit before running.
+  The headroom is small: close browsers and other programs.
+- The paging file prevents commit failures (error 1455), but does not replace RAM: whatever is
+  paged out becomes slow. `-Console SeriesS` is the lever to make the title ask for less memory.
 
-## Primeiras execuções reais (2026-11-25, 22:12 e 22:18)
+## First real runs (2026-11-25, 22:12 and 22:18)
 
-Execução 1 (cache de shaders do 7900XTX, driver frio):
+Run 1 (7900XTX shader cache, cold driver):
 
-- Todas as 10 etapas gráficas alcançadas em 5 s; menus a 30 fps; nenhum erro, nenhuma perda do
-  device; 22,5 GB de RAM e 9,4 de 11,2 GB de VRAM.
-- Na cena "Vice City, dois anos atrás": 800–950 pipelines na fila e 90–920 draws descartados por
-  frame ("without a host pipeline: being made"). **Esta é a tela preta com só a legenda**: os draws
-  do cenário esperam pipelines que o driver ainda compila; a legenda já tinha a sua.
-- `shaders from the cache ... hits=0`: o cache de shaders do 7900XTX não serve a este fork (outro
-  tradutor, outra chave). Os 1.122 shaders da execução foram traduzidos durante o jogo.
-- Não travou: a janela foi fechada ("title did not finish suspending in time; ending the title").
+- All 10 graphics stages reached within 5 s; menus at 30 fps; no errors, no device
+  loss; 22.5 GB of RAM and 9.4 of 11.2 GB of VRAM.
+- In the "Vice City, two years ago" scene: 800–950 pipelines queued and 90–920 draws dropped per
+  frame ("without a host pipeline: being made"). **This is the black screen with only the subtitle**: the scenery
+  draws wait for pipelines the driver is still compiling; the subtitle already had its own.
+- `shaders from the cache ... hits=0`: the 7900XTX shader cache is of no use to this fork (different
+  translator, different key). The run's 1,122 shaders were translated during play.
+- It did not hang: the window was closed ("title did not finish suspending in time; ending the title").
 
-Correções:
+Fixes:
 
-- `victory translate E:\GTA6.Xbox.v1.0.2.1\shaders.rpf --warm all --jobs 12`: 25.636 shaders
-  traduzidos para o cache deste fork em 4m51s, 253 não traduzem (geometria e sombras por ray
-  tracing, já conhecidos). Na execução 2 o cache passou a acertar (hits=229 contra 0).
-- `VICTORY_PIPELINE_WORKERS` (novo neste fork, `pipeline/make.rs`, com teste): o número de workers
-  era fixo em metade dos threads (6 numa 5600X). `play-nvidia.ps1 -Warmup` usa threads − 2.
+- `victory translate E:\GTA6.Xbox.v1.0.2.1\shaders.rpf --warm all --jobs 12`: 25,636 shaders
+  translated into this fork's cache in 4m51s, 253 do not translate (ray-traced geometry and
+  shadows, already known). In run 2 the cache started hitting (hits=229 against 0).
+- `VICTORY_PIPELINE_WORKERS` (new in this fork, `pipeline/make.rs`, with a test): the number of workers
+  was fixed at half the threads (6 on a 5600X). `play-nvidia.ps1 -Warmup` uses threads − 2.
 
-Execução 2 (biblioteca de 825 pipelines da execução 1):
+Run 2 (library of 825 pipelines from run 1):
 
-- 653 pipelines carregadas da biblioteca em vez de compiladas; 1.656 começaram cedo, nos menus.
-- Ritmo medido: ~570 pipelines/minuto enquanto são leves; depois ~10/minuto com os 6 workers e
-  mais 3 threads do driver (prioridade Idle) ocupando a CPU inteira (100 %): as que sobram levam
-  ~30 s cada. Não há trava; é compilação, e a CPU de 6 núcleos é o limite.
-- Erro meu, já entendido: a tradução de shaders rodando ao mesmo tempo (12 threads, prioridade
-  normal) deixou os workers (abaixo do normal) sem CPU de 02:20 a 02:24.
+- 653 pipelines loaded from the library instead of compiled; 1,656 started early, in the menus.
+- Measured pace: ~570 pipelines/minute while they are light; then ~10/minute with the 6 workers and
+  3 more driver threads (Idle priority) taking the whole CPU (100 %): the remaining ones take
+  ~30 s each. There is no hang; it is compilation, and the 6-core CPU is the limit.
+- My mistake, now understood: shader translation running at the same time (12 threads, normal
+  priority) starved the workers (below normal) of CPU from 02:20 to 02:24.
 
-Consequência prática: as primeiras execuções são de aquecimento. Cada uma soma pipelines à
-biblioteca (`%LOCALAPPDATA%\victory\cache\pipelines\host-pipelines.bin`), e as seguintes as
-carregam em milissegundos. Uma fila ("being made") em 0 é o sinal de que a imagem pode aparecer.
+Practical consequence: the first runs are warm-up runs. Each one adds pipelines to the
+library (`%LOCALAPPDATA%\victory\cache\pipelines\host-pipelines.bin`), and the following ones
+load them in milliseconds. A queue ("being made") at 0 is the sign that the picture can appear.
 
-## Execução 3: o mundo aparece (22:42)
+## Run 3: the world appears (22:42)
 
-Com shaders no cache (2.672 acertos de 2.676) e a biblioteca de pipelines de 234 MB, a fila de
-pipelines chegou a 0 e o mundo renderizou: ~6–7 fps, 150 ms por frame, 2.000–3.700 draws, sem
-erros. O que restou de draws descartados (200–290 por frame) é do construtor das estruturas de
-ray tracing, desligado; por isso tudo o que o sol não ilumina direto fica preto.
+With shaders in the cache (2,672 hits out of 2,676) and the 234 MB pipeline library, the pipeline
+queue reached 0 and the world rendered: ~6–7 fps, 150 ms per frame, 2,000–3,700 draws, no
+errors. The remaining dropped draws (200–290 per frame) belong to the ray tracing structure
+builder, which is off; that is why everything the sun does not light directly is black.
 
-## Luz ambiente (portada do VIctory-7900XTX)
+## Ambient light (ported from VIctory-7900XTX)
 
-`crates/victory-gpu/src/ambient.rs` (de VIctory-7900XTX, ideia de beloooo / VIctory-Belobug-AMD,
-GPL-3.0-or-later): logo depois do programa do título que resolve a luz difusa das sondas de tela
-(`CS_ScreenProbes_TemporalResolve_*`), eleva a luz a uma estimativa tirada do próprio frame (a luz
-que as superfícies visíveis emitem, média em 64x36 células, como harmônicos de 1ª ordem em 160x90
-pontos), com sombreamento nas dobras a partir da profundidade. Só age enquanto o construtor de
-estruturas de ray tracing está desligado.
+`crates/victory-gpu/src/ambient.rs` (from VIctory-7900XTX, idea by beloooo / VIctory-Belobug-AMD,
+GPL-3.0-or-later): right after the title program that resolves the screen probes' diffuse light
+(`CS_ScreenProbes_TemporalResolve_*`), it raises the light to an estimate taken from the frame itself (the light
+that visible surfaces emit, averaged over 64x36 cells, as 1st-order harmonics on 160x90
+points), with shading in creases derived from depth. It only acts while the ray tracing
+structure builder is off.
 
-- Ganchos: `lib.rs` (módulo), `pipeline.rs` (papel do shader, pelo nome no container),
-  `draw.rs` (tabelas refeitas por bind e a chamada depois do dispatch, copiados do 7900XTX).
-- `VICTORY_AMBIENT`: um número (fração da estimativa; `play-nvidia.ps1` usa 0.8, como o
-  `play.ps1` do 7900XTX), `constant:<nível>`, ou `0` para desligar. `-Ambient` no script.
-- Se o layout das tabelas deste fork não for o que a luz espera, ela não faz nada e o log diz
-  "no stand-in for the indirect light: other tables" (sem risco para a imagem).
-- Testes: `ambient::tests` (3), incluindo a criação dos passes na RTX 3060: todos passam.
+- Hooks: `lib.rs` (module), `pipeline.rs` (shader role, from the name in the container),
+  `draw.rs` (tables rebuilt per bind and the call after the dispatch, copied from 7900XTX).
+- `VICTORY_AMBIENT`: a number (fraction of the estimate; `play-nvidia.ps1` uses 0.8, like
+  7900XTX's `play.ps1`), `constant:<level>`, or `0` to turn it off. `-Ambient` in the script.
+- If this fork's table layout is not what the light expects, it does nothing and the log says
+  "no stand-in for the indirect light: other tables" (no risk to the picture).
+- Tests: `ambient::tests` (3), including creating the passes on the RTX 3060: all pass.
 
-Suíte do `victory-gpu` com isso: 201 passaram, 1 falhou (`watch::tests::written_pages_are_reported_to_every_asker`,
-que passa 3 de 3 rodando sozinho: estado global de write-watch compartilhado com testes em
-paralelo; `watch.rs` não foi tocado).
+`victory-gpu` suite with this: 201 passed, 1 failed (`watch::tests::written_pages_are_reported_to_every_asker`,
+which passes 3 out of 3 when run alone: global write-watch state shared with tests running in
+parallel; `watch.rs` was not touched).
 
-## Otimização (execução 4 em diante)
+## Optimization (run 4 onward)
 
-Execução 4 (luz ambiente ativa, tudo compilado: shaders 2.699/0, fila de pipelines 0): 0,6–4,4 fps
-em cutscene. O frame é CPU copiando a memória do título: atualização de texturas ~219 ms, cópias
-180–210 MB, cópia de volta 55–110 ms, a GPU quase ociosa. Compilar mais não muda nada.
+Run 4 (ambient light on, everything compiled: shaders 2,699/0, pipeline queue 0): 0.6–4.4 fps
+in a cutscene. The frame is the CPU copying the title's memory: texture updates ~219 ms, copies
+180–210 MB, copy-back 55–110 ms, the GPU nearly idle. Compiling more changes nothing.
 
-O que entrou em `play-nvidia.ps1` (ligado por padrão; `-NoFast` desliga):
+What went into `play-nvidia.ps1` (on by default; `-NoFast` turns it off):
 
-| Opção | O que corta (estimativa do autor do fork, não medida em jogo) |
+| Option | What it cuts (the fork author's estimate, not measured in game) |
 |---|---|
-| `VICTORY_FILLS_PLAIN=1` | 8–12 mil preenchimentos pequenos por frame sem chamada ao kernel (~3 ms) |
-| `VICTORY_STEP_INDEX=1` | busca de cópias por índice em vez de lock (1,5–4 ms) |
-| `VICTORY_LIGHT_REFRESH=1` | refreshes de blocos intocados sem lock nem kernel (cópias 43→30 ms em ambientes fechados, 80→57 fora) |
-| `VICTORY_ABSENT_ONCE=1`, `VICTORY_ABSENT_MS=told` | não pergunta ao Windows de novo por blocos já sabidos ausentes (44 ms/frame fora) |
-| `VICTORY_REFRESH_ONCE=1` | memória atualizada uma vez por envio |
+| `VICTORY_FILLS_PLAIN=1` | 8,000–12,000 small fills per frame without a kernel call (~3 ms) |
+| `VICTORY_STEP_INDEX=1` | copy lookup by index instead of a lock (1.5–4 ms) |
+| `VICTORY_LIGHT_REFRESH=1` | refreshes of untouched blocks without lock or kernel (copies 43→30 ms indoors, 80→57 outdoors) |
+| `VICTORY_ABSENT_ONCE=1`, `VICTORY_ABSENT_MS=told` | does not ask Windows again about blocks already known to be absent (44 ms/frame outdoors) |
+| `VICTORY_REFRESH_ONCE=1` | memory updated once per submission |
 
-Os modos `alt` dessas opções têm relógios de 20 s independentes (cada um começa no primeiro uso),
-então não alternam juntos: compare duas execuções (normal e `-NoFast`), não uma.
+The `alt` modes of these options have independent 20 s clocks (each starts at first use),
+so they do not alternate together: compare two runs (normal and `-NoFast`), not one.
 
-Build `release` (`cargo build --locked --release -p victory`, `-Build release` no script): sem a
-feature `diagnostics`, que soma estatísticas por frame. Watchdog e luz ambiente estão nele também;
-as linhas `framelog` detalhadas e a detecção de frame preto ficam só no `diag`.
+`release` build (`cargo build --locked --release -p victory`, `-Build release` in the script): without the
+`diagnostics` feature, which adds per-frame statistics. The watchdog and ambient light are in it too;
+the detailed `framelog` lines and black frame detection stay in `diag` only.
 
-### Medido (execução de 2026-11-26 00:06 contra a de 2026-11-25 22:51)
+### Measured (run of 2026-11-26 00:06 against the one of 2026-11-25 22:51)
 
-Cenas diferentes (a segunda com ~2x mais draws), então os números são indicativos:
+Different scenes (the second with ~2x more draws), so the numbers are indicative:
 
-| CPU por frame | Sem as 5 opções | Com elas |
+| CPU per frame | Without the 5 options | With them |
 |---|---|---|
-| Atualização de texturas (todas as threads) | 218,9 ms | 10,7 ms |
-| Passos das listas (cópias, preenchimentos) | 255,1 ms | 55,6 ms |
-| Write-watch e busca sob voos | 68,8 ms | 14,0 ms |
-| Flush das atualizações | 52,5 ms | 8,4 ms |
-| Gravação, todas as threads | 2.175 ms | 469 ms |
+| Texture updates (all threads) | 218.9 ms | 10.7 ms |
+| List steps (copies, fills) | 255.1 ms | 55.6 ms |
+| Write-watch and lookup under flights | 68.8 ms | 14.0 ms |
+| Update flush | 52.5 ms | 8.4 ms |
+| Recording, all threads | 2,175 ms | 469 ms |
 
-Na mesma execução, a primeira versão de `-MoreTextures` (janelas 1 GiB, buffers 768 MiB na
-placa) deixou 1.760 MB de cópias na placa contra 3.126 MB, e o tempo da GPU nas listas do título
-foi a 235–287 ms por frame contra 28–53 ms: buffers na RAM do PC lidos pelo barramento. O ganho
-de CPU sumiu atrás disso. `-MoreTextures` agora só sobe o teto das texturas para 94 %.
+In the same run, the first version of `-MoreTextures` (1 GiB windows, 768 MiB buffers on the
+card) left 1,760 MB of copies on the card against 3,126 MB, and the GPU time on the title's lists
+went to 235–287 ms per frame against 28–53 ms: buffers in PC RAM read over the bus. The CPU gain
+vanished behind that. `-MoreTextures` now only raises the texture ceiling to 94 %.
 
-### Execução de 2026-11-26 00:14 (`-MoreTextures` corrigido) e 00:21 (`-Display 1080p`)
+### Run of 2026-11-26 00:14 (`-MoreTextures` fixed) and 00:21 (`-Display 1080p`)
 
-- 00:14: mundo com 5.000–6.800 draws a 6,4–6,9 fps (145–156 ms); na execução de 22:42, 2.000–3.700
-  draws davam a mesma velocidade. GPU quase sempre ocupada (ociosa 7–18 ms): listas do título
-  74–96 ms, listas da camada (hash e comparação das cópias na placa) 36–46 ms. Novo gargalo: GPU.
-- 00:21: `VICTORY_DISPLAY_MODE=1920x1080` foi informado ao título (log: "display mode reported to
-  the title width=1920 height=1080") e ele **continuou renderizando em 2560x1440**. Sem ganho.
-- 00:21: 7,4–7,7 fps com 4.000–6.000 draws, e depois de ~4 min no mundo a placa travou:
-  `0x887A0006` (DEVICE_HUNG), DRED "page fault" sem endereço, VRAM em 10,6 de 11,3 GB (teto de
-  texturas em 94 %). Hipótese, não provada: orçamento de VRAM no limite, paginação, um comando
-  passa de 2 s (TDR padrão do Windows) e o Windows reinicia a placa. `-MoreTextures` deixou de ser
-  recomendado em placas de 12 GB.
+- 00:14: world with 5,000–6,800 draws at 6.4–6.9 fps (145–156 ms); in the 22:42 run, 2,000–3,700
+  draws gave the same speed. GPU almost always busy (idle 7–18 ms): title lists
+  74–96 ms, layer lists (hashing and comparing the copies on the card) 36–46 ms. New bottleneck: GPU.
+- 00:21: `VICTORY_DISPLAY_MODE=1920x1080` was reported to the title (log: "display mode reported to
+  the title width=1920 height=1080") and it **kept rendering at 2560x1440**. No gain.
+- 00:21: 7.4–7.7 fps with 4,000–6,000 draws, and after ~4 min in the world the card hung:
+  `0x887A0006` (DEVICE_HUNG), DRED "page fault" with no address, VRAM at 10.6 of 11.3 GB (texture
+  ceiling at 94 %). Hypothesis, not proven: VRAM budget at the limit, paging, one command
+  goes past 2 s (Windows' default TDR) and Windows resets the card. `-MoreTextures` is no longer
+  recommended on 12 GB cards.
 
-### Resolução dinâmica do título e verificações na placa (2026-11-26)
+### The title's dynamic resolution and checks on the card (2026-11-26)
 
-- **Por que o título não baixa a resolução:** ele mede o próprio tempo de GPU com quatro
-  timestamps por frame, em pares. A camada escreve todos quando as últimas submissões do frame
-  terminam, a microssegundos um do outro, então cada par diz "a GPU não fez nada", e a resolução
-  dinâmica fica no máximo (2560x1440). `VICTORY_DISPLAY_MODE` não muda isso.
-- **Portado do VIctory-7900XTX:** `VICTORY_GPU_LOAD_MS=<ms>` (`queue.rs`, `gpu_load`/`as_loaded`):
-  o início de cada par é escrito `ms` antes do fim, e o título "vê" a GPU levar esse tempo. Acima
-  do orçamento de 33 ms ele pode baixar a resolução sozinho. Teste
+- **Why the title does not lower its resolution:** it measures its own GPU time with four
+  timestamps per frame, in pairs. The layer writes them all when the frame's last submissions
+  finish, microseconds apart, so each pair says "the GPU did nothing", and dynamic resolution
+  stays at its maximum (2560x1440). `VICTORY_DISPLAY_MODE` does not change that.
+- **Ported from VIctory-7900XTX:** `VICTORY_GPU_LOAD_MS=<ms>` (`queue.rs`, `gpu_load`/`as_loaded`):
+  the start of each pair is written `ms` before the end, and the title "sees" the GPU take that long. Above
+  the 33 ms budget it can lower the resolution on its own. Test
   `queue::tests::a_pair_of_timestamps_shows_the_load_it_is_given`. Script: `-GpuLoadMs 40`.
-  O efeito no título não está medido (o autor do 7900XTX também não registrou).
-- **Medir:** `ambient.rs` agora diz "the title's render size" a cada mudança do tamanho da
-  resolução da luz difusa.
-- **`VICTORY_CARD_HASH_WIDE=1`** entrou nas economias padrão: os hashes das cópias na placa com 64
-  threads por pedaço de 64 KiB em vez de uma (PR #1014 do fork, medido numa RTX 3060). Aqui as
-  listas de hash e comparação da camada eram 36–46 ms da GPU por frame com a GPU como limite.
-- Suíte do `victory-gpu`: 202 passaram, 1 falhou (o teste do WARP já conhecido como instável).
+  The effect on the title is not measured (the 7900XTX author did not record it either).
+- **Measuring:** `ambient.rs` now logs "the title's render size" on every change of the diffuse
+  light's resolution.
+- **`VICTORY_CARD_HASH_WIDE=1`** joined the default savings: the hashes of the copies on the card use 64
+  threads per 64 KiB chunk instead of one (the fork's PR #1014, measured on an RTX 3060). Here the
+  layer's hash and compare lists were 36–46 ms of GPU per frame with the GPU as the limit.
+- `victory-gpu` suite: 202 passed, 1 failed (the WARP test already known to be flaky).
 
-Descartado: `VICTORY_INPLACE` (memória do título como heap da GPU) cria o heap na RAM do PC, o
-mesmo caminho lento pelo barramento.
+Discarded: `VICTORY_INPLACE` (title memory as a GPU heap) creates the heap in PC RAM, the
+same slow path over the bus.
 
-## Sobre 60 fps
+## About 60 fps
 
-Não é alcançável com esta camada: o título trava a si mesmo em 30 fps (como no console), e no
-mundo aberto este fork mede 7–12 fps numa RTX 4070 com i7-14700KF (28 threads). O limite medido é
-a thread que prepara os envios à GPU (CPU), não a placa: a GPU fica ~3 % ocupada nos logs daqui.
+It is not reachable with this layer: the title locks itself to 30 fps (as on the console), and in the
+open world this fork measures 7–12 fps on an RTX 4070 with an i7-14700KF (28 threads). The measured limit is
+the thread that prepares submissions to the GPU (CPU), not the card: the GPU is ~3 % busy in the logs here.
 
-## Suíte do `victory-gpu` depois das mudanças
+## `victory-gpu` suite after the changes
 
-`cargo test --locked --release -p victory-gpu`: **197 passaram, 1 falhou, 5 ignorados.** A falha,
-`indirect::tests::warp_budget_saturates_without_wraparound_and_preserves_draw_fields`, é anterior
-a este trabalho: roda no adaptador de software (WARP), em `indirect.rs`, que não foi tocado. Este
-fork mudou a asserção para exigir que os registros 1 e 2 sejam os mantidos, o que depende da ordem
-em que as threads fazem o `InterlockedAdd` do orçamento. A versão do mesmo teste no
-VIctory-7900XTX, que não tem essa exigência, passa. Não tem relação com a tela preta.
+`cargo test --locked --release -p victory-gpu`: **197 passed, 1 failed, 5 ignored.** The failure,
+`indirect::tests::warp_budget_saturates_without_wraparound_and_preserves_draw_fields`, predates
+this work: it runs on the software adapter (WARP), in `indirect.rs`, which was not touched. This
+fork changed the assertion to require that records 1 and 2 be the ones kept, which depends on the order
+in which threads do the budget's `InterlockedAdd`. The version of the same test in
+VIctory-7900XTX, which does not have that requirement, passes. It is unrelated to the black screen.
 
-## Limites (o que NÃO foi validado)
+## Limits (what was NOT validated)
 
-- A tela preta em si: o título não foi executado aqui. A causa só é confirmada pelo log da próxima
-  execução (linhas `graphics stage reached` e `BLACK WINDOW`).
-- O watchdog dentro de uma execução real do título (testado só em unidade).
-- Desempenho e estabilidade em jogo na RTX 3060.
-- A suíte completa do `victory-shader` com comparação contra o compilador do console (ausente).
+- The black screen itself: the title was not run here. The cause is only confirmed by the log of the next
+  run (`graphics stage reached` and `BLACK WINDOW` lines).
+- The watchdog inside a real run of the title (unit-tested only).
+- In-game performance and stability on the RTX 3060.
+- The full `victory-shader` suite with comparison against the console compiler (absent).
 
-## Comandos
+## Commands
 
 ```powershell
 cd E:\GTA6.Xbox.v1.0.2.1\victory-gfxcheck
@@ -300,76 +300,76 @@ cargo build --locked --profile diag -p victory --features diagnostics
 powershell -ExecutionPolicy Bypass -File scripts\play-nvidia.ps1 -Exe E:\GTA6.Xbox.v1.0.2.1\game_scarlett_master.exe
 ```
 
-## Frame pacing (1% low, P95/P99, travadas)
+## Frame pacing (1% low, P95/P99, hitches)
 
-Novo módulo `crates/victory-gpu/src/pacing.rs`. Cada Present do host que dá certo grava o tempo desde o anterior. A cada 10 s o log traz uma linha `frame pacing, last 10 s` com:
+New module `crates/victory-gpu/src/pacing.rs`. Every successful host Present records the time since the previous one. Every 10 s the log has a `frame pacing, last 10 s` line with:
 
-- o fps médio, o 1% low e o 0,1% low;
-- a mediana, o P95, o P99 e o maior tempo de frame;
-- quantos frames passaram de 100 ms, 250 ms e 1 s, na janela e desde o início.
+- the average fps, the 1% low and the 0.1% low;
+- the median, the P95, the P99 and the longest frame time;
+- how many frames went over 100 ms, 250 ms and 1 s, in the window and since the start.
 
-O script já mostra essa linha no terminal. `VICTORY_PACING=0` desliga. Há 3 testes (frames iguais; uma travada de 2 s; janela vazia).
+The script already shows this line in the terminal. `VICTORY_PACING=0` turns it off. There are 3 tests (equal frames; a 2 s hitch; empty window).
 
-## Medições da rodada de 26/11 07:49 (-GpuLoadMs 40, CARD_HASH_WIDE=1)
+## Measurements from the 11/26 07:49 run (-GpuLoadMs 40, CARD_HASH_WIDE=1)
 
-| | antes (00:14) | agora |
+| | before (00:14) | now |
 |---|---|---|
-| fps no mundo | 6,4–7,7 | 7,7–9,1 |
-| listas de envio+hash e de comparação na placa | 36–46 ms | 11–14 ms |
-| listas do jogo na placa | 74–96 ms | 62–92 ms |
-| thread que submete, trabalhando por frame | – | 86–101 ms |
+| fps in the world | 6.4–7.7 | 7.7–9.1 |
+| upload+hash and compare lists on the card | 36–46 ms | 11–14 ms |
+| game lists on the card | 74–96 ms | 62–92 ms |
+| submitting thread, working per frame | – | 86–101 ms |
 
-- A resolução não mudou com 40 ms: continua 2560x1440. O próximo teste é 100 ms.
-- A placa fica ocupada ~84% do frame. Ela e a thread que submete levam ~90 ms cada, então as duas limitam juntas.
-  - Baixar a resolução aliviaria a placa e também diminuiria a cópia de volta (50–70 MB por frame).
-  - Do lado da CPU, o maior item é o espelhamento do heap de descritores: 19,6 ms por frame, dos quais 14,2 ms criam os slots do host para ~12.600 registros novos.
+- The resolution did not change with 40 ms: still 2560x1440. The next test is 100 ms.
+- The card is busy ~84% of the frame. It and the submitting thread take ~90 ms each, so both limit together.
+  - Lowering the resolution would relieve the card and also shrink the copy-back (50–70 MB per frame).
+  - On the CPU side, the biggest item is descriptor heap mirroring: 19.6 ms per frame, of which 14.2 ms create the host slots for ~12,600 new records.
 
-## Travadas de 1–6 s: remapeamento da memória do jogo (rodada de 26/11 08:13)
+## 1–6 s hitches: remapping of the game's memory (11/26 08:13 run)
 
-O módulo `crates/victory-hle/src/modules/xmem.rs` ganhou uma linha a cada 5 s, `title memory remapping in the last ... s`, que separa o tempo do remapeamento em: chamadas ao Windows, commit, avisos à GPU e trechos remapeados.
+The module `crates/victory-hle/src/modules/xmem.rs` gained a line every 5 s, `title memory remapping in the last ... s`, which splits remapping time into: calls to Windows, commit, notices to the GPU and remapped ranges.
 
-**O que a rodada mostrou:**
-- Fora das travadas, o remapeamento custa ~5–46 ms a cada 5 s.
-- Nas rajadas de travada, o jogo faz 7.000–11.400 chamadas em 5 s, que somam **4,3–4,9 s**.
-  - Quase tudo é chamada ao Windows (`VirtualFree` para dividir placeholders, `MapViewOfFile3`, `UnmapViewOfFile2`): uns 0,5 ms cada.
-  - O commit custa só 2–21 ms e os avisos à GPU 70–210 ms.
-- Os maiores frames somam ~1,0–1,3 s de remapeamento cada.
+**What the run showed:**
+- Outside the hitches, remapping costs ~5–46 ms every 5 s.
+- In the hitch bursts, the game makes 7,000–11,400 calls in 5 s, adding up to **4.3–4.9 s**.
+  - Almost all of it is calls to Windows (`VirtualFree` to split placeholders, `MapViewOfFile3`, `UnmapViewOfFile2`): about 0.5 ms each.
+  - Commit costs only 2–21 ms and the notices to the GPU 70–210 ms.
+- The biggest frames add up to ~1.0–1.3 s of remapping each.
 
-**Correção 1, `VICTORY_REMAP_SAME`** (ligada por padrão; `=0` volta ao comportamento antigo):
-- Um remapeamento que pede exatamente o que a faixa já mostra (mesma seção, mesma página, endereço por endereço) agora é deixado como está.
-- Isso vale também para desmapear o que já está desmapeado e para a cópia de mapeamento de páginas da GPU (`map_alias`).
-- O conteúdo visível é o mesmo, então não há nada que a GPU ou uma leitura no lugar possam ver diferente.
-- A linha do log conta essas chamadas.
-- Teste novo: `mapping_what_is_there_already_leaves_the_views_alone`. Todos os 103 testes do victory-hle passam.
+**Fix 1, `VICTORY_REMAP_SAME`** (on by default; `=0` goes back to the old behaviour):
+- A remap that asks for exactly what the range already shows (same section, same page, address by address) is now left as is.
+- This also applies to unmapping what is already unmapped and to the GPU page mapping copy (`map_alias`).
+- The visible contents are the same, so there is nothing the GPU or an in-place read could see differently.
+- The log line counts these calls.
+- New test: `mapping_what_is_there_already_leaves_the_views_alone`. All 103 victory-hle tests pass.
 
-Se poucas chamadas forem desse tipo, o próximo passo é atacar o custo das próprias chamadas ao Windows. A linha agora separa o tempo de unmap do de split+map.
+If few calls are of this kind, the next step is to go after the cost of the Windows calls themselves. The line now separates unmap time from split+map time.
 
-### Resultado da correção 1 (rodada de 26/11 09:47) e o que veio depois
+### Result of fix 1 (11/26 09:47 run) and what came after
 
-- Ela quase não atua: de cada ~3.500–12.600 chamadas em 5 s, só 0 a 4 pediam o que já estava lá. A sessão teve 4.489 frames, 509 acima de 100 ms, 150 acima de 250 ms, 30 acima de 1 s, e a maior travada durou 6,6 s. É o mesmo quadro de antes.
-- O custo está nas chamadas ao Windows: ~1 ms por view mapeada (4.440 views em 4,8 s, por exemplo).
-- Teste isolado (programa próprio, fora do jogo): repete o que `map`/`unmap` pedem ao Windows, ou seja, views de 64 KiB de uma seção SEC_RESERVE de 6 GiB num placeholder de 8 GiB.
+- It barely acts: of every ~3,500–12,600 calls in 5 s, only 0 to 4 asked for what was already there. The session had 4,489 frames, 509 over 100 ms, 150 over 250 ms, 30 over 1 s, and the longest hitch lasted 6.6 s. It is the same picture as before.
+- The cost is in the calls to Windows: ~1 ms per mapped view (4,440 views in 4.8 s, for example).
+- Isolated test (our own program, outside the game): repeats what `map`/`unmap` ask of Windows, that is, 64 KiB views of a 6 GiB SEC_RESERVE section in an 8 GiB placeholder.
 
-  | condição | por remapeamento | pior map |
+  | condition | per remap | worst map |
   |---|---|---|
-  | 5.000 views | 8 µs | – |
-  | 100.000 views | 9 µs | – |
-  | 2 threads de VirtualQuery | 12 µs | – |
-  | 2 threads de VirtualProtect | 16 µs | 1,0 ms |
-  | 1 thread de GetWriteWatch em 1 GiB | 17 µs | 5,3 ms |
+  | 5,000 views | 8 µs | – |
+  | 100,000 views | 9 µs | – |
+  | 2 VirtualQuery threads | 12 µs | – |
+  | 2 VirtualProtect threads | 16 µs | 1.0 ms |
+  | 1 GetWriteWatch thread over 1 GiB | 17 µs | 5.3 ms |
 
-  Ou seja, as chamadas são baratas. No jogo elas custam ~100 vezes mais, o que aponta para espera pelo espaço de endereços do processo (as guardas com VirtualProtect, o GetWriteWatch do lado da GPU, as falhas de página) ou por um núcleo livre.
-- A linha `title memory remapping` agora mostra quanto tempo a thread rodou nessas chamadas (`QueryThreadCycleTime`) contra o tempo de relógio, e separa o tempo de split de placeholder. Com isso a próxima rodada diz qual dos dois é a causa.
-- Nas áreas pesadas, os 6 fps estáveis não vêm do remapeamento, que ali custa só 8,6 ms por frame. No frame típico de 156 ms:
-  - a thread que submete trabalha 110 ms (os passos das listas 54, o write-watch 15, card_before 10, as atualizações 9);
-  - a cópia de volta leva 42 ms (48 MB) e as cópias 39 ms (110 MB);
-  - a gravação das chamadas de lista do jogo soma 483 ms de CPU em 51.641 chamadas (~9 µs cada).
+  In other words, the calls are cheap. In the game they cost ~100 times more, which points to waiting for the process's address space (the VirtualProtect guards, GetWriteWatch on the GPU side, page faults) or for a free core.
+- The `title memory remapping` line now shows how long the thread ran in these calls (`QueryThreadCycleTime`) against wall-clock time, and separates placeholder split time. With this the next run tells which of the two is the cause.
+- In the heavy areas, the steady 6 fps does not come from remapping, which costs only 8.6 ms per frame there. In the typical 156 ms frame:
+  - the submitting thread works 110 ms (list steps 54, write-watch 15, card_before 10, updates 9);
+  - the copy-back takes 42 ms (48 MB) and the copies 39 ms (110 MB);
+  - recording the game's list calls adds up to 483 ms of CPU over 51,641 calls (~9 µs each).
 
-### Build de desempenho (`perf`)
+### Performance build (`perf`)
 
-`scripts/build-perf.ps1 -Cpu znver3` gera `target\perf\victory.exe`:
-- release sem a feature `diagnostics`;
-- LTO fat e uma unidade de geração de código (`[profile.perf]` no Cargo.toml);
-- código para o Zen 3.
+`scripts/build-perf.ps1 -Cpu znver3` produces `target\perf\victory.exe`:
+- release without the `diagnostics` feature;
+- fat LTO and one codegen unit (`[profile.perf]` in Cargo.toml);
+- code for Zen 3.
 
-Para jogar com ele: `scripts\play-nvidia.ps1 -Build perf -Exe ...`. A linha de frame pacing, a de remapeamento e o framelog continuam no log, porque não dependem de `diagnostics`.
+To play with it: `scripts\play-nvidia.ps1 -Build perf -Exe ...`. The frame pacing line, the remapping line and the framelog stay in the log, because they do not depend on `diagnostics`.

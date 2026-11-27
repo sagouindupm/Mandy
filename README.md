@@ -1,306 +1,306 @@
 <p align="center">
-  <img src="docs/assets/banniere.svg" alt="VIctory S : le profil Series S pour les petites configurations" width="100%">
+  <img src="docs/assets/banniere.svg" alt="VIctory S: the Series S profile for low-end PCs" width="100%">
 </p>
 
 <p align="center">
-  <b>Votre copie d'un jeu Xbox Series sur un PC modeste, en profil Series S, réglée toute seule pour votre machine.</b>
+  <b>Your copy of an Xbox Series game on a modest PC, in the Series S profile, tuned for your machine automatically.</b>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-FF3C78?style=flat-square" alt="Licence GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/plateforme-Windows%2010%20%7C%2011-5B4B8A?style=flat-square" alt="Plateforme Windows 10 et 11">
-  <img src="https://img.shields.io/badge/profil-Series%20S-FF6B35?style=flat-square" alt="Profil Series S">
-  <img src="https://img.shields.io/badge/statut-aper%C3%A7u-E0A100?style=flat-square" alt="Statut : aperçu">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-FF3C78?style=flat-square" alt="License GPL-3.0"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-5B4B8A?style=flat-square" alt="Platform Windows 10 and 11">
+  <img src="https://img.shields.io/badge/profile-Series%20S-FF6B35?style=flat-square" alt="Series S profile">
+  <img src="https://img.shields.io/badge/status-preview-E0A100?style=flat-square" alt="Status: preview">
 </p>
 
 <p align="center">
-  <a href="https://github.com/sagouindupm/Mandy/releases"><img src="https://img.shields.io/badge/T%C3%A9l%C3%A9charger-VIctory%20S%20pour%20Windows-FF3C78?style=for-the-badge&logo=windows&logoColor=white" alt="Télécharger VIctory S pour Windows" height="44"></a>
+  <a href="https://github.com/sagouindupm/Mandy/releases"><img src="https://img.shields.io/badge/Download-VIctory%20S%20for%20Windows-FF3C78?style=for-the-badge&logo=windows&logoColor=white" alt="Download VIctory S for Windows" height="44"></a>
 </p>
 
-<p align="center"><sub>Un zip, rien à installer ni à compiler. Il vous faut votre propre copie du jeu.</sub></p>
+<p align="center"><sub>One zip, nothing to install or compile. You need your own copy of the game.</sub></p>
 
 ---
 
-VIctory S est une version de [VIctory](https://github.com/Marvisak/VIctory) taillée pour les **petites
-configurations** : une carte graphique de 6 à 8 Go, un processeur 6 cœurs, 16 à 32 Go de mémoire vive. Elle ne
-connaît qu'un profil, celui de la **Xbox Series S**, et elle vient avec un lanceur qui prépare tout pour vous.
+VIctory S is a version of [VIctory](https://github.com/Marvisak/VIctory) cut out for **low-end PCs**: a 6 to
+8 GB graphics card, a 6-core CPU, 16 to 32 GB of RAM. It knows a single profile, the **Xbox Series S** one, and
+it comes with a launcher that prepares everything for you.
 
 > [!NOTE]
-> **Ce dépôt ne contient aucun fichier, code ou image du jeu**, et la version téléchargeable non plus. Vous
-> utilisez **votre propre copie** ; rien n'y est modifié. Projet sans lien avec l'éditeur ou le développeur du jeu.
+> **This repository contains no file, code or image from the game**, and neither does the download. You use
+> **your own copy**; nothing in it is modified. This project is not affiliated with the game's publisher or
+> developer.
 
-## Démarrage en 3 étapes
+## Get started in 3 steps
 
-### 1. Télécharger
+### 1. Download
 
-Prenez le dernier `VIctory-S-<version>.zip` sur la page des
-**[Releases](https://github.com/sagouindupm/Mandy/releases)** et décompressez-le où vous voulez (pas dans le
-dossier du jeu). Double-cliquez sur **`VIctory S.exe`**.
+Get the latest `VIctory-S-<version>.zip` from the
+**[Releases](https://github.com/sagouindupm/Mandy/releases)** page and unzip it wherever you like (not in the
+game folder). Double-click **`VIctory S.exe`**.
 
-Au premier lancement, le lanceur regarde votre PC (processeur, carte graphique, mémoire vive) et choisit le
-meilleur profil qu'on sait proposer, sans rien vous demander. Vous le voyez sous le bouton Jouer et, avec les
-raisons de chaque choix, dans **Réglages → Profil détecté**.
+On first launch, the launcher looks at your PC (CPU, graphics card, RAM) and picks the best profile we can
+offer, without asking you anything. You see it under the Play button and, with the reason for each choice, in
+**Settings → Detected profile**.
 
-<p align="center"><img src="docs/assets/launcher-jouer.png" alt="Le lanceur VIctory S, page Jouer" width="80%"></p>
+<p align="center"><img src="docs/assets/launcher-jouer.png" alt="The VIctory S launcher, Play page" width="80%"></p>
 
-### 2. Tout préparer
+### 2. Prepare everything
 
-Onglet **Préparation**, bouton **« Tout préparer »**. Le lanceur trouve le jeu (`game_scarlett_master.exe` de
-votre copie), **traduit les shaders** pour votre carte puis **construit d'avance les pipelines** de la liste
-partagée [`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt) : les 2 874 pipelines
-dont le jeu se sert jusqu'après la mission du bateau, décrites par des empreintes seulement (aucun code du jeu),
-construites avec les shaders de **votre** copie. Une seule fois, environ 25 minutes sur notre machine (18 min de
-traduction, 6 min de construction). Chaque étape a son état et son bouton, pour la refaire à la main.
+**Setup** tab, **"Prepare everything"** button. The launcher finds the game (`game_scarlett_master.exe` from
+your copy), **translates the shaders** for your card, then **builds ahead of time the pipelines** of the shared
+list [`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt): the 2,874 pipelines the
+game uses until after the boat mission, described by hashes only (no game code), built with the shaders of
+**your** copy. Only once, about 25 minutes on our machine (18 min of translation, 6 min of building). Each step
+has its own status and button, so you can redo it by hand.
 
-Il faut la **copie complète** : l'exe avec toutes ses archives à côté (`shaders.rpf`, `levels.rpf` et les
-autres `.rpf`, ~130 Go pour la v1.0.2.1), dans son propre dossier (par exemple `C:\Jeux\GTA6`). L'exe seul, ou
-quelques fichiers en vrac dans Téléchargements, ne suffisent pas : le lanceur le dit et indique ce qui manque.
+You need the **complete copy**: the exe with all its archives next to it (`shaders.rpf`, `levels.rpf` and the
+other `.rpf` files, ~130 GB for v1.0.2.1), in its own folder (for example `C:\Games\GTA6`). The exe alone, or a
+few loose files in Downloads, are not enough: the launcher says so and tells you what is missing.
 
-<p align="center"><img src="docs/assets/launcher-preparation.png" alt="La page Préparation : six étapes" width="80%"></p>
+<p align="center"><img src="docs/assets/launcher-preparation.png" alt="The Setup page: six steps" width="80%"></p>
 
-### 3. Jouer
+### 3. Play
 
-Onglet **Jouer**, bouton **JOUER**. Les pipelines étant construites d'avance, **la première partie est déjà
-fluide** : sans à-coups ni dessins manquants jusqu'après la mission du bateau. C'est ce qui fait passer de ~5 à
-~10 images par seconde sur notre machine de référence. Chaque partie note aussi les pipelines que la liste
-n'avait pas ; **Préparation → étape 4, « Construire »** les ajoute quand vous allez plus loin dans le jeu.
+**Play** tab, **PLAY** button. Since the pipelines are built ahead of time, **the first session is already
+smooth**: no stutter or missing drawings until after the boat mission. That is what takes our reference
+machine from ~5 to ~10 frames per second. Each session also records the pipelines the list did not have;
+**Setup → step 4, "Build"** adds them when you get further into the game.
 
-<p align="center"><img src="docs/assets/launcher-reglages.png" alt="La page Réglages : profil détecté et réglages appliqués" width="80%"></p>
-
-> [!TIP]
-> **Carte NVIDIA : réglez le cache de shaders sur « Illimitée ».** Panneau de configuration NVIDIA → Gérer les
-> paramètres 3D → Taille du cache des shaders. Par défaut le pilote garde 4 Go par jeu ; une fois plein, chaque
-> lancement recompile tout et paraît 1,5 à 2 fois plus lent. Le lanceur ouvre le panneau pour vous (étape 5).
+<p align="center"><img src="docs/assets/launcher-reglages.png" alt="The Settings page: detected profile and applied settings" width="80%"></p>
 
 > [!TIP]
-> **PC de 16 Go de mémoire vive :** fermez le navigateur, Discord et les autres programmes avant de jouer. Le
-> profil s'adapte tout seul (une partie de la mémoire du jeu passe dans la carte, il faut le Resizable BAR).
+> **NVIDIA card: set the shader cache to "Unlimited".** NVIDIA Control Panel → Manage 3D settings → Shader
+> Cache Size. By default the driver keeps 4 GB per game; once full, every launch recompiles everything and
+> feels 1.5 to 2 times slower. The launcher opens the panel for you (step 5).
+
+> [!TIP]
+> **PC with 16 GB of RAM:** close your browser, Discord and other programs before playing. The profile adapts
+> on its own (part of the game's memory moves to the card; Resizable BAR is required).
 
 > [!WARNING]
-> C'est un **aperçu** : attendez-vous à des images par seconde modestes, à des défauts d'image par moments et à
-> des plantages. Gardez une copie de vos sauvegardes (raccourci « Copier mes sauvegardes » du lanceur).
+> This is a **preview**: expect modest frame rates, picture glitches at times, and crashes. Keep a copy of
+> your saves (the launcher's "Copy my saves" shortcut).
 
-## Comment ça marche
+## How it works
 
-La console partage une seule mémoire entre processeur et carte graphique ; un PC en a deux. VIctory charge le
-jeu, imite les services du système de la console, traduit ce que le jeu envoie à la carte et garde les deux
-mémoires d'accord, image après image.
+The console shares a single memory between CPU and graphics card; a PC has two. VIctory loads the game,
+imitates the console's system services, translates what the game sends to the card and keeps the two memories
+in agreement, frame after frame.
 
 ```mermaid
 flowchart LR
-    A["Votre copie du jeu<br/>(game_scarlett_master.exe)"] --> B["VIctory traduit les shaders<br/>(une fois, pour votre carte)"]
-    B --> C["Pipelines construites d'avance<br/>(notées pendant vos parties)"]
-    C --> D["La carte graphique<br/>(Direct3D 12)"]
+    A["Your copy of the game<br/>(game_scarlett_master.exe)"] --> B["VIctory translates the shaders<br/>(once, for your card)"]
+    B --> C["Pipelines built ahead of time<br/>(recorded while you play)"]
+    C --> D["The graphics card<br/>(Direct3D 12)"]
 ```
 
-Les réglages ne sont pas devinés : chacun a été mesuré (médiane de plusieurs passages au même endroit du jeu)
-et noté, gardé ou rejeté, dans [docs/essais.md](docs/essais.md). Ils sont tous dans
-[`series-s/reglages.json`](series-s/reglages.json), avec les profils par matériel.
+The settings are not guesses: each one was measured (median of several runs at the same place in the game)
+and recorded, kept or rejected, in [docs/test-log.md](docs/test-log.md). They are all in
+[`series-s/reglages.json`](series-s/reglages.json), with the per-hardware profiles.
 
-## Configs et résultats mesurés
+## Configs and measured results
 
-Mission du bateau (chapitre I), profil Series S, shaders traduits et pipelines construites. Rien n'est
-extrapolé : une ligne sans mesure attend la vôtre.
+Boat mission (chapter I), Series S profile, shaders translated and pipelines built. Nothing is extrapolated:
+a row without a measurement is waiting for yours.
 
-| Configuration | Réglage | Résultat |
+| Configuration | Setting | Result |
 |---|---|---|
-| **RTX 3050 8 Go**, i5-12400F (12 fils), 32 Go, Windows 11 | Recommandé : 540p + upscaler du jeu, arbres affichés (réglages actuels) | **97 ms par image, ~10 fps** |
-| RTX 3050 8 Go, même PC | Recommandé, sans les arbres (avant leur retour, #27) | 84 ms par image, **11,8 fps** en cinématique |
-| RTX 3050 8 Go, même PC | Bateau piloté en jeu, 7 minutes (base du 27/11) | **8,6 à 9,9 fps** sur l'eau |
-| RTX 3050 8 Go, même PC | DLSS ultra performance (base du 27/11) | 90 ms par image (11,2 fps), image propre |
-| RTX 3050 8 Go, même PC | DLSS performance / qualité (base du 27/11) | 102 ms / 176 ms par image |
-| GTX 1660 / RTX 2060 6 Go | Profil 6 Go | *à mesurer : aidez-nous* |
-| RTX 3060 12 Go, RTX 4060 8 Go | Profil 8 Go / 11 Go et plus | *à mesurer : aidez-nous* |
-| Portable RTX 4050 6 Go, 16 Go de RAM | Profil 6 Go, 16 Go | *à mesurer : aidez-nous* |
-| AMD Radeon RX 6600 / 6700 | Profil Series S générique (non testé) | *à mesurer : aidez-nous* |
+| **RTX 3050 8 GB**, i5-12400F (12 threads), 32 GB, Windows 11 | Recommended: 540p + the game's upscaler, trees shown (current settings) | **97 ms per frame, ~10 fps** |
+| RTX 3050 8 GB, same PC | Recommended, without the trees (before they came back, #27) | 84 ms per frame, **11.8 fps** in cutscenes |
+| RTX 3050 8 GB, same PC | Boat driven in game, 7 minutes (base of 27 Nov) | **8.6 to 9.9 fps** on the water |
+| RTX 3050 8 GB, same PC | DLSS ultra performance (base of 27 Nov) | 90 ms per frame (11.2 fps), clean picture |
+| RTX 3050 8 GB, same PC | DLSS performance / quality (base of 27 Nov) | 102 ms / 176 ms per frame |
+| GTX 1660 / RTX 2060 6 GB | 6 GB profile | *to measure: help us* |
+| RTX 3060 12 GB, RTX 4060 8 GB | 8 GB / 11 GB and more profile | *to measure: help us* |
+| RTX 4050 6 GB laptop, 16 GB of RAM | 6 GB, 16 GB profile | *to measure: help us* |
+| AMD Radeon RX 6600 / 6700 | Generic Series S profile (untested) | *to measure: help us* |
 
-Image sur la machine de référence : eau réaliste en cinématique et en jeu (vagues, reflets du soleil), visages
-détaillés, interface Series S. Le détail, et tout ce qui a été essayé, est dans [docs/essais.md](docs/essais.md).
+Picture on the reference machine: realistic water in cutscenes and in game (waves, sun reflections), detailed
+faces, Series S interface. The details, and everything that was tried, are in [docs/test-log.md](docs/test-log.md).
 
-### Le profil choisi pour votre PC
+### The profile picked for your PC
 
-| Ce que le lanceur regarde | Ce qu'il en fait |
+| What the launcher looks at | What it does with it |
 |---|---|
-| Processeur : 8 fils ou moins / 12 fils / 16 fils ou plus | 3, 4 ou 6 fils de traduction des listes (et les fils auxiliaires en proportion) |
-| Carte : 6 Go ou moins / 8 à 10 Go / 11 Go et plus | 768, 1536 ou 2048 Mo de tampons sur la carte (jamais 2048 sous 11 Go) |
-| Mémoire vive : moins de 24 Go / moins de 20 Go | mémoire du jeu en partie dans la carte ; sous 20 Go, fils un cran plus bas et 1024 Mo de tampons au plus |
-| NVIDIA RTX / autre NVIDIA / AMD / Intel | DLSS proposé / pas de DLSS / « non testé, profil Series S générique » / carte dédiée de 4 Go ou plus nécessaire |
+| CPU: 8 threads or fewer / 12 threads / 16 threads or more | 3, 4 or 6 list translation threads (and the helper threads in proportion) |
+| Card: 6 GB or less / 8 to 10 GB / 11 GB and more | 768, 1536 or 2048 MB of buffers on the card (never 2048 under 11 GB) |
+| RAM: under 24 GB / under 20 GB | game memory partly on the card; under 20 GB, threads one step lower and 1024 MB of buffers at most |
+| NVIDIA RTX / other NVIDIA / AMD / Intel | DLSS offered / no DLSS / "untested, generic Series S profile" / dedicated card with 4 GB or more required |
 
-Le PC de référence garde exactement les réglages mesurés. Les deux lanceurs (graphique et console) font le même
-calcul, vérifié par `scripts/check-profils.ps1` et les tests du lanceur.
+The reference PC keeps exactly the measured settings. Both launchers (graphical and console) do the same
+computation, checked by `scripts/check-profils.ps1` and the launcher's tests.
 
-## Questions fréquentes
+## FAQ
 
 <details>
-<summary><b>Combien d'images par seconde vais-je avoir ?</b></summary>
+<summary><b>How many frames per second will I get?</b></summary>
 
-Sur notre machine de référence (RTX 3050 8 Go, i5-12400F, 32 Go) : environ 10 images par seconde dans la
-mission du bateau (97 ms par image avec les arbres ; 8,6 à 9,9 fps en pilotant le bateau). Sur d'autres machines, on ne sait pas encore : c'est exactement ce
-que vos retours nous apprennent. Le jeu n'est pas fluide aujourd'hui ; l'objectif est 10-12 fps en cinématique
-et plus en jeu, avec une image fidèle à la Series S.
+On our reference machine (RTX 3050 8 GB, i5-12400F, 32 GB): about 10 frames per second in the boat mission
+(97 ms per frame with the trees; 8.6 to 9.9 fps while driving the boat). On other machines we don't know yet:
+that is exactly what your feedback teaches us. The game is not smooth today; the goal is 10-12 fps in
+cutscenes and more in game, with a picture faithful to the Series S.
 </details>
 
 <details>
-<summary><b>Ça saccade, c'est normal ?</b></summary>
+<summary><b>It stutters, is that normal?</b></summary>
 
-Pas si la préparation est faite. Le jeu se sert de milliers de pipelines (les programmes de la carte graphique) ;
-« Tout préparer » traduit les shaders (étape 3) puis construit d'avance celles de la liste partagée (étape 4),
-jusqu'après la mission du bateau. Si l'étape 4 n'est pas « Prêt », lancez-la. Plus loin dans le jeu, de nouvelles
-pipelines apparaissent : chaque partie les note, et « Construire » (étape 4) les ajoute. Sur une carte NVIDIA,
-réglez aussi le cache de shaders sur « Illimitée ».
+Not if the setup is done. The game uses thousands of pipelines (the graphics card's programs); "Prepare
+everything" translates the shaders (step 3) then builds ahead of time those of the shared list (step 4), until
+after the boat mission. If step 4 is not "Ready", run it. Further into the game, new pipelines show up: each
+session records them, and "Build" (step 4) adds them. On an NVIDIA card, also set the shader cache to
+"Unlimited".
 </details>
 
 <details>
-<summary><b>Clavier AZERTY, souris, manette ?</b></summary>
+<summary><b>AZERTY keyboard, mouse, controller?</b></summary>
 
-Une manette compatible XInput (manette Xbox) est reconnue ; sans manette, le clavier en fait une de secours
-(Entrée = A, Retour arrière = B, Espace = X, flèches = croix directionnelle). Souris : cliquez dans la fenêtre du
-jeu pour la capturer, **Alt** ou **Échap** la libère. Clavier **AZERTY** : les touches à la même place qu'en
-QWERTY (ZQSD) arrivent avec la [PR #29](https://github.com/sagouindupm/Mandy/pull/29) ; en attendant, si les
-déplacements ne répondent pas, passez Windows en QWERTY le temps de jouer (Windows + Espace) ou prenez une
-manette.
+An XInput controller (Xbox controller) is recognised; without one, the keyboard acts as a fallback controller
+(Enter = A, Backspace = B, Space = X, arrows = D-pad). Mouse: click in the game window to capture it, **Alt** or
+**Esc** releases it. **AZERTY** keyboard: keys at the same place as in QWERTY (ZQSD) come with
+[PR #29](https://github.com/sagouindupm/Mandy/pull/29); meanwhile, if movement does not respond, switch Windows
+to QWERTY while you play (Windows + Space) or use a controller.
 </details>
 
 <details>
-<summary><b>DLSS ?</b></summary>
+<summary><b>DLSS?</b></summary>
 
-Sur les cartes **NVIDIA RTX** seulement. Il faut les DLL de Streamline de NVIDIA (sl.interposer.dll,
-sl.common.dll, sl.dlss.dll, nvngx_dlss.dll), à télécharger vous-même depuis
-[NVIDIA-RTX/Streamline](https://github.com/NVIDIA-RTX/Streamline/releases) : elles ne sont pas fournies ici
-(licence NVIDIA). Indiquez leur dossier dans Réglages → DLSS ; les profils DLSS s'activent alors dans la colonne de
-gauche. Par défaut le lanceur reste sur « Recommandé » (540p et l'upscaler du jeu).
+On **NVIDIA RTX** cards only. You need NVIDIA's Streamline DLLs (sl.interposer.dll, sl.common.dll,
+sl.dlss.dll, nvngx_dlss.dll), which you download yourself from
+[NVIDIA-RTX/Streamline](https://github.com/NVIDIA-RTX/Streamline/releases): they are not shipped here (NVIDIA
+license). Set their folder in Settings → DLSS; the DLSS profiles then become available in the left column. By
+default the launcher stays on "Recommended" (540p and the game's upscaler).
 </details>
 
 <details>
-<summary><b>J'ai 16 Go de mémoire vive.</b></summary>
+<summary><b>I have 16 GB of RAM.</b></summary>
 
-Le profil le voit et s'adapte : une partie de la mémoire du jeu passe dans celle de la carte (il faut le
-Resizable BAR, à activer dans le BIOS : « Above 4G Decoding », « Re-Size BAR »), moins de fils auxiliaires, moins
-de tampons. Fermez le navigateur et Discord avant de jouer, et laissez Windows gérer la mémoire virtuelle (une
-petite taille fixe fait planter le jeu, erreur 0x8007000E).
+The profile sees it and adapts: part of the game's memory moves into the card's (Resizable BAR is required,
+enabled in the BIOS: "Above 4G Decoding", "Re-Size BAR"), fewer helper threads, fewer buffers. Close your
+browser and Discord before playing, and let Windows manage virtual memory (a small fixed size makes the game
+crash, error 0x8007000E).
 </details>
 
 <details>
-<summary><b>Carte AMD ? Puce Intel intégrée ?</b></summary>
+<summary><b>AMD card? Intel integrated graphics?</b></summary>
 
-**AMD** : non testé ici. Le lanceur applique le profil Series S générique (sans les réglages propres à NVIDIA) et
-vous le signale. Vos mesures nous intéressent beaucoup. **Puce graphique intégrée** (Intel UHD, Iris) : elle ne
-suffit pas, il faut une carte graphique dédiée de 4 Go ou plus.
+**AMD**: untested here. The launcher applies the generic Series S profile (without the NVIDIA-specific
+settings) and tells you so. Your measurements interest us a lot. **Integrated graphics** (Intel UHD, Iris): not
+enough, you need a dedicated graphics card with 4 GB or more.
 </details>
 
 <details>
-<summary><b>Le lanceur dit « Copie du jeu incomplète » ou « Seulement … shaders traduits ».</b></summary>
+<summary><b>The launcher says "Incomplete game copy" or "Only … shaders translated".</b></summary>
 
-VIctory a besoin de toute votre copie du jeu, pas seulement de `game_scarlett_master.exe` : à côté de lui
-doivent se trouver ses archives (`shaders.rpf`, `levels.rpf` et une dizaine d'autres `.rpf`, ~130 Go pour la
-v1.0.2.1). Le message dit ce qui manque. Rangez la copie entière dans son propre dossier (par exemple
-`C:\Jeux\GTA6`), puis Préparation → étape 2. Une copie complète donne ~25 000 shaders traduits ; quelques
-centaines veulent dire qu'il manque des archives : corrigez l'étape 2, puis « Retraduire ».
+VIctory needs your whole copy of the game, not just `game_scarlett_master.exe`: its archives must sit next to
+it (`shaders.rpf`, `levels.rpf` and a dozen other `.rpf` files, ~130 GB for v1.0.2.1). The message says what is
+missing. Put the entire copy in its own folder (for example `C:\Games\GTA6`), then Setup → step 2. A complete
+copy gives ~25,000 translated shaders; a few hundred means archives are missing: fix step 2, then
+"Retranslate".
 </details>
 
 <details>
-<summary><b>Le lanceur dit « Processeur sans AVX2 ».</b></summary>
+<summary><b>The launcher says "CPU without AVX2".</b></summary>
 
-La version téléchargeable est compilée pour les processeurs avec AVX2 (Intel 4e génération, AMD Ryzen et plus
-récents). Sur un processeur plus ancien, compilez VIctory depuis les sources (voir plus bas).
+The download is compiled for CPUs with AVX2 (Intel 4th generation, AMD Ryzen and newer). On an older CPU,
+compile VIctory from source (see below).
 </details>
 
-## Donner mon avis
+## Give feedback
 
-Le plus utile pour le projet : **dites-nous comment ça tourne chez vous.** Dans le lanceur, bouton
-**« Donner mon avis »** (onglet Aide ou bas de la fenêtre) : il ouvre le
-[formulaire de retour](https://github.com/sagouindupm/Mandy/issues/new?template=retour-experience.yml) déjà
-rempli avec votre configuration et le profil détecté. Vous ajoutez vos impressions (images par seconde,
-saccades, défauts d'image, captures) et vous l'envoyez vous-même.
+The most useful thing for the project: **tell us how it runs on your PC.** In the launcher, the **"Give
+feedback"** button (Help tab or bottom of the window) opens the
+[feedback form](https://github.com/sagouindupm/Mandy/issues/new?template=feedback.yml) already filled in with
+your configuration and the detected profile. You add your impressions (frames per second, stutter, picture
+glitches, screenshots) and send it yourself.
 
-<p align="center"><img src="docs/assets/launcher-aide.png" alt="La page Aide du lanceur et le bouton « Donner mon avis »" width="80%"></p>
+<p align="center"><img src="docs/assets/launcher-aide.png" alt="The launcher's Help page and the &quot;Give feedback&quot; button" width="80%"></p>
 
-Un plantage ou un bug précis : [ouvrez un ticket](https://github.com/sagouindupm/Mandy/issues) avec le journal
-de la partie (Réglages → Journaux).
+A crash or a specific bug: [open an issue](https://github.com/sagouindupm/Mandy/issues) with the session log
+(Settings → Logs).
 
-## Pour les développeurs
+## For developers
 
 <details>
-<summary><b>Compiler depuis les sources</b></summary>
+<summary><b>Build from source</b></summary>
 
-Il faut la chaîne Rust de `rust-toolchain.toml`, les outils C++ de Microsoft (MSVC) et le Windows SDK, et
-Node.js pour le lanceur.
+You need the Rust toolchain from `rust-toolchain.toml`, the Microsoft C++ tools (MSVC) and the Windows SDK, and
+Node.js for the launcher.
 
 ```powershell
-cargo build --release --locked -p victory          # le moteur : target\release\victory.exe
-cd launcher; npm ci; npm run tauri build -- --no-bundle   # le lanceur
+cargo build --release --locked -p victory          # the engine: target\release\victory.exe
+cd launcher; npm ci; npm run tauri build -- --no-bundle   # the launcher
 ```
 
-Ou double-cliquez sur `series-s\Sagouindupm-Launcher.bat`, qui installe ce qui manque (winget) et construit
-le lanceur ; depuis un dépôt, l'étape 1 du lanceur compile le moteur.
+Or double-click `series-s\Sagouindupm-Launcher.bat`, which installs what is missing (winget) and builds the
+launcher; from a repository checkout, step 1 of the launcher compiles the engine.
 
-La version téléchargeable se fabrique avec `scripts\package-release.ps1` (moteur et lanceur pour tout processeur
-x86-64 avec AVX2, sans runtime Visual C++ à installer ; vérification du contenu, zip dans `dist\`). Un tag
-`v<version>` la publie dans les Releases (`.github/workflows/release.yml`).
+The download is made with `scripts\package-release.ps1` (engine and launcher for any x86-64 CPU with AVX2, no
+Visual C++ runtime to install; content check, zip in `dist\`). A `v<version>` tag publishes it to the Releases
+(`.github/workflows/release.yml`).
 </details>
 
 <details>
-<summary><b>Le lanceur console</b></summary>
+<summary><b>The console launcher</b></summary>
 
-`series-s\Sagouindupm.bat` : un menu dans une console (préparer les shaders, jouer, construire les pipelines,
-DLSS, sauvegardes). Il lit les mêmes réglages (`series-s\reglages.json`, appliqués par `series-s\reglages.ps1`),
-calcule le même profil et partage la configuration du lanceur graphique (`%LOCALAPPDATA%\Sagouindupm`).
-La première fois : **[2]** (traduit les shaders et garde au passage ceux que nomme la liste partagée), **[3]**
-(importe la liste et construit ses pipelines, avant de jouer), puis **[1]**.
+`series-s\Sagouindupm.bat`: a menu in a console (prepare the shaders, play, build the pipelines, DLSS, saves).
+It reads the same settings (`series-s\reglages.json`, applied by `series-s\reglages.ps1`), computes the same
+profile and shares the graphical launcher's configuration (`%LOCALAPPDATA%\Sagouindupm`). The first time:
+**[2]** (translates the shaders and keeps along the way those named by the shared list), **[3]** (imports the
+list and builds its pipelines, before playing), then **[1]**.
 </details>
 
 <details>
-<summary><b>La liste de pipelines partagée</b></summary>
+<summary><b>The shared pipeline list</b></summary>
 
-[`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt) décrit les pipelines dont le jeu
-se sert jusqu'après la mission du bateau : clés, empreintes BLAKE3 des shaders, états graphiques ; jamais de
-code du jeu. À la main, avec les mêmes variables que le lanceur :
+[`series-s/pipelines/series-s-rtx.txt`](series-s/pipelines/series-s-rtx.txt) describes the pipelines the game
+uses until after the boat mission: keys, BLAKE3 hashes of the shaders, graphics states; never any game code. By
+hand, with the same variables as the launcher:
 
 ```powershell
-victory pipelines import series-s\pipelines\series-s-rtx.txt --shaders <vos shaders>   # ou avant « victory shaders »
+victory pipelines import series-s\pipelines\series-s-rtx.txt --shaders <your shaders>   # or before "victory shaders"
 victory warm --used
 ```
 
-`victory pipelines export <fichier> --used` écrit la liste de vos propres parties, `victory pipelines merge
-<sortie> <listes...>` en réunit plusieurs (format décrit dans `crates/victory-gpu/src/pipeline/known/list.rs`).
+`victory pipelines export <file> --used` writes the list from your own sessions, `victory pipelines merge
+<output> <lists...>` combines several (format described in `crates/victory-gpu/src/pipeline/known/list.rs`).
 </details>
 
-- **Assistants IA** : lisez [AGENTS.md](AGENTS.md) (le projet, ses règles, la carte du code, comment mesurer).
-- **Mesures et pistes** : [docs/essais.md](docs/essais.md) ; avant d'essayer une idée, regardez si elle n'y est
-  pas déjà.
-- **Contribuer** : [CONTRIBUTING.md](CONTRIBUTING.md). Personne ne pousse directement sur `main` : tout passe par
-  une pull request.
-- **Règle n° 1** : rien du jeu dans le dépôt ([docs/asset-policy.md](docs/asset-policy.md), vérifié par
-  `cargo xtask policy`).
+- **AI assistants**: read [AGENTS.md](AGENTS.md) (the project, its rules, the code map, how to measure).
+- **Measurements and leads**: [docs/test-log.md](docs/test-log.md); before trying an idea, check whether it is
+  already there.
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md). Nobody pushes directly to `main`: everything goes
+  through a pull request.
+- **Rule no. 1**: nothing from the game in the repository ([docs/asset-policy.md](docs/asset-policy.md),
+  checked by `cargo xtask policy`).
 
-## Crédits
+## Credits
 
-- **[VIctory](https://github.com/Marvisak/VIctory)** de Marvisak et ses contributeurs : la base de tout.
+- **[VIctory](https://github.com/Marvisak/VIctory)** by Marvisak and its contributors: the basis of everything.
 - **[fxceless/victory-fork](https://github.com/fxceless/victory-fork)**, **[avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX)**
-  (architecture rapide : fils, relais d'écriture, copies sur la carte), **[trustno1-coder/VIctory-NVIDIA](https://github.com/trustno1-coder/VIctory-NVIDIA)**
-  (NVIDIA, interface Series S, visages, souris), **[Maykzera/victory-rtx3060](https://github.com/Maykzera/victory-rtx3060)**
-  (réglages 6 cœurs, cache de shaders valable sur NVIDIA, touches scriptées). Leur README est conservé dans
-  [docs/README-victory-nvidia-rtx3060.md](docs/README-victory-nvidia-rtx3060.md) avec la liste complète de
-  leurs sources.
-- **[Proudnoob4/VIctory-NVIDIA](https://github.com/Proudnoob4/VIctory-NVIDIA)** (`nvidia-hybrid-v2` : le fil de
-  soumission à 52-63 ms au lieu de 92-116), **[readmet3xt-lab/foxhound](https://github.com/readmet3xt-lab/foxhound)**
-  (la brume de chaleur laissée de côté).
+  (fast architecture: threads, write relay, copies on the card), **[trustno1-coder/VIctory-NVIDIA](https://github.com/trustno1-coder/VIctory-NVIDIA)**
+  (NVIDIA, Series S interface, faces, mouse), **[Maykzera/victory-rtx3060](https://github.com/Maykzera/victory-rtx3060)**
+  (6-core settings, shader cache valid on NVIDIA, scripted keys). Their README is kept in
+  [docs/README-victory-nvidia-rtx3060.md](docs/README-victory-nvidia-rtx3060.md) with the full list of
+  their sources.
+- **[Proudnoob4/VIctory-NVIDIA](https://github.com/Proudnoob4/VIctory-NVIDIA)** (`nvidia-hybrid-v2`: the
+  submitting thread at 52-63 ms instead of 92-116), **[readmet3xt-lab/foxhound](https://github.com/readmet3xt-lab/foxhound)**
+  (the heat haze left out).
 - **[WASDeKeys/victory-low-end-pc](https://github.com/WASDeKeys/victory-low-end-pc)**, **[stellarr-studio/kelvaroq](https://github.com/stellarr-studio/kelvaroq)**
-  (patchs, dont les dessins mesh lancés par la carte) : mesures et méthodes pour petites cartes.
-- Développé avec l'aide de [Claude Code](https://claude.com/claude-code).
+  (patches, including mesh draws launched by the card): measurements and methods for small cards.
+- Developed with the help of [Claude Code](https://claude.com/claude-code).
 
-## Contributeurs
+## Contributors
 
-| Qui | Contribution |
+| Who | Contribution |
 |---|---|
-| [@sagouindupm](https://github.com/sagouindupm) | mainteneur |
-| [@Xiaoxi2021](https://github.com/Xiaoxi2021) | mesures RTX 5070 (#9) |
-| [@lucid29a](https://github.com/lucid29a) | mesures RTX 4070 Laptop (#10) |
-| [@Tejvardhan-717](https://github.com/Tejvardhan-717) | verrou du tas de descripteurs (#13, #15) |
-| [@Liovera](https://github.com/Liovera) | mesures RTX 4050 Laptop 16 Go (#14) |
-| [@LuizFernandoMoretto](https://github.com/LuizFernandoMoretto) | politique du dépôt, rapport de tests (#16) |
+| [@sagouindupm](https://github.com/sagouindupm) | maintainer |
+| [@Xiaoxi2021](https://github.com/Xiaoxi2021) | RTX 5070 measurements (#9) |
+| [@lucid29a](https://github.com/lucid29a) | RTX 4070 Laptop measurements (#10) |
+| [@Tejvardhan-717](https://github.com/Tejvardhan-717) | descriptor heap lock (#13, #15) |
+| [@Liovera](https://github.com/Liovera) | RTX 4050 Laptop 16 GB measurements (#14) |
+| [@LuizFernandoMoretto](https://github.com/LuizFernandoMoretto) | repository policy, test report (#16) |
 
-## Licence
+## License
 
-GPL-3.0-or-later (voir [LICENSE](LICENSE)). Aucun code sous licence GPL-2.0-only (XCL par exemple) : le module de
-chargement qui en dérivait est retiré et remplacé par notre propre émulation des instructions AMD.
+GPL-3.0-or-later (see [LICENSE](LICENSE)). No GPL-2.0-only code (XCL for example): the loader module that
+derived from it is removed and replaced by our own emulation of the AMD instructions.
