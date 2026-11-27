@@ -1,7 +1,7 @@
-﻿# Sagouindupm | VIctory : la seule source des réglages Series S et des chemins des lanceurs.
-# Chargé (dot-source) par le lanceur console Sagouindupm.ps1 et le lanceur graphique
-# Sagouindupm-Launcher.ps1 : un réglage changé ici vaut pour les deux.
-# Les scripts de mesure (scripts/bench) appellent victory.exe directement et ne lisent pas ce fichier.
+﻿# Sagouindupm | VIctory : chemins et lanceur.json du lanceur console Sagouindupm.ps1, et application des
+# réglages Series S. Les réglages eux-mêmes sont dans reglages.json, la seule source, que le lanceur graphique
+# (launcher/) lit aussi : un réglage changé là vaut pour les deux.
+# Les scripts de mesure (scripts/bench) appellent victory.exe directement et ne lisent pas ces fichiers.
 
 $Root   = Split-Path -Parent $PSScriptRoot
 $Exe    = Join-Path $Root 'target\release\victory.exe'
@@ -36,41 +36,20 @@ function Write-VictoryToml($s) {
     Save-Settings $s
 }
 
-# Réglages Series S (base trustno1-coder/VIctory-NVIDIA réglée pour RTX 3060 par Maykzera), mesurés ici sur
-# RTX 3050 8 Go + i5-12400F : ~84 ms par image (11,8 fps) dans la cinématique du bateau, eau et visages fidèles.
+# Réglages Series S, pipelines sautées, règle des 24 Go, DLSS : series-s\reglages.json (lu aussi par le lanceur
+# graphique). Ce fichier ne fait que l'appliquer.
+$Reglages = Get-Content (Join-Path $PSScriptRoot 'reglages.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+
 function Get-SeriesSSettings {
-    @{
-        # Série rapide (avatarmanz/trustno1)
-        VICTORY_TEXTURE_NO_WAIT = '1'; VICTORY_RELAY = '2'; VICTORY_CARD_STEPS = '2'
-        VICTORY_WIDE_BACK = '1'; VICTORY_CARD_REHASH_RUNS = '1'; VICTORY_JOIN_COPIES = '1'
-        VICTORY_INDIRECT_WINDOW = '1'; VICTORY_RELAY_COPY = '1'; VICTORY_INDIRECT_BATCH = '2'
-        VICTORY_MAP_THREADS = '1'; VICTORY_TITLE_PRIORITIES = '0'; VICTORY_CARD_AWAKE = '1'
-        VICTORY_SHOW_AFTER = '1'; VICTORY_THIN = '1'; VICTORY_UPLOAD_AHEAD = '1'
-        # Processeur 6 cœurs / 12 fils (Maykzera) : moins de fils auxiliaires, 16 soumissions préparées ensemble ;
-        # 4 fils de traduction des listes et pas 5 (Maykzera, 2 mesures ; ici 87 ms contre 93, pire image 178 ms)
-        VICTORY_THIN_THREADS = '4'; VICTORY_UNDER_THREADS = '3'; VICTORY_VIEW_THREADS = '3'
-        VICTORY_PIPELINE_WORKERS = '4'; VICTORY_PIPELINE_LOWEST = '1'
-        VICTORY_JOIN_PARTS = '16'; VICTORY_JOIN_LISTS = '96'
-        # Une pipeline pas prête : 150 ms d'attente au plus (10 000 gelait l'image 12 s, avatarmanz #143)
-        VICTORY_PIPELINE_WAIT_MS = '150'
-        # Image : lumière de remplacement du ray tracing, NaN effacés, 540p + upscaler du jeu, interface Series S
-        VICTORY_AMBIENT = '0.8'; VICTORY_AMBIENT_AIR = '1.5'; VICTORY_AMBIENT_MOST = '2'
-        VICTORY_NAN_SCRUB = '1'; VICTORY_BVH_MISS = '1'; VICTORY_DYNAMIC_SLOTS = '524288'
-        VICTORY_RENDER_SCALE = '0.5'; VICTORY_OWN_UPSCALER = '1'; VICTORY_COMPOSE = '1'
-        VICTORY_CARD_BUFFERS_MIN_MB = '1'; VICTORY_CARD_BUFFERS_MB = '1536'
-        # Chaque partie note les pipelines créées, pour « Construire les pipelines » (victory warm --used)
-        VICTORY_PIPELINE_BOOK = '1'
-    }
+    $h = @{}
+    foreach ($g in $Reglages.groupes) { foreach ($p in $g.env.PSObject.Properties) { $h[$p.Name] = [string]$p.Value } }
+    $h
 }
 
-# Pipelines sautées : les ~1 000 passes de résolution du ray tracing (pas de structure de rayons sur NVIDIA),
-# + la brume de chaleur 731a39171b568298 (foxhound : elle étale des blocs de pixels, aussi sur l'eau) :
-# 84 ms contre 93 sur RTX 3050, image propre.
+# Pipelines sautées : le fichier des passes du ray tracing (relatif à la racine du dépôt) puis les hachages en plus.
 function Get-SkipPipelines {
-    $rt = Join-Path $Root 'scripts\rt_off_hashes.txt'
-    # + les programmes que le repli LDS (#27) rend traduisibles mais qui coûtent ~30 ms sans les arbres
-    #   (volumétrie de l'eau 5dc3/6f22, sous l'eau 926c, transmission 1f1f, 21f7, 7c9a) ; les arbres restent.
-    $skip = @('731a39171b568298', '5dc3b25986622949', '6f225b641c5b0708', '926c46bab3b86bd6', '1f1fbd86759b3da2', '21f7ad7863620328', '7c9a6a83826cdfac')
+    $rt = Join-Path $Root $Reglages.pipelines_sautees.fichier
+    $skip = @($Reglages.pipelines_sautees.en_plus)
     if (Test-Path $rt) { $skip = @((Get-Content $rt -Raw).Trim()) + $skip }
     $skip -join ','
 }
@@ -88,23 +67,26 @@ function Set-GameEnv($s) {
     $seriesS = Get-SeriesSSettings
     foreach ($k in $seriesS.Keys) { Set-Item "env:$k" $seriesS[$k] }
     $env:VICTORY_SKIP_PIPELINES = Get-SkipPipelines
-    # PC à moins de 24 Go : fenêtres de mémoire du jeu dans la mémoire de la carte (évite le plantage 0x8007000E).
+    # Petite mémoire vive : voir « petite_ram » dans reglages.json.
     $ram = Get-TotalRam
-    if ($ram -gt 0 -and $ram -lt 24GB) { $env:VICTORY_WINDOWS_BAR_MB = '3072' }
-    # DLSS (cartes RTX) à la place de l'upscaler du jeu, si le dossier de Streamline est donné.
-    # Mesuré sur RTX 3050 : ultra performance 90 ms (image propre), performance 102 ms, qualité 176 ms.
-    Remove-Item env:VICTORY_DLSS_DIR, env:VICTORY_DLSS_MODE -ErrorAction SilentlyContinue
-    if ($s.dlss_mode -and $s.dlss_mode -ne 'off' -and $s.dlss_dir -and (Test-Path (Join-Path $s.dlss_dir 'sl.interposer.dll'))) {
-        $env:VICTORY_DLSS_DIR = $s.dlss_dir; $env:VICTORY_DLSS_MODE = $s.dlss_mode
-        Remove-Item env:VICTORY_RENDER_SCALE, env:VICTORY_OWN_UPSCALER -ErrorAction SilentlyContinue
+    if ($ram -gt 0 -and $ram -lt ([double]$Reglages.petite_ram.moins_de_go * 1GB)) {
+        foreach ($p in $Reglages.petite_ram.env.PSObject.Properties) { Set-Item "env:$($p.Name)" ([string]$p.Value) }
+    }
+    # DLSS : voir « dlss » dans reglages.json.
+    $d = $Reglages.dlss
+    Remove-Item "env:$($d.variable_dossier)", "env:$($d.variable_mode)" -ErrorAction SilentlyContinue
+    if ($s.dlss_mode -and $s.dlss_mode -ne 'off' -and $s.dlss_dir -and (Test-Path (Join-Path $s.dlss_dir $d.fichier_requis))) {
+        Set-Item "env:$($d.variable_dossier)" $s.dlss_dir; Set-Item "env:$($d.variable_mode)" $s.dlss_mode
+        foreach ($v in $d.retire) { Remove-Item "env:$v" -ErrorAction SilentlyContinue }
     }
 }
 
-# Les faits de la carte pour la traduction des shaders (NVIDIA : vagues de 32, 1 000 000 de vues) :
-# sans eux le cache ne sert à rien en jeu.
+# Les faits de la carte pour la traduction des shaders (NVIDIA) : voir « shaders » dans reglages.json.
 function Get-ShaderHostEnv {
-    @{ VICTORY_HOST_WAVE = '32'; VICTORY_HOST_ROVS = '1'; VICTORY_VIEW_LIMIT = '999999' }
+    $h = @{}
+    foreach ($p in $Reglages.shaders.env_nvidia.PSObject.Properties) { $h[$p.Name] = [string]$p.Value }
+    $h
 }
 
 # Threads pour « victory shaders » : tous les cœurs logiques sauf deux (au moins 2).
-function Get-ShaderJobs { [Math]::Max(2, [Environment]::ProcessorCount - 2) }
+function Get-ShaderJobs { [Math]::Max([int]$Reglages.shaders.threads_min, [Environment]::ProcessorCount - [int]$Reglages.shaders.threads_laisses_libres) }

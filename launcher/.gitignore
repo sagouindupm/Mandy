@@ -1,0 +1,5 @@
+# npm packages and the built window (also listed in the repository's .gitignore)
+node_modules
+dist
+*.log
+*.local

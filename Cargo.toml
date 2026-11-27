@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
-# Fixtures are standalone crates built on demand by integration tests.
-exclude = ["tests/fixtures"]
+# Fixtures are standalone crates built on demand by integration tests. The graphical launcher
+# (launcher/src-tauri) is its own workspace, built by series-s/Sagouindupm-Launcher.bat.
+exclude = ["tests/fixtures", "launcher"]
 
 [workspace.package]
 version = "0.1.0"
