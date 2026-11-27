@@ -3096,8 +3096,15 @@ impl<'a> Lower<'a> {
                     // paths only seem to allow it before any save: the lane of a VGPR
                     // nobody wrote, and VGPRs nobody set read as zero.
                     None if n >= crate::ir::PARKED => Val::I32(self.s.m.i32(0)),
-                    // No wave overlaps this one (see `ordered_section`).
-                    None if self.pops_collision(v) => Val::I32(self.s.m.i32(0)),
+                    // No wave overlaps this one (see `ordered_section`): overlap
+                    // bit 31 clear, wave id 1 (bits 16-25), collision id 0
+                    // (bits 0-9). Wave id != collision id, so the title's
+                    // `wave_id + ~collision_id` is 0 rather than 0xFFFF_FFFF and
+                    // its wrap-around wait (`s_cmp_lt_u32` against the exiting
+                    // id, 0) exits at once even where a lane with EXEC clear
+                    // falls into it; seeded 0, it spun to the loop limit (after
+                    // VastyViz, Marvisak/VIctory 7ac1f54d8, #2395).
+                    None if self.pops_collision(v) => Val::I32(self.s.m.i32(1 << 16)),
                     None => Val::Missing("a hardware SGPR input"),
                 },
                 Reg::Scc => Val::Missing("SCC on entry"),
