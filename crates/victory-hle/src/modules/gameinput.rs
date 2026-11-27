@@ -1492,6 +1492,10 @@ mod host {
             self.empty_until[slot] = None;
             #[allow(unused_mut)]
             let mut pad = convert(&state.Gamepad);
+            // `VICTORY_AUTO_A=<seconds>`: tap A periodically at startup in both release and diag builds.
+            if slot == 0 && auto_a_pressed() {
+                pad.buttons |= super::A;
+            }
             // The scripted keys (`VICTORY_KEYS`) also press the first
             // pad's buttons, by the stand-in pad's table: with a real pad
             // connected the stand-in is not there, and a title that listens
@@ -1512,6 +1516,9 @@ mod host {
             // The scripted keys are pressed with or without focus, and never
             // capture, free the cursor or walk.
             let mut down = scripted();
+            if auto_a_pressed() && !down.contains(&0x0D) {
+                down.push(0x0D);
+            }
             self.walking = false;
             if focused {
                 // Left/right modifier keys only, as devices report them; no
@@ -1661,6 +1668,25 @@ mod host {
             .filter(|&&(from, to, _)| (from..to).contains(&now))
             .map(|&(_, _, vk)| vk)
             .collect()
+    }
+
+    /// Auto-press A (`Enter` in fallback pad / `A` on pad 0) from 24 s to
+    /// `VICTORY_AUTO_A` seconds after input starts, skipping `Game Init`, regardless of focus.
+    fn auto_a_pressed() -> bool {
+        static AUTO_A: LazyLock<(Instant, u64)> = LazyLock::new(|| {
+            let secs = std::env::var("VICTORY_AUTO_A")
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+            (Instant::now(), secs)
+        });
+        let (start, secs) = &*AUTO_A;
+        if *secs <= 24 {
+            return false;
+        }
+        let elapsed = start.elapsed();
+        let s = elapsed.as_secs();
+        (24..*secs).contains(&s) && elapsed.as_millis() % 4000 < 250
     }
 
     /// The foreground window is one of ours (the title's or our fallback).

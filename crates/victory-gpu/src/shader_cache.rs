@@ -72,6 +72,11 @@ fn build() -> [u8; 32] {
             "VICTORY_WAVE_DEEP_SKIPS",
             "VICTORY_WAVE_OWN_BITS",
             "VICTORY_WAVE_LOCAL",
+            "VICTORY_LDS_FLAGS",
+            "VICTORY_LDS_REGION_RACE",
+            "VICTORY_LDS_WRITE_ONLY_OK",
+            "VICTORY_SPLIT_LDS_COALESCE",
+            "VICTORY_NV_FLOAT",
             "VICTORY_F16_NEAREST",
             "VICTORY_HELPER_OWN",
             "VICTORY_FIRSTLANE_OWN",
@@ -120,9 +125,23 @@ pub fn precompile(container: &[u8]) -> Result<bool, String> {
 /// The translation of a console shader container, from the cache when
 /// there is one.
 pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
-    let translate = |c: &[u8]| victory_shader::emit::translate(c).map_err(|e| e.to_string());
+    let own = own_loop_limit(container);
+    let translate =
+        |c: &[u8]| victory_shader::emit::with_loop_limit(own, || victory_shader::emit::translate(c)).map_err(|e| e.to_string());
+    // A shader with a loop limit of its own is another translation: only
+    // its key changes, so no other shader is translated again.
+    let key = match own {
+        Some(limit) => {
+            let mut h = blake3::Hasher::new();
+            h.update(&build());
+            h.update(b"loop limit of its own");
+            h.update(&limit.to_le_bytes());
+            *h.finalize().as_bytes()
+        }
+        None => build(),
+    };
     let shader = match CACHE.get() {
-        Some(cache) => cached(cache, &build(), container, translate),
+        Some(cache) => cached(cache, &key, container, translate),
         None => translate(container),
     }?;
     #[cfg(feature = "diagnostics")]
@@ -166,6 +185,53 @@ fn paired_override(container: &[u8], mut shader: HostShader) -> HostShader {
     }
     tracing::warn!(hash, "paired shader entry did not match the translated shader bindings");
     shader
+}
+
+/// The shaders whose loops stop sooner than their stage's limit, by the
+/// hash the runtime names them by (16 hex digits of the container's
+/// BLAKE3), as `hash:iterations` pairs: `VICTORY_SHADER_LOOP_LIMITS`, empty
+/// for none; unset, [`OWN_LOOP_LIMITS`].
+///
+/// Why: the title's grid march `39f0e9aeb156a61c` (3,600 groups a frame)
+/// took 12.3 ms of the card a frame in a street (run
+/// rdna4-exp-gputiming-lists, up to 70 ms at once) and 0.4 ms with every
+/// loop stopped at 64 (run rdna4-diag-looplimit): its rays run to the
+/// compute limit of 4,096 steps, past where they leave any grid, as loops
+/// do whose exit is in data the host does not have yet (`lower.rs`
+/// `count_iteration`). Stopped at 512 such a ray costs an eighth; a march
+/// that meets its exit within 512 steps is as before.
+/// shortcut: what the march reads that keeps it from its exit is not
+/// known; with that found the limit can go.
+const OWN_LOOP_LIMITS: &str = "39f0e9aeb156a61c:512";
+
+/// [`OWN_LOOP_LIMITS`] for `container`.
+fn own_loop_limit(container: &[u8]) -> Option<u32> {
+    static LIMITS: OnceLock<Vec<(String, u32)>> = OnceLock::new();
+    let limits = LIMITS.get_or_init(|| {
+        let text = std::env::var("VICTORY_SHADER_LOOP_LIMITS").unwrap_or_else(|_| OWN_LOOP_LIMITS.to_owned());
+        let limits = parse_loop_limits(&text);
+        if !limits.is_empty() {
+            tracing::info!(?limits, "shaders whose loops stop sooner (VICTORY_SHADER_LOOP_LIMITS)");
+        }
+        limits
+    });
+    if limits.is_empty() {
+        return None;
+    }
+    let hash = blake3::hash(container).to_hex();
+    limits.iter().find(|(h, _)| h.as_str() == &hash[..16]).map(|&(_, n)| n)
+}
+
+/// `hash:iterations` pairs, comma-separated; what is not one is left out.
+fn parse_loop_limits(text: &str) -> Vec<(String, u32)> {
+    text.split(',')
+        .filter_map(|pair| {
+            let (hash, n) = pair.trim().split_once(':')?;
+            let hash = hash.trim().to_ascii_lowercase();
+            let n = n.trim().parse::<u32>().ok().filter(|&n| n > 0)?;
+            (hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some((hash, n))
+        })
+        .collect()
 }
 
 /// The cache entry's converter: the build and the container in, the
@@ -408,6 +474,21 @@ fn decode(bytes: &[u8]) -> Option<HostShader> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pairs of a runtime hash and a count; anything else is left out.
+    #[test]
+    fn own_loop_limits_are_read_as_hash_and_count() {
+        assert_eq!(parse_loop_limits(OWN_LOOP_LIMITS), [("39f0e9aeb156a61c".to_owned(), 512)]);
+        assert_eq!(
+            parse_loop_limits(" 39F0E9AEB156A61C : 64 ,deadbeef:5, 0123456789abcdef:0, 0123456789abcdef:12,x"),
+            [("39f0e9aeb156a61c".to_owned(), 64), ("0123456789abcdef".to_owned(), 12)]
+        );
+        assert!(parse_loop_limits("").is_empty());
+        // The runtime names a shader by its container's BLAKE3, as here.
+        let container = b"DXBC not a real container";
+        let hash = blake3::hash(container).to_hex()[..16].to_owned();
+        assert!(parse_loop_limits(&format!("{hash}:9")).iter().any(|(h, n)| *h == hash && *n == 9));
+    }
 
     fn shader() -> HostShader {
         HostShader {

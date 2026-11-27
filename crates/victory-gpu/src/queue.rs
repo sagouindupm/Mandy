@@ -166,7 +166,7 @@ fn submit_cut(this: This, lists: &[This]) {
     } else if first > 0 {
         let now: Vec<_> = lists[..first]
             .iter()
-            .filter_map(|&l| crate::list::host_list(l))
+            .flat_map(|&l| crate::list::host_runs(l))
             .collect();
         host.execute(&now);
         // They have run: their descriptor tables' slots are free again, as
@@ -241,9 +241,12 @@ fn submit_split(this: This, lists: &[This]) {
     if cut > 0 {
         let now: Vec<_> = lists[..cut]
             .iter()
-            .filter_map(|&l| crate::list::host_list(l))
+            .flat_map(|&l| crate::list::host_runs(l))
             .collect();
         host.execute(&now);
+        // They have run: their descriptor tables' slots are free again, as
+        // in `submit_cut` (fxceless#1320).
+        crate::list::tables_done(&lists[..cut]);
     }
     if cut < lists.len() {
         static SEEN: AtomicU64 = AtomicU64::new(0);
@@ -630,7 +633,7 @@ extern "system" fn execute(this: This, count: u32, lists: *const This) {
         }
         let host_lists: Vec<_> = lists
             .iter()
-            .filter_map(|&l| crate::list::host_list(l))
+            .flat_map(|&l| crate::list::host_runs(l))
             .collect();
         host.execute(&host_lists);
         crate::list::tables_done(lists);
@@ -847,7 +850,6 @@ fn system_timestamp() -> u64 {
 /// Frames presented so far.
 static FRAMES: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(feature = "diagnostics")]
 pub(crate) fn presented() -> u64 {
     FRAMES.load(Ordering::Relaxed)
 }
@@ -1001,6 +1003,12 @@ fn frame_ends() {
             behind::leave();
         }
     });
+    if let Some(on) = crate::ab::pick("VICTORY_LANE_CORE") {
+        static WAS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if WAS.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
+            crate::cores::settle();
+        }
+    }
 }
 
 /// The frame a present shows, and the title's resource it shows.

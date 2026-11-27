@@ -17,6 +17,10 @@
 
 #[cfg(windows)]
 mod ambient;
+#[cfg(windows)]
+mod census;
+#[cfg(windows)]
+mod coalesce;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod capture;
 pub mod console;
@@ -28,7 +32,7 @@ mod copystat;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod faultbook;
 #[cfg(windows)]
-mod cores;
+pub mod cores;
 pub mod descriptor;
 pub mod device;
 #[cfg(windows)]
@@ -48,6 +52,8 @@ mod host;
 mod indirect;
 #[cfg(windows)]
 mod inplace;
+#[cfg(windows)]
+mod port_journal;
 #[cfg(windows)]
 mod land;
 #[cfg(windows)]
@@ -115,10 +121,12 @@ pub fn frame_phase() -> u32 {
     copystat::phase()
 }
 #[cfg(windows)]
+pub use census::title_memory_reserved;
+#[cfg(windows)]
 pub use inplace::{title_memory_freeing, title_memory_section, title_memory_section_gone, title_memory_view};
 #[cfg(windows)]
 pub use watch::{
-    kernel_writing, title_memory_allocated, title_memory_freed, title_memory_reading, title_memory_remapped,
-    title_memory_remapping, title_memory_splitting, title_memory_unmapping, title_memory_written,
+    KernelWrite, kernel_writing, title_memory_allocated, title_memory_freed, title_memory_reading, title_memory_remapped,
+    title_memory_remapping, title_memory_remapping_in, title_memory_splitting, title_memory_unmapping, title_memory_written,
     writing as kernel_will_write,
 };
