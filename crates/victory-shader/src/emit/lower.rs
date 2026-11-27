@@ -11672,9 +11672,18 @@ impl<'a> Lower<'a> {
                     self.float_of(v)?
                 });
             }
-            // LOCAL: `VICTORY_NAN_SCRUB=1` (see `scrub_nan`).
+            // LOCAL: `VICTORY_NAN_SCRUB=1` (see `scrub_nan`), never through a
+            // view of an integer format: there the bits are integers, and
+            // 0xFFFF_FFFF (-1) or anything from 0x7F80_0000 up would become 0.
+            // The table of strides marks integer texture UAVs (idea from
+            // Vice-Tay 6f179dd10, Taynan Piza, for typed buffers).
+            let integer = if nan_scrub() { self.integer_view(src)? } else { None };
             for v in &mut vals {
-                *v = self.scrub_nan(*v);
+                let scrubbed = self.scrub_nan(*v);
+                *v = match integer {
+                    Some((is_integer, _)) => self.s.m.select(self.cur, is_integer, *v, scrubbed),
+                    None => scrubbed,
+                };
             }
             let h = self.handle(site, src, false, props)?;
             let at = self.begin_guarded(guard);

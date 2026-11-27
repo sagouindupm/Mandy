@@ -1559,13 +1559,27 @@ fn view_stride(view: &View) -> Option<u32> {
     })
 }
 
-/// What else the table of strides says of a typed buffer view of an integer
-/// format (`victory_shader::emit::VIEW_INTEGER`); 0 for any other view.
+/// What else the table of strides says of a typed buffer view, or of a
+/// texture UAV with a format of its own (`VICTORY_NAN_SCRUB` leaves integer
+/// image stores alone), of an integer format
+/// (`victory_shader::emit::VIEW_INTEGER`); 0 for any other view. A texture
+/// slot has no stride, so its word is these bits alone.
 fn view_kind(view: &View) -> u32 {
     use victory_shader::emit::{VIEW_INTEGER, VIEW_SIGNED};
-    match view_elements(view) {
-        Some((0, false, 3 | 7 | 12 | 17 | 25 | 30 | 36 | 42 | 50 | 57 | 62)) => VIEW_INTEGER,
-        Some((0, false, 4 | 8 | 14 | 18 | 32 | 38 | 43 | 52 | 59 | 64)) => VIEW_INTEGER | VIEW_SIGNED,
+    let format = match (view_elements(view), view) {
+        (Some((0, false, format)), _) => format,
+        (Some(_), _) => return 0,
+        // A texture UAV (dimension not buffer, not unknown); a view without
+        // a description takes its texture's format and stays unmarked.
+        (None, View::Unordered(_, _, Some(d))) if d[1] > 1 => uav_desc(d).Format.0 as u32,
+        (None, View::Placed(true, resource, d)) if resource[0] != 1 && d[1] > 1 => {
+            uav_desc(d[..10].try_into().expect("10 words")).Format.0 as u32
+        }
+        _ => return 0,
+    };
+    match format {
+        3 | 7 | 12 | 17 | 25 | 30 | 36 | 42 | 50 | 57 | 62 => VIEW_INTEGER,
+        4 | 8 | 14 | 18 | 32 | 38 | 43 | 52 | 59 | 64 => VIEW_INTEGER | VIEW_SIGNED,
         _ => 0,
     }
 }
@@ -5809,6 +5823,14 @@ void BY_FLOATS_OR_NOT(uint3 id : SV_DispatchThreadID) {
         assert_eq!(view_kind(&uav(39, 0, 1)), 0, "raw");
         assert_eq!(view_kind(&uav(0, 16, 0)), 0, "structured");
         assert_eq!(view_stride(&uav(12, 0, 0)), Some(8));
+        // Texture UAVs (dimension 4, 2D) too, for `VICTORY_NAN_SCRUB`; they
+        // have no stride. A view without a description stays unmarked.
+        let texture = |format| View::Unordered(0, 0, Some([format, 4, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(view_kind(&texture(42)), VIEW_INTEGER, "R32_UINT texture");
+        assert_eq!(view_kind(&texture(4)), VIEW_INTEGER | VIEW_SIGNED, "R32G32B32A32_SINT texture");
+        assert_eq!(view_kind(&texture(2)), 0, "R32G32B32A32_FLOAT texture");
+        assert_eq!(view_stride(&texture(42)), None);
+        assert_eq!(view_kind(&View::Unordered(0, 0, None)), 0);
     }
 
     /// What may stand for a texture that is not there yet: one of its kind in
