@@ -211,3 +211,30 @@ function Get-ShaderHostEnv {
 
 # Threads pour « victory shaders » : tous les cœurs logiques sauf deux (au moins 2).
 function Get-ShaderJobs { [Math]::Max([int]$Reglages.shaders.threads_min, [Environment]::ProcessorCount - [int]$Reglages.shaders.threads_laisses_libres) }
+
+# ------------------------------------------------------------------ copie du jeu
+# « jeu » dans reglages.json, le même contrôle que le lanceur graphique (GameRule::check dans settings.rs) :
+# l'exe avec ses archives à côté. Renvoie $null si la copie est complète, sinon ce qui manque (en français).
+function Test-GameCopy([string]$ExePath) {
+    $j = $Reglages.jeu
+    $dir = Split-Path -Parent $ExePath
+    $rpfs = @(Get-ChildItem -LiteralPath $dir -Filter '*.rpf' -File -ErrorAction SilentlyContinue)
+    $names = @($rpfs | ForEach-Object { $_.Name.ToLower() })
+    $sizeGb = ($rpfs | Measure-Object Length -Sum).Sum / 1GB
+    $missing = @()
+    if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) { $missing += $j.exe }
+    $missing += @($j.archives_requises | Where-Object { $names -notcontains $_.ToLower() })
+    $what = @()
+    if ($missing) { $what += "il manque $($missing -join ', ')" }
+    if ($rpfs.Count -lt [int]$j.archives_min) { $what += "$($rpfs.Count) archive$(if ($rpfs.Count -gt 1) { 's' }) .rpf sur $($j.archives_min) au moins" }
+    if ($sizeGb -lt [double]$j.taille_min_go) { $what += ("{0:N0} Go d'archives sur {1} au moins (une copie complète fait ~130 Go)" -f $sizeGb, $j.taille_min_go) }
+    if (-not $what) { return $null }
+    "Copie du jeu incomplète dans $dir : $($what -join ' ; '). $($j.conseil)"
+}
+
+# Shaders mis dans le cache par une traduction : sa dernière ligne « N shaders in the cache, M do not translate ».
+function Get-ShadersCount($Lines) {
+    $n = $null
+    foreach ($l in $Lines) { if ("$l" -match '^\s*(\d+) shaders in the cache, \d+ do not translate') { $n = [int]$Matches[1] } }
+    $n
+}

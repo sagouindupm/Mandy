@@ -20,9 +20,11 @@ function Show-Title {
 }
 
 function Initialize-Game($s) {
-    while (-not ($s.game_exe -and (Test-Path $s.game_exe))) {
-        Write-Host "Premier lancement : où est le jeu ?" -ForegroundColor Yellow
-        Write-Host "Glissez ici le fichier game_scarlett_master.exe de VOTRE copie du jeu, puis Entrée."
+    # Une copie complète : l'exe avec ses archives à côté (« jeu » dans reglages.json), pas l'exe seul.
+    while (-not ($s.game_exe -and (Test-Path $s.game_exe) -and -not ($problem = Test-GameCopy $s.game_exe))) {
+        if ($s.game_exe -and $problem) { Write-Host $problem -ForegroundColor Red; $problem = $null }
+        Write-Host "Où est le jeu ?" -ForegroundColor Yellow
+        Write-Host "Glissez ici le fichier game_scarlett_master.exe de VOTRE copie du jeu (complète), puis Entrée."
         $p = (Read-Host 'Chemin').Trim('"', ' ')
         if ($p -and (Test-Path $p) -and $p.EndsWith('.exe')) { $s.game_exe = $p } else { Write-Host 'Fichier introuvable, réessayez.' -ForegroundColor Red }
     }
@@ -76,9 +78,17 @@ function Initialize-Shaders($s) {
         $hostEnv = Get-ShaderHostEnv; foreach ($k in $hostEnv.Keys) { Set-Item "env:$k" $hostEnv[$k] }
     }
     Write-Host "`nTraduction de tous les shaders (15 à 30 minutes, le PC sera très occupé)..." -ForegroundColor Magenta
-    & $Exe shaders $s.shaders_dir --jobs (Get-ShaderJobs) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt') | Select-Object -Last 3
-    if ($LASTEXITCODE -eq 0) { $s.shaders_ready = $true; Save-Settings $s; Write-Host 'Shaders prêts !' -ForegroundColor Green }
-    else { Write-Host "La traduction s'est arrêtée (code $LASTEXITCODE), voir $Logs." -ForegroundColor Red }
+    $out = & $Exe shaders $s.shaders_dir --jobs (Get-ShaderJobs) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt')
+    $code = $LASTEXITCODE
+    $out | Select-Object -Last 3
+    # Une copie complète en donne ~25 000 ; quelques centaines veulent dire une copie incomplète.
+    $n = Get-ShadersCount $out
+    if ($code -ne 0) { Write-Host "La traduction s'est arrêtée (code $code), voir $Logs." -ForegroundColor Red }
+    elseif ($null -ne $n -and $n -lt [int]$Reglages.jeu.shaders_min) {
+        $s.shaders_ready = $false; Save-Settings $s
+        Write-Host "Seulement $n shaders traduits : une copie complète du jeu en donne ~25 000. Vérifiez la copie du jeu ([5]) et le dossier des shaders, puis recommencez." -ForegroundColor Red
+    }
+    else { $s.shaders_ready = $true; Save-Settings $s; Write-Host "Shaders prêts$(if ($null -ne $n) { " ($n)" }) !" -ForegroundColor Green }
 }
 
 function Initialize-Pipelines {

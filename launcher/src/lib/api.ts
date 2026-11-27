@@ -34,6 +34,16 @@ export type HardwareProfile = {
   text: string
 }
 
+/** A copy of the game, checked against « jeu » in series-s/reglages.json. */
+export type GameCheck = {
+  path: string
+  complete: boolean
+  rpfCount: number
+  sizeGb: number
+  /** What is missing, in French (empty when complete). */
+  problem: string
+}
+
 export type Snapshot = {
   root: string
   exePath: string
@@ -44,7 +54,12 @@ export type Snapshot = {
   exeBuilt: number | null
   reglagesError: string | null
   settings: Settings
+  /** The game is set and its copy complete. */
   gameOk: boolean
+  gameCheck: GameCheck | null
+  /** Shaders in the cache after the last translation (null: unknown), and the least a complete copy gives. */
+  shadersCount: number | null
+  shadersMin: number
   dlssOk: boolean
   dlssMissing: string[]
   ramBytes: number
@@ -102,7 +117,7 @@ export const JOB_TITLES: Record<JobKind, string> = {
 export const api = {
   snapshot: () => invoke<Snapshot>("snapshot"),
   facts: () => invoke<Facts>("facts"),
-  findGames: () => invoke<string[]>("find_games"),
+  findGames: () => invoke<GameCheck[]>("find_games"),
   setGame: (path: string) => invoke<void>("set_game", { path }),
   pickGame: () => invoke<string | null>("pick_game"),
   pickDlss: () => invoke<string | null>("pick_dlss"),

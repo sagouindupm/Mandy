@@ -94,6 +94,15 @@
       "VICTORY_WINDOWS_BAR_MB": "3072"
     }
   },
+  "jeu": {
+    "note": "Une copie complète du jeu, pas l'exe seul : game_scarlett_master.exe avec ses archives à côté (v1.0.2.1 : ~130 Go, 12 archives .rpf dont shaders.rpf et levels.rpf, ~25 000 shaders traduits). La recherche automatique préfère les copies complètes ; une copie incomplète est refusée avec ce qui manque. Après la traduction, moins de « shaders_min » shaders veut dire une copie incomplète.",
+    "exe": "game_scarlett_master.exe",
+    "archives_requises": ["shaders.rpf", "levels.rpf"],
+    "archives_min": 8,
+    "taille_min_go": 50,
+    "shaders_min": 5000,
+    "conseil": "Gardez toute la copie du jeu dans son propre dossier (par exemple C:\\Jeux\\GTA6), pas en vrac dans Téléchargements."
+  },
   "materiel": {
     "note": "Profil choisi tout seul d'après ce PC, sans question : le processeur, la carte puis la mémoire vive ajustent les réglages des groupes (dans cet ordre), avant la règle des 24 Go. Le PC de référence (RTX 3050 8 Go, 12 fils, 32 Go) garde exactement les réglages des groupes.",
     "processeur": {

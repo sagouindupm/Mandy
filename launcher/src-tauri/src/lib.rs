@@ -20,7 +20,7 @@ use tauri_plugin_dialog::DialogExt;
 use jobs::{Jobs, Spec};
 use paths::Paths;
 use profile::{Hardware, Profile};
-use settings::{DlssMode, Reglages, Settings, game_env, shader_host_env, write_victory_toml};
+use settings::{DlssMode, GameCheck, Reglages, Settings, game_env, shader_host_env, write_victory_toml};
 
 struct App {
     paths: Paths,
@@ -106,7 +106,13 @@ struct Snapshot {
     exe_built: Option<u64>,
     reglages_error: Option<String>,
     settings: SettingsView,
+    /// The game is set and its copy complete.
     game_ok: bool,
+    /// The copy of the game, checked (« jeu » in reglages.json); None when none is set.
+    game_check: Option<GameCheck>,
+    /// Shaders the last translation put in the cache (from its log), and the least a complete copy gives.
+    shaders_count: Option<i64>,
+    shaders_min: i64,
     dlss_ok: bool,
     dlss_missing: Vec<String>,
     ram_bytes: u64,
@@ -183,7 +189,10 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
             nv_cache_ok: s.bool("nv_cache_ok"),
             ancien_plan: s.str("ancien_plan"),
         },
-        game_ok: s.game_ok(),
+        game_ok: game_ready(p, &s),
+        game_check: game_check(p, &s),
+        shaders_count: shaders_count(p, &s),
+        shaders_min: reglages.as_ref().map(|r| r.jeu.shaders_min).unwrap_or(0),
         dlss_ok: false,
         dlss_missing: Vec::new(),
         ram_bytes: ram,
@@ -248,10 +257,40 @@ async fn facts(app: AppHandle) -> Res<sys::Facts> {
 
 // ------------------------------------------------------------------ the game's folder
 
+/// The copy of the game set in lanceur.json, checked; None when none is set (or reglages.json is unreadable).
+fn game_check(p: &Paths, s: &Settings) -> Option<GameCheck> {
+    let exe = s.str("game_exe");
+    if exe.is_empty() {
+        return None;
+    }
+    Some(Reglages::load(p).ok()?.jeu.check(&exe))
+}
+
+/// The game is set, its exe is there and the copy is complete.
+fn game_ready(p: &Paths, s: &Settings) -> bool {
+    s.game_ok() && game_check(p, s).is_none_or(|c| c.complete)
+}
+
+/// Shaders in the cache after the last translation: lanceur.json (shaders_count), else its log.
+fn shaders_count(p: &Paths, s: &Settings) -> Option<i64> {
+    match s.0.get("shaders_count").and_then(|v| v.as_i64()) {
+        Some(n) => Some(n),
+        None if s.bool("shaders_ready") => settings::shaders_count_from_log(&p.logs.join("shaders_traduction.txt")),
+        None => None,
+    }
+}
+
 fn set_game_path(app: &App, path: &str) -> Res<()> {
     let p = Path::new(path);
     if !p.is_file() || !path.to_lowercase().ends_with(".exe") {
         return Err(format!("Fichier introuvable : {path}"));
+    }
+    // An incomplete copy (the exe alone, a few archives) is refused with what is missing.
+    if let Ok(r) = Reglages::load(&app.paths) {
+        let c = r.jeu.check(path);
+        if !c.complete {
+            return Err(c.problem);
+        }
     }
     let mut s = Settings::load(&app.paths);
     s.set("game_exe", path);
@@ -259,9 +298,24 @@ fn set_game_path(app: &App, path: &str) -> Res<()> {
     s.save(&app.paths)
 }
 
+/// Every game_scarlett_master.exe found, checked: complete copies first, then the largest.
 #[tauri::command]
-async fn find_games() -> Res<Vec<String>> {
-    tauri::async_runtime::spawn_blocking(sys::find_games).await.map_err(|e| e.to_string())
+async fn find_games(handle: AppHandle) -> Res<Vec<GameCheck>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app = handle.state::<App>();
+        let rule = Reglages::load(&app.paths).ok().map(|r| r.jeu);
+        let mut found: Vec<GameCheck> = sys::find_games()
+            .into_iter()
+            .map(|exe| match &rule {
+                Some(rule) => rule.check(&exe),
+                None => GameCheck { path: exe, complete: true, ..Default::default() },
+            })
+            .collect();
+        found.sort_by(|a, b| b.complete.cmp(&a.complete).then(b.size_gb.total_cmp(&a.size_gb)));
+        found
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -351,7 +405,11 @@ fn build_spec(app: &App, kind: &str) -> Res<Spec> {
         Ok(Spec { kind: kind.into(), cmd, log: log(name), game: false, capture_dir: None })
     };
     let need_exe = || if p.exe.is_file() { Ok(()) } else { Err("VIctory n'est pas encore compilé (étape 1).".to_string()) };
-    let need_game = || if s.game_ok() { Ok(()) } else { Err("Indiquez d'abord où est le jeu (étape 2).".to_string()) };
+    let need_game = || match game_check(p, &s) {
+        Some(c) if s.game_ok() && !c.complete => Err(c.problem),
+        _ if game_ready(p, &s) => Ok(()),
+        _ => Err("Indiquez d'abord où est le jeu (étape 2).".to_string()),
+    };
     match kind {
         "rust" => winget(&["--id", "Rustlang.Rustup"], "installation_rust.txt"),
         "vs" => winget(
@@ -429,7 +487,15 @@ async fn run_job(handle: AppHandle, kind: String) -> Res<i32> {
         let p = &app.paths;
         let mut s = Settings::load(p);
         match kind.as_str() {
-            "shaders" if code == 0 => s.set("shaders_ready", true),
+            "shaders" if code == 0 => {
+                // A complete copy gives ~25 000 shaders; a handful means the copy is incomplete.
+                let n = settings::shaders_count_from_log(&p.logs.join("shaders_traduction.txt"));
+                let min = Reglages::load(p).map(|r| r.jeu.shaders_min).unwrap_or(0);
+                if let Some(n) = n {
+                    s.set("shaders_count", n);
+                }
+                s.set("shaders_ready", n.is_none_or(|n| n >= min));
+            }
             "warm" if code == 0 => {
                 let n = s.int("parties");
                 s.set("pipelines_parties", n);

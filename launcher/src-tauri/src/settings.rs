@@ -141,9 +141,94 @@ pub struct Shaders {
     pub threads_min: usize,
 }
 
+/// « jeu » in reglages.json: what a complete copy of the game holds.
+#[derive(Deserialize, Clone)]
+pub struct GameRule {
+    pub exe: String,
+    pub archives_requises: Vec<String>,
+    pub archives_min: usize,
+    pub taille_min_go: f64,
+    pub shaders_min: i64,
+    pub conseil: String,
+}
+
+/// A copy of the game, checked: its archives beside the exe.
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameCheck {
+    pub path: String,
+    pub complete: bool,
+    pub rpf_count: usize,
+    pub size_gb: f64,
+    /// What is missing, in French, with the advice (empty when complete).
+    pub problem: String,
+}
+
+impl GameRule {
+    /// Checks the folder of `exe` (only names and sizes are read, never the files themselves).
+    pub fn check(&self, exe: &str) -> GameCheck {
+        let mut c = GameCheck { path: exe.to_string(), ..Default::default() };
+        let exe_path = Path::new(exe);
+        let dir = exe_path.parent().unwrap_or(Path::new(""));
+        let mut rpfs: Vec<String> = Vec::new();
+        let mut size = 0u64;
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                if name.ends_with(".rpf") {
+                    size += e.metadata().map(|m| m.len()).unwrap_or(0);
+                    rpfs.push(name);
+                }
+            }
+        }
+        c.rpf_count = rpfs.len();
+        c.size_gb = size as f64 / (1u64 << 30) as f64;
+        let mut missing: Vec<String> = Vec::new();
+        if !exe_path.is_file() {
+            missing.push(self.exe.clone());
+        }
+        missing.extend(self.archives_requises.iter().filter(|a| !rpfs.contains(&a.to_lowercase())).cloned());
+        let few = c.rpf_count < self.archives_min;
+        let small = c.size_gb < self.taille_min_go;
+        c.complete = missing.is_empty() && !few && !small;
+        if !c.complete {
+            let mut what = Vec::new();
+            if !missing.is_empty() {
+                what.push(format!("il manque {}", missing.join(", ")));
+            }
+            if few {
+                what.push(format!("{} archive{} .rpf sur {} au moins", c.rpf_count, if c.rpf_count > 1 { "s" } else { "" }, self.archives_min));
+            }
+            if small {
+                what.push(format!("{:.0} Go d'archives sur {:.0} au moins (une copie complète fait ~130 Go)", c.size_gb, self.taille_min_go));
+            }
+            c.problem = format!(
+                "Copie du jeu incomplète dans {} : {}. {}",
+                dir.display(),
+                what.join(" ; "),
+                self.conseil
+            );
+        }
+        c
+    }
+}
+
+/// The number of shaders a « victory shaders » run put in the cache, from its log: its last line
+/// « N shaders in the cache, M do not translate, S s ».
+pub fn shaders_count_from_log(log: &Path) -> Option<i64> {
+    let text = std::fs::read_to_string(log).ok()?;
+    text.lines().rev().find_map(|l| {
+        let (n, rest) = l.trim().split_once(' ')?;
+        rest.starts_with("shaders in the cache, ").then_some(())?;
+        rest.contains("do not translate").then_some(())?;
+        n.parse().ok()
+    })
+}
+
 #[derive(Deserialize, Clone)]
 pub struct Reglages {
     pub profil: String,
+    pub jeu: GameRule,
     pub groupes: Vec<Group>,
     pub pipelines_sautees: Skip,
     pub petite_ram: LowRam,
@@ -280,4 +365,83 @@ pub fn game_env(paths: &Paths, r: &Reglages, s: &Settings, hw: &Hardware) -> Env
 /// VICTORY_HOST_WAVE and friends for « victory shaders » on NVIDIA (profile.shaders_nvidia).
 pub fn shader_host_env(r: &Reglages) -> Vec<(String, String)> {
     r.shaders.env_nvidia.iter().map(|(k, v)| (k.clone(), value_str(v))).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder of empty files with the names of a copy of the game (synthetic: no game data).
+    fn copy_with(names: &[&str]) -> tempdir::Dir {
+        let d = tempdir::Dir::new();
+        for n in names {
+            std::fs::write(d.0.join(n), b"").unwrap();
+        }
+        d
+    }
+
+    mod tempdir {
+        pub struct Dir(pub std::path::PathBuf);
+        impl Dir {
+            pub fn new() -> Self {
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static N: AtomicU32 = AtomicU32::new(0);
+                let p = std::env::temp_dir().join(format!("victory-s-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+                std::fs::create_dir_all(&p).unwrap();
+                Dir(p)
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+
+    fn rule() -> GameRule {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../series-s/reglages.json");
+        let b = std::fs::read(path).unwrap();
+        let r: Reglages = serde_json::from_slice(b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&b)).unwrap();
+        // Empty files here: the size rule is left out of this test.
+        GameRule { taille_min_go: 0.0, ..r.jeu }
+    }
+
+    #[test]
+    fn complete_copy_of_the_game() {
+        let names = [
+            "game_scarlett_master.exe", "anim.rpf", "appdata0.rpf", "audio.rpf", "common.rpf", "data.rpf", "levels.rpf",
+            "movies.rpf", "navmeshes.rpf", "packs.rpf", "script.rpf", "shaders.rpf", "textures.rpf",
+        ];
+        let d = copy_with(&names);
+        let c = rule().check(&d.0.join("game_scarlett_master.exe").display().to_string());
+        assert!(c.complete, "{}", c.problem);
+        assert_eq!(c.rpf_count, 12);
+    }
+
+    #[test]
+    fn exe_alone_is_incomplete() {
+        let d = copy_with(&["game_scarlett_master.exe", "common.rpf"]);
+        let c = rule().check(&d.0.join("game_scarlett_master.exe").display().to_string());
+        assert!(!c.complete);
+        assert!(c.problem.contains("shaders.rpf") && c.problem.contains("levels.rpf"), "{}", c.problem);
+        assert!(c.problem.contains("1 archive .rpf sur 8"), "{}", c.problem);
+        assert!(c.problem.contains("pas en vrac dans Téléchargements"), "{}", c.problem);
+        // And the size rule of reglages.json: empty archives are far from a complete copy.
+        let mut r = rule();
+        r.taille_min_go = 50.0;
+        let names = ["game_scarlett_master.exe", "a.rpf", "b.rpf", "c.rpf", "d.rpf", "e.rpf", "f.rpf", "levels.rpf", "shaders.rpf"];
+        let d = copy_with(&names);
+        let c = r.check(&d.0.join("game_scarlett_master.exe").display().to_string());
+        assert!(!c.complete && c.problem.contains("Go d'archives"), "{}", c.problem);
+    }
+
+    #[test]
+    fn shaders_count_in_the_log() {
+        let d = tempdir::Dir::new();
+        let log = d.0.join("shaders_traduction.txt");
+        std::fs::write(&log, "1000 shaders in the cache, 12 s\n25312 shaders in the cache, 41 do not translate, 1210 s\n      41  unsupported  (e.g. 0011)\n").unwrap();
+        assert_eq!(shaders_count_from_log(&log), Some(25312));
+        std::fs::write(&log, "1000 shaders in the cache, 12 s\n").unwrap();
+        assert_eq!(shaders_count_from_log(&log), None);
+    }
 }

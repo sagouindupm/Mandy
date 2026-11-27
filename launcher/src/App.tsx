@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { type Facts, type JobKind, type Snapshot, JOB_TITLES, api, errorText, gb, shortGpu } from "@/lib/api"
+import { type Facts, type GameCheck, type JobKind, type Snapshot, JOB_TITLES, api, errorText, gb, shortGpu } from "@/lib/api"
 import { type ActionId, type Step, computeSteps, todo } from "@/lib/steps"
 import { HelpPage } from "@/pages/help"
 import { PlayPage } from "@/pages/play"
@@ -153,13 +153,16 @@ export default function App() {
 
   const findGame = async (): Promise<boolean> => {
     const id = toast.loading("Recherche de game_scarlett_master.exe dans vos dossiers et sur vos disques…")
-    let found: string[] = []
+    let all: GameCheck[] = []
     try {
-      found = await api.findGames()
+      all = await api.findGames()
     } finally {
       toast.dismiss(id)
     }
+    // Complete copies only (the exe alone or a few archives do not run); the Rust side lists them first.
+    const found = all.filter((g) => g.complete).map((g) => g.path)
     let chosen: string | null = null
+    if (found.length === 0 && all.length > 0) toast.error(all[0].problem, { duration: 15000 })
     if (found.length === 1) chosen = found[0]
     else if (found.length > 1) {
       chosen = await ask({
@@ -176,11 +179,12 @@ export default function App() {
         await api.setGame(chosen)
         toast.success(`Jeu trouvé : ${chosen}`)
       } else {
-        if (found.length === 0) toast.info("Le jeu n'a pas été trouvé automatiquement : indiquez le fichier game_scarlett_master.exe.")
+        if (all.length === 0) toast.info("Le jeu n'a pas été trouvé automatiquement : indiquez le fichier game_scarlett_master.exe.")
         chosen = await api.pickGame()
       }
     } catch (e) {
-      toast.error(errorText(e))
+      // An incomplete copy: what is missing, long enough to be read.
+      toast.error(errorText(e), { duration: 15000 })
       chosen = null
     }
     await refresh()
@@ -251,7 +255,7 @@ export default function App() {
           await refresh()
           return !!p
         } catch (e) {
-          toast.error(errorText(e))
+          toast.error(errorText(e), { duration: 15000 })
           return false
         }
       case "nv_cache":

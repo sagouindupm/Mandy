@@ -94,8 +94,17 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
   // 2. Game folder
   {
     const folder = st.gameExe.split(/[\\/]/).slice(-2, -1)[0] ?? ""
+    // The exe alone, or a few archives: what is missing (« jeu » in reglages.json).
+    const incomplete = s.gameCheck && !s.gameCheck.complete ? s.gameCheck : null
     steps.push(
-      s.gameOk
+      incomplete
+        ? {
+            n: 2, id: "game", title: "Dossier du jeu", icon: FolderSearch,
+            explain: incomplete.problem,
+            level: "error", status: "Copie du jeu incomplète",
+            action: { label: "Chercher une copie complète", icon: FolderSearch, id: "find_game", primary: true }, auto: "find_game",
+          }
+        : s.gameOk
         ? {
             n: 2, id: "game", title: "Dossier du jeu", icon: FolderSearch,
             explain: "Votre copie du jeu : le fichier game_scarlett_master.exe.",
@@ -113,12 +122,22 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
   // 3. Shaders
   {
     const why = !exe ? "Il faut d'abord le moteur (étape 1)." : !s.gameOk ? "Il faut d'abord le jeu (étape 2)." : undefined
+    // A complete copy gives ~25 000 shaders; a handful means an incomplete copy, not « Prêt ».
+    const count = s.shadersCount
+    const few = count != null && count < s.shadersMin
     steps.push(
-      st.shadersReady
+      few
+        ? {
+            n: 3, id: "shaders", title: "Shaders traduits", icon: Layers,
+            explain: "Une copie complète du jeu en donne ~25 000 : si peu veut dire une copie incomplète. Vérifiez l'étape 2, puis retraduisez.",
+            level: "error", status: `Seulement ${count.toLocaleString("fr-FR")} shaders traduits`,
+            action: { label: "Retraduire", icon: RefreshCw, id: "shaders", primary: true, disabled: why }, auto: "shaders",
+          }
+        : st.shadersReady
         ? {
             n: 3, id: "shaders", title: "Shaders traduits", icon: Layers,
             explain: "Traduits une fois pour votre carte (15 à 30 min) : moins d'écrans noirs et d'à-coups.",
-            level: "ok", status: "Traduits", action: { label: "Retraduire", icon: RefreshCw, id: "shaders", primary: false, disabled: why },
+            level: "ok", status: count != null ? `${count.toLocaleString("fr-FR")} shaders traduits` : "Traduits", action: { label: "Retraduire", icon: RefreshCw, id: "shaders", primary: false, disabled: why },
           }
         : {
             n: 3, id: "shaders", title: "Shaders traduits", icon: Layers,
