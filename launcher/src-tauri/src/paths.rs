@@ -1,5 +1,9 @@
-//! Where things are: the repository (victory.exe, series-s/reglages.json) and the launcher's own folder
-//! %LOCALAPPDATA%\Sagouindupm (lanceur.json, victory.toml, journaux, captures), the same as series-s/reglages.ps1.
+//! Where things are: the repository or the downloaded package (victory.exe, series-s/reglages.json) and the
+//! launcher's own folder %LOCALAPPDATA%\Sagouindupm (lanceur.json, victory.toml, journaux, captures), the same as
+//! series-s/reglages.ps1.
+//!
+//! Two layouts: a checkout of the repository (victory.exe in target\release, compiled on the PC) and the package
+//! made by scripts/package-release.ps1 (« VIctory S.exe » with engine\victory.exe beside it, nothing to compile).
 
 use std::path::{Path, PathBuf};
 
@@ -7,6 +11,8 @@ use std::path::{Path, PathBuf};
 pub struct Paths {
     pub root: PathBuf,
     pub exe: PathBuf,
+    /// The downloaded package: victory.exe comes with it (engine\victory.exe), no sources to compile.
+    pub packaged: bool,
     pub reglages: PathBuf,
     pub home: PathBuf,
     pub conf: PathBuf,
@@ -19,12 +25,18 @@ pub struct Paths {
 impl Paths {
     pub fn discover() -> Self {
         let root = find_root();
-        let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        let home = local.join("Sagouindupm");
+        // SAGOUINDUPM_HOME: another folder for lanceur.json, the logs and the captures (the README's screenshots
+        // are taken with an empty one, `--preview`: no game image, no path of the player's).
+        let home = std::env::var_os("SAGOUINDUPM_HOME").filter(|h| !h.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Sagouindupm")
+        });
         let logs = home.join("journaux");
         let _ = std::fs::create_dir_all(&logs);
+        let engine = root.join("engine").join("victory.exe");
+        let packaged = engine.is_file() && !root.join("Cargo.toml").is_file();
         Paths {
-            exe: root.join("target").join("release").join("victory.exe"),
+            exe: if engine.is_file() { engine } else { root.join("target").join("release").join("victory.exe") },
+            packaged,
             reglages: root.join("series-s").join("reglages.json"),
             conf: home.join("lanceur.json"),
             captures: home.join("captures"),
@@ -36,12 +48,15 @@ impl Paths {
     }
 }
 
+/// A checkout (.victory-root) or the package (engine\victory.exe), both with series-s\reglages.json.
 fn is_root(dir: &Path) -> bool {
-    dir.join(".victory-root").is_file() && dir.join("series-s").join("reglages.json").is_file()
+    (dir.join(".victory-root").is_file() || dir.join("engine").join("victory.exe").is_file())
+        && dir.join("series-s").join("reglages.json").is_file()
 }
 
-/// The repository: `--root <dir>` or SAGOUINDUPM_ROOT (set by Sagouindupm-Launcher.bat), else the first folder
-/// above the exe or the current folder that holds .victory-root, else where the launcher was compiled from.
+/// The repository or the package: `--root <dir>` or SAGOUINDUPM_ROOT (set by Sagouindupm-Launcher.bat), else the
+/// first folder above the exe (the package: the exe's own folder) or the current folder that holds .victory-root
+/// or engine\victory.exe, else where the launcher was compiled from.
 fn find_root() -> PathBuf {
     let mut args = std::env::args_os();
     while let Some(a) = args.next() {

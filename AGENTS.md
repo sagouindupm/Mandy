@@ -62,8 +62,10 @@ start-up list otherwise. Never `VICTORY_PIPELINE_WAIT_MS=10000` (12 s freezes); 
 | `crates/victory-gpu/src/texture.rs`, `resource.rs` | textures, uploads, format stand-ins |
 | `crates/victory-gpu/src/list/thin.rs`, `host/card_steps.rs`, `land.rs` | the avatarmanz architecture: list calls translated by our threads (`VICTORY_THIN`), reads of title memory under flights done on the card (`VICTORY_CARD_STEPS`), landing on helper threads |
 | `crates/victory-gpu/src/pipeline/known.rs`, `apps/victory/src/warm.rs` | the pipeline book (`VICTORY_PIPELINE_BOOK=1`) and `victory warm` |
-| `series-s/` | the launchers and every setting we ship: `reglages.json` (the one place for the Series S settings, read by both launchers), `reglages.ps1` (applies it for the console launcher), `Sagouindupm.ps1` (console), `Sagouindupm-Launcher.bat` (starts the graphical launcher) |
+| `series-s/` | the launchers and every setting we ship: `reglages.json` (the one place for the Series S settings, read by both launchers; `materiel` holds the automatic hardware profiles), `reglages.ps1` (applies it for the console launcher), `Sagouindupm.ps1` (console), `Sagouindupm-Launcher.bat` (starts the graphical launcher) |
 | `launcher/` | the graphical launcher for novices: Tauri 2 (Rust commands in `src-tauri/src`, its own Cargo workspace) and React + shadcn/ui (`src/`); `launcher/news.json` feeds its « Nouveautés » card |
+| `launcher/src-tauri/src/profile.rs`, `scripts/check-profils.ps1` | the hardware profile (threads, card memory, RAM, vendor) computed from `materiel`; the same in `reglages.ps1`, compared by the script |
+| `scripts/package-release.ps1`, `.github/workflows/release.yml` | the downloadable zip (`VIctory S.exe` + `engineictory.exe`), built for any x86-64-v3 CPU; a `v*` tag publishes it |
 | `scripts/bench/` | the measuring scripts |
 
 Big files: don't read `host.rs`, `shadow.rs` or `draw.rs` whole. `grep -n` for the switch or the

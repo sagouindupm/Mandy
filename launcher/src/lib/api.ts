@@ -17,9 +17,30 @@ export type Settings = {
 export type DlssMode = { id: string; nom: string; mesure: string }
 export type Group = { titre: string; note: string; env: [string, string][] }
 
+/** The hardware profile of this PC (series-s/reglages.json, « materiel »; launcher/src-tauri/src/profile.rs). */
+export type HardwareProfile = {
+  label: string
+  vendor: string
+  vendorName: string
+  reasons: string[]
+  warnings: string[]
+  tips: string[]
+  env: [string, string][]
+  dlss: boolean
+  shadersNvidia: boolean
+  /** The graphics card is not checked yet. */
+  pending: boolean
+  /** What the player copies into a feedback report. */
+  text: string
+}
+
 export type Snapshot = {
   root: string
   exePath: string
+  /** The downloaded package: victory.exe is included. */
+  packaged: boolean
+  version: string
+  hardware: HardwareProfile | null
   exeBuilt: number | null
   reglagesError: string | null
   settings: Settings
@@ -55,6 +76,10 @@ export type Facts = {
   gpuName: string
   nvidia: boolean
   vram: number
+  cpuName: string
+  threads: number
+  avx2: boolean
+  windows: string
   bar1Mb: number
   schemeGuid: string
   schemeName: string
@@ -91,6 +116,9 @@ export const api = {
   backupSaves: () => invoke<string>("backup_saves"),
   captures: () => invoke<string[]>("captures"),
   captureNow: () => invoke<string>("capture_now"),
+  previewMode: () => invoke<boolean>("preview_mode"),
+  previewShot: (name: string) => invoke<string>("preview_shot", { name }),
+  previewDone: () => invoke<void>("preview_done"),
 }
 
 export const GB = 1024 ** 3

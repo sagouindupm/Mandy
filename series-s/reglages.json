@@ -94,6 +94,69 @@
       "VICTORY_WINDOWS_BAR_MB": "3072"
     }
   },
+  "materiel": {
+    "note": "Profil choisi tout seul d'après ce PC, sans question : le processeur, la carte puis la mémoire vive ajustent les réglages des groupes (dans cet ordre), avant la règle des 24 Go. Le PC de référence (RTX 3050 8 Go, 12 fils, 32 Go) garde exactement les réglages des groupes.",
+    "processeur": {
+      "note": "Fils auxiliaires selon les cœurs logiques (fils) du processeur.",
+      "crans": [
+        {
+          "id": "8_fils",
+          "nom": "8 fils ou moins",
+          "moins_de_fils": 9,
+          "env": { "VICTORY_THIN_THREADS": "3", "VICTORY_UNDER_THREADS": "2", "VICTORY_VIEW_THREADS": "2", "VICTORY_PIPELINE_WORKERS": "3" }
+        },
+        {
+          "id": "12_fils",
+          "nom": "6 cœurs / 12 fils (réglages de Maykzera)",
+          "moins_de_fils": 16,
+          "env": { "VICTORY_THIN_THREADS": "4", "VICTORY_UNDER_THREADS": "3", "VICTORY_VIEW_THREADS": "3", "VICTORY_PIPELINE_WORKERS": "4" }
+        },
+        {
+          "id": "16_fils",
+          "nom": "16 fils ou plus",
+          "env": { "VICTORY_THIN_THREADS": "6", "VICTORY_UNDER_THREADS": "4", "VICTORY_VIEW_THREADS": "4", "VICTORY_PIPELINE_WORKERS": "6" }
+        }
+      ]
+    },
+    "carte": {
+      "note": "Tampons de la carte selon sa mémoire. Jamais 2048 Mo sous 11 Go (3 fps mesurés sur des cartes de 8 Go avec 2 Go de tampons) : une carte de 10 Go reste à 1536. VICTORY_TEXTURE_MAX ne compte qu'une fois la PR #30 fusionnée ; inconnu du moteur avant, il est sans effet. Mémoire de la carte inconnue : réglages des groupes.",
+      "crans": [
+        {
+          "id": "6_go",
+          "nom": "6 Go ou moins",
+          "moins_de_go": 7,
+          "env": { "VICTORY_CARD_BUFFERS_MB": "768", "VICTORY_TEXTURE_MAX": "2048" }
+        },
+        {
+          "id": "8_go",
+          "nom": "8 à 10 Go",
+          "moins_de_go": 11,
+          "env": { "VICTORY_CARD_BUFFERS_MB": "1536" }
+        },
+        {
+          "id": "12_go",
+          "nom": "11 Go et plus",
+          "env": { "VICTORY_CARD_BUFFERS_MB": "2048" }
+        }
+      ]
+    },
+    "tres_petite_ram": {
+      "note": "PC de 16 Go (moins de 20 Go) : en plus de la règle des 24 Go, fils auxiliaires un cran plus bas et tampons de la carte à 1024 Mo au plus.",
+      "moins_de_go": 20,
+      "crans_de_fils_en_moins": 1,
+      "plafonds": { "VICTORY_CARD_BUFFERS_MB": 1024 },
+      "conseil": "16 Go de mémoire vive : fermez le navigateur, Discord et les autres programmes avant de jouer."
+    },
+    "fabricants": {
+      "nvidia_rtx": { "nom": "NVIDIA RTX", "dlss": true, "shaders_nvidia": true, "avertissement": "" },
+      "nvidia": { "nom": "NVIDIA GTX ou autre", "dlss": false, "shaders_nvidia": true, "avertissement": "" },
+      "amd": { "nom": "AMD", "dlss": false, "shaders_nvidia": false, "avertissement": "Carte AMD : non testé, profil Series S générique. Vos mesures nous aident." },
+      "intel_arc": { "nom": "Intel Arc", "dlss": false, "shaders_nvidia": false, "avertissement": "Carte Intel Arc : non testé, profil Series S générique. Vos mesures nous aident." },
+      "intel_integree": { "nom": "Intel (puce intégrée)", "dlss": false, "shaders_nvidia": false, "avertissement": "Puce graphique intégrée : il faut une carte graphique dédiée de 4 Go ou plus." },
+      "inconnu": { "nom": "carte inconnue", "dlss": true, "shaders_nvidia": false, "avertissement": "" }
+    },
+    "sans_avx2": "Processeur sans AVX2 : la version téléchargeable de VIctory ne démarrera pas. Compilez-la depuis les sources (voir le README)."
+  },
   "dlss": {
     "note": "DLSS (cartes RTX) à la place de l'upscaler du jeu, si le dossier de Streamline est donné et le mode n'est pas « off ». Mesuré sur RTX 3050 : ultra performance 90 ms (image propre), performance 102 ms, qualité 176 ms.",
     "fichier_requis": "sl.interposer.dll",

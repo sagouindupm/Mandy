@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { MessageSquareHeart } from "lucide-react"
 
 import type { Ctx } from "@/App"
 import { Button } from "@/components/ui/button"
@@ -19,7 +20,9 @@ export function HelpPage({ ctx }: { ctx: Ctx }) {
       <Section title="Dans quel ordre">
         <ol className="flex flex-col gap-2">
           {[
-            "Préparation, « Tout préparer » : Rust et outils C++ si besoin, compilation, jeu, shaders (15 à 30 min, une fois).",
+            ctx.snap.packaged
+              ? "Préparation, « Tout préparer » : le jeu, puis les shaders (15 à 30 min, une fois). VIctory est déjà inclus."
+              : "Préparation, « Tout préparer » : Rust et outils C++ si besoin, compilation, jeu, shaders (15 à 30 min, une fois).",
             "Cache de shaders NVIDIA sur « Illimitée » (étape 5).",
             "Une première partie : le jeu note ses pipelines.",
             "« Construire » les pipelines (étape 4) : plus d'à-coups ensuite.",
@@ -34,8 +37,8 @@ export function HelpPage({ ctx }: { ctx: Ctx }) {
 
       <Section title="Ce que fait le lanceur">
         <p>
-          Il lance votre copie d'un jeu Xbox Series sur PC, profil Series S, avec les réglages mesurés pour une carte de
-          8 Go, un processeur 6 cœurs et 16 à 32 Go de RAM.
+          Il lance votre copie d'un jeu Xbox Series sur PC, profil Series S, avec les réglages mesurés sur une carte de
+          8 Go, un processeur 6 cœurs et 32 Go de RAM, ajustés tout seuls à votre PC (Réglages, « Profil détecté »).
         </p>
         <p>
           Rien du jeu n'est fourni ni modifié. Les réglages viennent de series-s\reglages.json, comme pour le lanceur
@@ -69,6 +72,22 @@ export function HelpPage({ ctx }: { ctx: Ctx }) {
           </Button>
         </div>
       </Section>
+
+      <div className="col-span-2">
+        <Section title="Donner mon avis">
+          <p>
+            Vos images par seconde, les saccades, ce qui s'affiche mal : chaque retour sur une autre machine nous aide à
+            régler les profils. Le bouton ouvre un formulaire GitHub déjà rempli avec votre configuration et le profil
+            détecté ; vous le relisez, ajoutez vos impressions et l'envoyez vous-même (compte GitHub gratuit).
+          </p>
+          <div className="mt-1 flex items-center gap-4">
+            <Button size="sm" onClick={() => ctx.open("feedback")}>
+              <MessageSquareHeart strokeWidth={2} />
+              Donner mon avis
+            </Button>
+          </div>
+        </Section>
+      </div>
     </div>
   )
 }

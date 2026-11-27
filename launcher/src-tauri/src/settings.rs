@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::paths::Paths;
+pub use crate::profile::LowRam;
+use crate::profile::{Hardware, Materiel, Profile, put};
 
 // ------------------------------------------------------------------ lanceur.json
 
@@ -115,13 +117,6 @@ pub struct Skip {
     pub en_plus: Vec<String>,
 }
 
-#[derive(Deserialize, Clone)]
-pub struct LowRam {
-    pub note: String,
-    pub moins_de_go: f64,
-    pub env: Map<String, Value>,
-}
-
 #[derive(Deserialize, Serialize, Clone)]
 pub struct DlssMode {
     pub id: String,
@@ -152,6 +147,7 @@ pub struct Reglages {
     pub groupes: Vec<Group>,
     pub pipelines_sautees: Skip,
     pub petite_ram: LowRam,
+    pub materiel: Materiel,
     pub dlss: Dlss,
     pub shaders: Shaders,
 }
@@ -225,32 +221,38 @@ fn dxil_dir() -> Option<PathBuf> {
     found.pop()
 }
 
-/// Set-GameEnv: VICTORY_CONFIG, the Series S settings, the skipped pipelines, the small-RAM rule, DLSS.
-/// An inherited VICTORY_CACHE_DIR (or any other variable not named here) is left as it is.
-pub fn game_env(paths: &Paths, r: &Reglages, s: &Settings, ram_bytes: u64) -> EnvPlan {
-    let mut plan = EnvPlan::default();
-    if let Some(dir) = dxil_dir() {
-        let path = std::env::var("PATH").unwrap_or_default();
-        if !path.starts_with(&format!("{};", dir.display())) {
-            plan.path_prepend = Some(dir);
-        }
-    }
-    let mut set: Vec<(String, String)> = vec![("VICTORY_CONFIG".into(), paths.toml.display().to_string())];
+/// The groups' variables, in the file's order.
+pub fn base_env(r: &Reglages) -> Vec<(String, String)> {
+    let mut set = Vec::new();
     for g in &r.groupes {
         for (k, v) in &g.env {
-            set.push((k.clone(), value_str(v)));
+            put(&mut set, k, value_str(v));
         }
     }
-    set.push((r.pipelines_sautees.variable.clone(), r.skip_value(&paths.root)));
-    if ram_bytes > 0 && (ram_bytes as f64) < r.petite_ram.moins_de_go * 1024.0 * 1024.0 * 1024.0 {
-        for (k, v) in &r.petite_ram.env {
-            set.push((k.clone(), value_str(v)));
-        }
+    set
+}
+
+/// The hardware profile of this PC (see profile.rs).
+pub fn profile(r: &Reglages, hw: &Hardware) -> Profile {
+    r.materiel.profile(hw, &base_env(r), &r.petite_ram)
+}
+
+/// Set-GameEnv without the PATH and the files: VICTORY_CONFIG, the Series S settings adjusted by the hardware
+/// profile (which holds the small-RAM rule), the skipped pipelines, DLSS (RTX cards only).
+pub fn game_env_for(r: &Reglages, s: &Settings, hw: &Hardware, toml: &str, skip: &str) -> EnvPlan {
+    let mut plan = EnvPlan::default();
+    let mut set: Vec<(String, String)> = vec![("VICTORY_CONFIG".into(), toml.to_string())];
+    let base = base_env(r);
+    set.extend(base.iter().cloned());
+    let prof = r.materiel.profile(hw, &base, &r.petite_ram);
+    for (k, v) in &prof.env {
+        put(&mut set, k, v.clone());
     }
+    set.push((r.pipelines_sautees.variable.clone(), skip.to_string()));
     let d = &r.dlss;
     let mut remove = vec![d.variable_dossier.clone(), d.variable_mode.clone()];
     let (dir, mode) = (s.str("dlss_dir"), s.str("dlss_mode"));
-    if !mode.is_empty() && mode != "off" && r.dlss_dir_ok(&dir) {
+    if prof.dlss && !mode.is_empty() && mode != "off" && r.dlss_dir_ok(&dir) {
         remove.clear();
         set.push((d.variable_dossier.clone(), dir));
         set.push((d.variable_mode.clone(), mode));
@@ -262,7 +264,20 @@ pub fn game_env(paths: &Paths, r: &Reglages, s: &Settings, ram_bytes: u64) -> En
     plan
 }
 
-/// VICTORY_HOST_WAVE and friends for « victory shaders » on NVIDIA.
+/// Set-GameEnv: game_env_for with this repository's files and the Windows SDK folder in PATH.
+/// An inherited VICTORY_CACHE_DIR (or any other variable not named here) is left as it is.
+pub fn game_env(paths: &Paths, r: &Reglages, s: &Settings, hw: &Hardware) -> EnvPlan {
+    let mut plan = game_env_for(r, s, hw, &paths.toml.display().to_string(), &r.skip_value(&paths.root));
+    if let Some(dir) = dxil_dir() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        if !path.starts_with(&format!("{};", dir.display())) {
+            plan.path_prepend = Some(dir);
+        }
+    }
+    plan
+}
+
+/// VICTORY_HOST_WAVE and friends for « victory shaders » on NVIDIA (profile.shaders_nvidia).
 pub fn shader_host_env(r: &Reglages) -> Vec<(String, String)> {
     r.shaders.env_nvidia.iter().map(|(k, v)| (k.clone(), value_str(v))).collect()
 }

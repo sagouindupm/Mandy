@@ -1,4 +1,5 @@
-import { Camera, Download, FolderOpen } from "lucide-react"
+import { Camera, Copy, Download, FolderOpen, Info, MessageSquareHeart, TriangleAlert } from "lucide-react"
+import { toast } from "sonner"
 
 import type { Ctx } from "@/App"
 import { StateBadge } from "@/components/state"
@@ -18,24 +19,93 @@ function PathField({ value, empty }: { value: string; empty: string }) {
   )
 }
 
+/** « Profil détecté » : what the launcher chose for this PC, and why (series-s/reglages.json, « materiel »). */
+function ProfileCard({ ctx }: { ctx: Ctx }) {
+  const hw = ctx.snap.hardware
+  if (!hw) return null
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(hw.text)
+      toast.success("Profil copié : collez-le dans votre retour.")
+    } catch {
+      toast.error("Copie impossible.")
+    }
+  }
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex min-w-0 flex-col gap-1">
+          <CardTitle>Profil détecté : Series S · {hw.label}</CardTitle>
+          <CardDescription>
+            Choisi tout seul d'après ce PC{hw.pending ? " (carte graphique en cours de vérification)" : ""}. Le même pour
+            le lanceur console.
+          </CardDescription>
+        </div>
+        <div className="flex shrink-0 items-center gap-4">
+          <Button variant="link" className="text-[12.5px]" onClick={copy}>
+            <Copy className="size-3.5" strokeWidth={2} />
+            Copier
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => ctx.open("feedback")}>
+            <MessageSquareHeart strokeWidth={2} />
+            Donner mon avis
+          </Button>
+        </div>
+      </div>
+      <ul className="flex flex-col gap-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
+        {hw.reasons.map((r) => (
+          <li key={r} className="flex gap-2">
+            <span className="text-white/40">•</span>
+            <span>{r}</span>
+          </li>
+        ))}
+        {hw.warnings.map((r) => (
+          <li key={r} className="flex items-center gap-2 text-warning">
+            <TriangleAlert className="size-3.5 shrink-0" strokeWidth={2} />
+            <span>{r}</span>
+          </li>
+        ))}
+        {hw.tips.map((r) => (
+          <li key={r} className="flex items-center gap-2 text-white/80">
+            <Info className="size-3.5 shrink-0" strokeWidth={2} />
+            <span>{r}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="label mr-1">{hw.env.length > 0 ? "Changé pour ce PC" : "Réglages de référence, rien à changer"}</span>
+        {hw.env.map(([k, v]) => (
+          <code key={k} className="rounded-sm border border-border bg-field px-2 py-1 font-mono text-[11px] text-white/80">
+            {k.replace(/^VICTORY_/, "")}={v}
+          </code>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
 export function SettingsPage({ ctx }: { ctx: Ctx }) {
   const { snap } = ctx
   const st = snap.settings
   const modeKnown = snap.dlssModes.some((m) => m.id === st.dlssMode)
-  const mode = snap.dlssOk && modeKnown ? st.dlssMode : "off"
+  const rtx = snap.hardware?.dlss !== false
+  const mode = snap.dlssOk && rtx && modeKnown ? st.dlssMode : "off"
   const busy = ctx.running !== null
   const playing = ctx.running === "play"
 
   return (
     <div className="flex flex-col gap-6">
+      <ProfileCard ctx={ctx} />
       <div className="grid grid-cols-2 gap-6">
         <Card>
           <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between gap-4">
               <CardTitle>DLSS</CardTitle>
-              <StateBadge level={snap.dlssOk ? "ok" : "info"} label={snap.dlssOk ? "Prêt" : "Facultatif"} />
+              <StateBadge level={snap.dlssOk && rtx ? "ok" : "info"} label={!rtx ? "Non disponible" : snap.dlssOk ? "Prêt" : "Facultatif"} />
             </div>
-            <CardDescription>Cartes NVIDIA RTX, à la place de l'upscaler du jeu.</CardDescription>
+            <CardDescription>
+              {rtx ? "Cartes NVIDIA RTX, à la place de l'upscaler du jeu." : "DLSS demande une carte NVIDIA RTX : ici, 540p et l'upscaler du jeu."}
+            </CardDescription>
           </div>
           <div className="flex flex-col gap-2">
             <span className="label">Dossier de Streamline (bin\x64)</span>
@@ -44,7 +114,7 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
               <p className="text-[12.5px] text-warning">Il manque {snap.dlssMissing.join(", ")} : le jeu reviendra à son upscaler.</p>
             )}
             <div className="mt-1 flex items-center gap-4">
-              <Button variant="secondary" size="sm" onClick={ctx.pickDlss} disabled={busy}>
+              <Button variant="secondary" size="sm" onClick={ctx.pickDlss} disabled={busy || !rtx}>
                 <FolderOpen strokeWidth={2} />
                 Choisir
               </Button>
@@ -63,7 +133,7 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
               <SelectContent position="popper">
                 <SelectItem value="off">Désactivé · 540p et upscaler du jeu</SelectItem>
                 {snap.dlssModes.map((m) => (
-                  <SelectItem key={m.id} value={m.id} disabled={!snap.dlssOk}>
+                  <SelectItem key={m.id} value={m.id} disabled={!snap.dlssOk || !rtx}>
                     {m.nom}
                   </SelectItem>
                 ))}
@@ -142,14 +212,15 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
               <span className="text-[12.5px] leading-relaxed text-muted-foreground">{g.note}</span>
               <div className="flex flex-wrap gap-1.5">
                 {g.env.map(([k, v]) => {
-                  const applied = snap.applied.some(([ak]) => ak === k)
+                  const now = snap.applied.find(([ak]) => ak === k)?.[1]
+                  const changed = now !== undefined && now !== v
                   return (
                     <code
                       key={k}
-                      className={`rounded-sm border border-border bg-field px-2 py-1 font-mono text-[11px] ${applied ? "text-white/80" : "text-white/35 line-through"}`}
-                      title={applied ? undefined : "Retiré : le DLSS est actif"}
+                      className={`rounded-sm border border-border bg-field px-2 py-1 font-mono text-[11px] ${now === undefined ? "text-white/35 line-through" : changed ? "border-[#FF3C78]/60 text-white" : "text-white/80"}`}
+                      title={now === undefined ? "Retiré : le DLSS est actif" : changed ? `Profil de ce PC (reglages.json : ${v})` : undefined}
                     >
-                      {k.replace(/^VICTORY_/, "")}={v}
+                      {k.replace(/^VICTORY_/, "")}={changed ? now : v}
                     </code>
                   )
                 })}

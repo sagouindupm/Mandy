@@ -59,15 +59,20 @@ export function computeSteps(s: Snapshot, f: Facts | null): Step[] {
       level: "wait",
       status: "Vérification…",
     }
-    if (f && !exe) step.checks = [
-      { label: "Rust", ok: !!f.cargo },
-      { label: "Outils C++", ok: !!f.vcTools && f.winSdk },
-    ]
-    if (exe) {
+    if (s.packaged) {
+      // The downloaded package: victory.exe comes with it (engine\victory.exe), nothing to compile.
+      step.explain = "Inclus dans la version téléchargée : rien à compiler."
+      step.level = exe ? "ok" : "error"
+      step.status = exe ? `Inclus · version ${s.version}` : "engine\victory.exe manquant : retéléchargez VIctory S"
+    } else if (exe) {
       step.level = "ok"
       step.status = `Compilé le ${dateTime(s.exeBuilt!)}`
       if (f?.cargo && f.vcTools) step.action = { label: "Recompiler", id: "build", icon: RefreshCw, primary: false }
     } else if (f) {
+      step.checks = [
+        { label: "Rust", ok: !!f.cargo },
+        { label: "Outils C++", ok: !!f.vcTools && f.winSdk },
+      ]
       step.level = "error"
       if (!f.cargo) {
         step.status = "Rust n'est pas installé"

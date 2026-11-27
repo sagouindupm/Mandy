@@ -1,6 +1,6 @@
 import * as React from "react"
 import { listen } from "@tauri-apps/api/event"
-import { BadgeCheck, CircleAlert, CircleCheck, FolderOpen, Gauge, Gem, Images, Rocket, Save, ScrollText } from "lucide-react"
+import { BadgeCheck, CircleAlert, CircleCheck, FolderOpen, Gauge, Gem, Images, MessageSquareHeart, Rocket, Save, ScrollText } from "lucide-react"
 import { toast } from "sonner"
 
 import { useAsk } from "@/components/ask"
@@ -29,7 +29,7 @@ export type Ctx = {
   lines: string[]
   lastLine: string
   fps: string | null
-  /** « Profil Series S · RTX 3050 · 32 Go » */
+  /** « Profil détecté : Series S · RTX 3050 · 8 Go · 12 fils · 32 Go de RAM » */
   profileLine: string
   captures: string[]
   captureNow: () => Promise<void>
@@ -71,6 +71,8 @@ export default function App() {
     try {
       const f = await api.facts()
       setFacts(f)
+      // The hardware profile depends on the graphics card: read again now that it is known.
+      await api.snapshot().then(setSnap).catch(() => {})
       return f
     } catch (e) {
       toast.error(`Vérifications impossibles : ${errorText(e)}`)
@@ -116,6 +118,26 @@ export default function App() {
   }, [refresh, refreshFacts, refreshCaptures])
 
   const steps = React.useMemo(() => (snap ? computeSteps(snap, facts) : []), [snap, facts])
+
+  // --preview <dir> (scripts/package-release.ps1 -Screenshots): every page in turn, saved as launcher-<name>.png,
+  // once the checks are done; then the window closes.
+  const previewStarted = React.useRef(false)
+  React.useEffect(() => {
+    if (!snap || !facts || previewStarted.current) return
+    previewStarted.current = true
+    api.previewMode().then(async (on) => {
+      if (!on) return
+      const pages: [Tab, string][] = [["play", "jouer"], ["prepare", "preparation"], ["settings", "reglages"], ["help", "aide"]]
+      const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms))
+      await document.fonts.ready
+      for (const [t, name] of pages) {
+        setTab(t)
+        await wait(2500)
+        await api.previewShot(name).catch((e) => console.error(e))
+      }
+      await api.previewDone()
+    })
+  }, [snap, facts])
 
   // ---------------------------------------------------------------- actions
 
@@ -324,11 +346,14 @@ export default function App() {
     if (!ok) toast.info("La partie s'est terminée avec une erreur : ouvrez son journal.")
   }
 
-  const profileLine = [
-    "Profil Series S",
-    facts ? (facts.gpuName ? shortGpu(facts.gpuName) : "carte inconnue") : "…",
-    snap ? `${gb(snap.ramBytes)} Go` : "…",
-  ].join(" · ")
+  const hw = snap?.hardware
+  const profileLine = hw
+    ? `Profil détecté : Series S · ${hw.label}${hw.pending ? " · vérification de la carte…" : ""}`
+    : [
+        "Profil Series S",
+        facts ? (facts.gpuName ? shortGpu(facts.gpuName) : "carte inconnue") : "…",
+        snap ? `${gb(snap.ramBytes)} Go` : "…",
+      ].join(" · ")
 
   const ctx: Ctx | null = snap && {
     snap,
@@ -398,7 +423,8 @@ export default function App() {
   const profiles: Profile[] = snap
     ? [
         { id: "off", icon: BadgeCheck, name: "Recommandé" },
-        ...snap.dlssModes.map((m) => ({
+        // DLSS: NVIDIA RTX cards only (hardware profile); the rows wait for the Streamline folder.
+        ...(snap.hardware && !snap.hardware.dlss ? [] : snap.dlssModes).map((m) => ({
           id: m.id,
           icon: m.id === "ultra" ? Rocket : m.id === "performance" ? Gauge : Gem,
           name: m.nom,
@@ -407,7 +433,7 @@ export default function App() {
       ]
     : []
   const selected =
-    snap && snap.dlssOk && snap.dlssModes.some((m) => m.id === snap.settings.dlssMode) ? snap.settings.dlssMode : "off"
+    snap && snap.dlssOk && snap.hardware?.dlss !== false && snap.dlssModes.some((m) => m.id === snap.settings.dlssMode) ? snap.settings.dlssMode : "off"
 
   const link = "uppercase transition-colors duration-200 hover:text-white"
 
@@ -504,7 +530,7 @@ export default function App() {
           )}
 
           <footer className="relative flex shrink-0 items-center gap-6 border-t border-white/8 px-10 py-3.5 text-[11px] font-semibold tracking-[0.08em] text-[#8a8a8a]">
-            <span>© VIctory S</span>
+            <span>© VIctory S{snap ? ` ${snap.version}` : ""}</span>
             <button type="button" className={link} onClick={() => ctx?.open("docs")}>
               Documentation
             </button>
@@ -513,6 +539,10 @@ export default function App() {
             </button>
             <button type="button" className={link} onClick={() => ctx?.open("issues")}>
               Signaler un problème
+            </button>
+            <button type="button" className={`${link} ml-auto flex items-center gap-1.5 text-white/85`} onClick={() => ctx?.open("feedback")}>
+              <MessageSquareHeart className="size-3.5" strokeWidth={2} />
+              Donner mon avis
             </button>
           </footer>
         </Tabs>

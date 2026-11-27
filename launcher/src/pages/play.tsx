@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ChevronLeft, ChevronRight, Play, Square } from "lucide-react"
+import { ChevronLeft, ChevronRight, Info, Play, Square, TriangleAlert } from "lucide-react"
 
 import type { Ctx } from "@/App"
 import { Button } from "@/components/ui/button"
@@ -45,7 +45,8 @@ export function PlayPage({ ctx }: { ctx: Ctx }) {
   const left = todo(steps)
   const playing = running === "play"
   const busy = running !== null && !playing
-  const mode = snap.dlssOk ? snap.dlssModes.find((m) => m.id === st.dlssMode) : undefined
+  const mode = snap.dlssOk && snap.hardware?.dlss !== false ? snap.dlssModes.find((m) => m.id === st.dlssMode) : undefined
+  const hw = snap.hardware
 
   return (
     <div className="flex flex-1 items-end justify-between gap-10">
@@ -53,7 +54,26 @@ export function PlayPage({ ctx }: { ctx: Ctx }) {
         <h2 className="font-wordmark text-[54px] leading-[0.98] font-bold tracking-[0.1em] uppercase">
           VIctory S
         </h2>
-        <p className="mt-4 text-[14px] text-muted-foreground">{ctx.profileLine}</p>
+        <button
+          type="button"
+          onClick={() => ctx.go("settings")}
+          className="mt-4 w-fit text-left text-[14px] text-muted-foreground transition-colors duration-200 hover:text-white"
+          title="Voir pourquoi dans Réglages"
+        >
+          {ctx.profileLine}
+        </button>
+        {hw?.warnings.map((t) => (
+          <p key={t} className="mt-1.5 flex items-center gap-2 text-[13px] text-warning">
+            <TriangleAlert className="size-3.5 shrink-0" strokeWidth={2} />
+            {t}
+          </p>
+        ))}
+        {hw?.tips.map((t) => (
+          <p key={t} className="mt-1.5 flex items-center gap-2 text-[13px] text-white/75">
+            <Info className="size-3.5 shrink-0" strokeWidth={2} />
+            {t}
+          </p>
+        ))}
 
         <div className="mt-8 flex items-center gap-5">
           {playing ? (

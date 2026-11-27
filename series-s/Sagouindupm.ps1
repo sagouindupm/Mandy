@@ -30,6 +30,7 @@ function Initialize-Game($s) {
 }
 
 function Set-Dlss($s) {
+    if (-not (Get-HardwareProfile (Get-Hardware)).Dlss) { Write-Host 'DLSS : il faut une carte NVIDIA RTX. Ici, 540p et l''upscaler du jeu.' -ForegroundColor Yellow; return }
     Write-Host 'DLSS (cartes NVIDIA RTX) : il faut les DLL de Streamline de NVIDIA (sl.interposer.dll, sl.common.dll,' -ForegroundColor Yellow
     Write-Host 'sl.dlss.dll, nvngx_dlss.dll), à télécharger vous-même : https://github.com/NVIDIA-RTX/Streamline/releases'
     Write-Host '(dossier bin\x64 de l''archive). Elles ne sont pas fournies ici (licence NVIDIA).'
@@ -70,7 +71,10 @@ function Initialize-Shaders($s) {
     }
     Set-GameEnv $s
     # Les faits de la carte (NVIDIA : vagues de 32, 1 000 000 de vues) : sans eux le cache ne sert à rien en jeu.
-    $hostEnv = Get-ShaderHostEnv; foreach ($k in $hostEnv.Keys) { Set-Item "env:$k" $hostEnv[$k] }
+    # NVIDIA seulement : une carte AMD garde la traduction Series S générique.
+    if ((Get-HardwareProfile (Get-Hardware)).ShadersNvidia) {
+        $hostEnv = Get-ShaderHostEnv; foreach ($k in $hostEnv.Keys) { Set-Item "env:$k" $hostEnv[$k] }
+    }
     Write-Host "`nTraduction de tous les shaders (15 à 30 minutes, le PC sera très occupé)..." -ForegroundColor Magenta
     & $Exe shaders $s.shaders_dir --jobs (Get-ShaderJobs) | Tee-Object -FilePath (Join-Path $Logs 'shaders_traduction.txt') | Select-Object -Last 3
     if ($LASTEXITCODE -eq 0) { $s.shaders_ready = $true; Save-Settings $s; Write-Host 'Shaders prêts !' -ForegroundColor Green }
@@ -97,15 +101,21 @@ function Backup-Saves {
 if (-not (Test-Path $Exe)) {
     Show-Title
     Write-Host "victory.exe introuvable ($Exe). Compilez d'abord : cargo build --release --locked -p victory" -ForegroundColor Red
+    Write-Host '(ou téléchargez la version prête : https://github.com/sagouindupm/Mandy/releases)'
     Read-Host 'Entrée pour quitter'; exit 1
 }
 $s = Complete-Settings (Get-Settings)
 Show-Title
 Initialize-Game $s
+# Profil choisi d'après ce PC (« materiel » dans reglages.json), le même que dans le lanceur graphique.
+$Profil = Get-HardwareProfile (Get-Hardware)
 while ($true) {
     Show-Title
     $state = if ($s.shaders_ready) { 'prêts' } else { 'pas encore préparés' }
     $dlss = if ($s.dlss_mode -and $s.dlss_mode -ne 'off') { $s.dlss_mode } else { 'désactivé' }
+    Write-Host "  Profil détecté : Series S · $($Profil.Label)" -ForegroundColor DarkMagenta
+    foreach ($w in $Profil.Warnings) { Write-Host "  ! $w" -ForegroundColor Yellow }
+    foreach ($t in $Profil.Tips) { Write-Host "  $t" -ForegroundColor DarkYellow }
     Write-Host "  Shaders : $state   |   DLSS : $dlss   |   Parties lancées : $($s.parties)`n"
     Write-Host '  [1] Jouer'
     Write-Host '  [2] Préparer les shaders à l''avance (une fois, recommandé)'

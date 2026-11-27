@@ -46,6 +46,11 @@ pub fn total_ram() -> u64 {
     }
 }
 
+/// Logical processors (0 if unknown).
+pub fn threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0)
+}
+
 /// "online" (on mains), "offline" (on battery) or "unknown".
 pub fn power_line() -> &'static str {
     use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
@@ -109,17 +114,25 @@ $f.vcTools = [string]$vc
 $f.winSdk = [bool](Get-ChildItem (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib\*\um\x64\kernel32.lib') | Select-Object -First 1)
 $cs = Get-CimInstance Win32_ComputerSystem
 $f.autoPagefile = if ($cs) { [bool]$cs.AutomaticManagedPagefile } else { $null }
-$gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch 'Basic Display|Remote|Virtual|Parsec|Meta Virtual' })
-$gpu = $gpus | Where-Object { $_.Name -match 'NVIDIA' } | Select-Object -First 1
-if (-not $gpu) { $gpu = $gpus | Sort-Object AdapterRAM -Descending | Select-Object -First 1 }
-$f.gpuName = if ($gpu) { [string]$gpu.Name } else { '' }
-$vram = [double]0
+# The graphics card: NVIDIA first, else the one with the most memory (the driver's 64-bit size; AdapterRAM
+# stops at 4 GB). Same choice as Get-Gpu in series-s/reglages.ps1.
+$mem = @{}
 Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' | ForEach-Object {
     $q = $_.'HardwareInformation.qwMemorySize'
-    if ($_.DriverDesc -eq $f.gpuName -and $q) { try { $vram = [double]$q } catch { } }
+    if ($_.DriverDesc -and $q) { try { $mem[[string]$_.DriverDesc] = [double]$q } catch { } }
 }
-if (-not $vram -and $gpu) { $vram = [double]$gpu.AdapterRAM }
-$f.vram = $vram
+$gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch 'Basic Display|Remote|Virtual|Parsec|Meta Virtual' } | ForEach-Object {
+    $v = if ($mem.ContainsKey([string]$_.Name)) { $mem[[string]$_.Name] } else { [double]$_.AdapterRAM }
+    [pscustomobject]@{ Name = [string]$_.Name; Vram = $v }
+})
+$gpu = $gpus | Where-Object { $_.Name -match 'NVIDIA' } | Sort-Object Vram -Descending | Select-Object -First 1
+if (-not $gpu) { $gpu = $gpus | Sort-Object Vram -Descending | Select-Object -First 1 }
+$f.gpuName = if ($gpu) { $gpu.Name } else { '' }
+$f.vram = if ($gpu) { $gpu.Vram } else { [double]0 }
+$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+$f.cpuName = if ($cpu) { ([string]$cpu.Name).Trim() } else { '' }
+$os = Get-CimInstance Win32_OperatingSystem
+$f.windows = if ($os) { "$($os.Caption) ($($os.Version))" } else { '' }
 $f.bar1Mb = 0
 $smi = (Get-Command nvidia-smi.exe | Select-Object -First 1).Source
 if (-not $smi) { $c = Join-Path $env:SystemRoot 'System32\nvidia-smi.exe'; if (Test-Path $c) { $smi = $c } }
@@ -158,6 +171,15 @@ pub struct Facts {
     pub nvidia: bool,
     #[serde(default)]
     pub vram: f64,
+    #[serde(default)]
+    pub cpu_name: String,
+    /// Logical processors (counted by this launcher, not PowerShell).
+    #[serde(default)]
+    pub threads: usize,
+    #[serde(default)]
+    pub avx2: bool,
+    #[serde(default)]
+    pub windows: String,
     #[serde(default)]
     pub bar1_mb: u32,
     #[serde(default)]
@@ -223,6 +245,8 @@ pub fn facts() -> Facts {
     f.cargo = find_cargo().map(|p| p.display().to_string()).unwrap_or_default();
     f.winget = find_winget().map(|p| p.display().to_string()).unwrap_or_default();
     f.nvidia = f.gpu_name.to_uppercase().contains("NVIDIA");
+    f.threads = threads();
+    f.avx2 = std::arch::is_x86_feature_detected!("avx2");
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         f.dx_cache = dir_size(&PathBuf::from(local).join("NVIDIA").join("DXCache"));
     }
@@ -319,6 +343,38 @@ $bmp.Save('__OUT__', [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
 "OK:$w x $hg"
 "#;
+
+/// Saves a window (by handle) as a PNG: the launcher's own pages for the README (`--preview`).
+pub fn capture_window(hwnd: isize, out: &Path) -> Result<PathBuf, String> {
+    let find = "$p = Get-Process victory -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1\nif (-not $p) { 'ERR:Le jeu ne tourne pas.'; exit }\n$h = $p.MainWindowHandle";
+    if !CAPTURE_PS.contains(find) {
+        return Err("Capture impossible.".into());
+    }
+    let script = CAPTURE_PS
+        .replace(find, &format!("$h = [IntPtr]{hwnd}"))
+        .replace("__OUT__", &out.display().to_string().replace('\'', "''"));
+    let res = powershell(&script)?;
+    let last = res.lines().map(str::trim).rfind(|l| l.starts_with("OK:") || l.starts_with("ERR:")).unwrap_or("ERR:Capture impossible.");
+    match last.strip_prefix("ERR:") {
+        Some(err) => Err(err.to_string()),
+        None if out.is_file() => Ok(out.to_path_buf()),
+        None => Err("Capture impossible.".into()),
+    }
+}
+
+/// Opens a web page with the default browser (ShellExecute: no command line to escape).
+pub fn open_url(url: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if !url.starts_with("https://") {
+        return Err(format!("Adresse refusée : {url}"));
+    }
+    let wide = |t: &str| t.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (verb, file) = (wide("open"), wide(url));
+    // SAFETY: NUL-terminated strings that outlive the call; no parent window.
+    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    if r as isize > 32 { Ok(()) } else { Err(format!("Impossible d'ouvrir {url}")) }
+}
 
 /// Saves a screenshot of the running game in `dir`; returns the file.
 pub fn capture_game(dir: &Path) -> Result<PathBuf, String> {

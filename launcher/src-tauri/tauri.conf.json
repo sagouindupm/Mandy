@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "VIctory S",
         "width": 1100,
         "height": 720,
