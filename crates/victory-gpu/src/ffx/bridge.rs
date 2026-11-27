@@ -7,9 +7,18 @@
 //! destroyed by its own code, and a DLSS context (a Streamline viewport) is
 //! made beside it. An upscale dispatch is evaluated by DLSS on the host
 //! GPU; one that DLSS does not evaluate (no DLSS context, a texture without
-//! its host copy, Streamline failing) goes to the title's own `ffxDispatch`,
-//! so FSR still makes the picture: never a black screen for want of DLSS.
-//! The first dispatches, and every reason one is not evaluated, are logged.
+//! its host copy, Streamline failing) goes to the title's own `ffxDispatch`
+//! when that can take it. The first dispatches, and every reason one is
+//! not evaluated, are logged.
+//!
+//! The title's FSR4 is a fixed-resolution build: of maximum render sizes it
+//! takes only 2/3 of the output ("tight", 1280x720 for 1920x1080) or the
+//! output itself ("legacy"), and of per-frame render sizes only the tight
+//! one; a context it refuses leaves the title dividing by zero. So its
+//! context is always made with a maximum it takes ([`fsr_max`]), the DLSS
+//! context with the size `VICTORY_DLSS_MODE` renders at, and a frame below
+//! the tight size that DLSS did not upscale is not given to FSR (it is
+//! said, and the dispatch fails).
 #![allow(non_snake_case)]
 
 use std::ffi::c_void;
@@ -17,8 +26,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use super::{
-    Configure, Create, CreateUpscale, Destroy, Dispatch, ERROR, Header, OK, OUTPUT, Query,
-    ReturnCode, dlss, host_device, record_on_host, upscale_in,
+    CREATE_UPSCALE, Configure, Create, CreateUpscale, DISPATCH_UPSCALE, Destroy, Dispatch,
+    DispatchUpscale, ERROR, Header, OK, OUTPUT, Query, ReturnCode, dlss, host_device,
+    record_on_host, upscale_in,
 };
 
 /// The DLL whose exports are taken.
@@ -47,8 +57,16 @@ struct Real {
 
 static REAL: OnceLock<Real> = OnceLock::new();
 
-/// Each title context (its address) and the DLSS context made beside it.
-static CONTEXTS: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+/// A title context (its address), the DLSS context made beside it (0: none)
+/// and the one per-frame render size its FSR takes.
+#[derive(Clone, Copy)]
+struct Entry {
+    title: usize,
+    ours: usize,
+    fsr_render: [u32; 2],
+}
+
+static CONTEXTS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 
 /// Takes the title's own FidelityFX calls, by export name (`export`, the
 /// title's loader DLL): true when all five are there. Without them nothing
@@ -86,18 +104,59 @@ pub fn ours(name: &str) -> Option<usize> {
     })
 }
 
-fn contexts() -> std::sync::MutexGuard<'static, Vec<(usize, usize)>> {
+/// The tight size of the title's FSR4 for an output: 2/3 of it.
+fn tight(upscale: [u32; 2]) -> [u32; 2] {
+    upscale.map(|v| v * 2 / 3)
+}
+
+/// The maximum render size the title's FSR4 is given: `max_render` when it
+/// takes it (the tight size or the output's), the tight size otherwise.
+fn fsr_max(max_render: [u32; 2], max_upscale: [u32; 2]) -> [u32; 2] {
+    if max_render == tight(max_upscale) || max_render == max_upscale {
+        max_render
+    } else {
+        tight(max_upscale)
+    }
+}
+
+/// The DLSS context's maximum render size: the size `VICTORY_DLSS_MODE`
+/// renders at (`scale` of the output), the title's otherwise.
+fn dlss_max(max_render: [u32; 2], max_upscale: [u32; 2], scale: Option<f32>) -> [u32; 2] {
+    match scale {
+        Some(s) => max_upscale.map(|v| (v as f32 * s).round() as u32),
+        None => max_render,
+    }
+}
+
+fn contexts() -> std::sync::MutexGuard<'static, Vec<Entry>> {
     CONTEXTS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The DLSS context beside the title's context `context` points at.
-fn beside(context: *mut *mut c_void) -> Option<usize> {
+/// The entry of the title's context `context` points at.
+fn entry(context: *mut *mut c_void) -> Option<Entry> {
     // SAFETY: the title's context pointer, checked for null.
     let title = (!context.is_null()).then(|| unsafe { *context } as usize)?;
     contexts()
         .iter()
-        .find(|&&(t, _)| t == title && title != 0)
-        .map(|&(_, ours)| ours)
+        .find(|e| e.title == title && title != 0)
+        .copied()
+}
+
+/// The upscale description in the title's chain, to change in place.
+///
+/// # Safety
+///
+/// `h` is null or the start of a chain of valid descriptions.
+unsafe fn upscale_at(mut h: *mut Header) -> Option<*mut CreateUpscale> {
+    while !h.is_null() {
+        // SAFETY: the caller's chain.
+        if unsafe { (*h).kind } == CREATE_UPSCALE {
+            return Some(h.cast());
+        }
+        // SAFETY: as above.
+        h = unsafe { (*h).next };
+    }
+    None
 }
 
 extern "C" fn ffxCreateContext(
@@ -106,35 +165,77 @@ extern "C" fn ffxCreateContext(
     memory: *const c_void,
 ) -> ReturnCode {
     let Some(real) = REAL.get() else { return ERROR };
+    // SAFETY: the title's chain of descriptions (null checked).
+    let upscale: Option<CreateUpscale> = (!desc.is_null())
+        .then(|| unsafe { upscale_in(desc) })
+        .flatten();
+    // The title's FSR gets a maximum it takes, for the call only.
+    // SAFETY: as above.
+    let at = (!desc.is_null()).then(|| unsafe { upscale_at(desc) }).flatten();
+    let mut restore = None;
+    if let (Some(u), Some(at)) = (upscale, at) {
+        let max = fsr_max(u.max_render, u.max_upscale);
+        if max != u.max_render {
+            tracing::warn!(
+                asked = ?u.max_render,
+                given = ?max,
+                upscale = ?u.max_upscale,
+                "dlss: the title's FSR4 takes no such maximum render size; its context gets the tight one, DLSS renders at the asked one"
+            );
+            // SAFETY: the title's description, restored below.
+            unsafe { (*at).max_render = max };
+            restore = Some(u.max_render);
+        }
+    }
     // SAFETY: the title's own call with its own arguments.
     let r = unsafe { (real.create)(context, desc, memory) };
-    // SAFETY: the title's context pointer, checked for null.
-    if r != OK || context.is_null() || unsafe { (*context).is_null() } || desc.is_null() {
-        return r;
+    if let (Some(old), Some(at)) = (restore, at) {
+        // SAFETY: as the title made it.
+        unsafe { (*at).max_render = old };
     }
-    // SAFETY: the title's chain of descriptions.
-    let upscale: Option<CreateUpscale> = unsafe { upscale_in(desc) };
-    let (Some(upscale), Some(device)) = (upscale, host_device()) else {
-        tracing::warn!("dlss: a FidelityFX context without an upscale description or host device; FSR upscales it");
-        return r;
-    };
-    let mut slot = std::ptr::null_mut();
-    if dlss::create(&mut slot, device, &upscale) != OK || slot.is_null() {
-        tracing::warn!("dlss: no DLSS context; the title's FSR upscales instead");
+    // SAFETY: the title's context pointer, checked for null.
+    if r != OK || context.is_null() || unsafe { (*context).is_null() } {
+        tracing::error!(result = r, "dlss: the title's FSR refused its upscale context");
         return r;
     }
     // SAFETY: checked non-null above.
     let title = unsafe { *context } as usize;
-    contexts().push((title, slot as usize));
+    let Some(mut upscale) = upscale else {
+        tracing::warn!("dlss: a FidelityFX context without an upscale description; FSR upscales it");
+        return r;
+    };
+    let mut entry = Entry {
+        title,
+        ours: 0,
+        fsr_render: tight(upscale.max_upscale),
+    };
+    let scale = dlss::requested().render_scale();
+    upscale.max_render = dlss_max(upscale.max_render, upscale.max_upscale, scale);
+    let mut slot = std::ptr::null_mut();
+    match host_device() {
+        Some(device) if dlss::create(&mut slot, device, &upscale) == OK && !slot.is_null() => {
+            entry.ours = slot as usize;
+        }
+        _ => {
+            tracing::warn!(
+                render = ?upscale.max_render,
+                fsr = ?entry.fsr_render,
+                "dlss: no DLSS context; the title's FSR upscales instead, at its own size only (frames rendered smaller go without; use VICTORY_DLSS_MODE=quality)"
+            );
+        }
+    }
+    contexts().push(entry);
     r
 }
 
 extern "C" fn ffxDestroyContext(context: *mut *mut c_void, memory: *const c_void) -> ReturnCode {
     let Some(real) = REAL.get() else { return ERROR };
-    if let Some(ours) = beside(context) {
-        contexts().retain(|&(_, o)| o != ours);
-        let mut slot = ours as *mut c_void;
-        dlss::destroy(&mut slot);
+    if let Some(e) = entry(context) {
+        contexts().retain(|x| x.title != e.title);
+        if e.ours != 0 {
+            let mut slot = e.ours as *mut c_void;
+            dlss::destroy(&mut slot);
+        }
     }
     // SAFETY: the title's own call with its own arguments.
     unsafe { (real.destroy)(context, memory) }
@@ -160,10 +261,12 @@ extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> Ret
     let Some(real) = REAL.get() else { return ERROR };
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    let evaluated = match beside(context) {
+    let e = entry(context);
+    let evaluated = match e {
         _ if desc.is_null() => Err("no description"),
-        None => Err("no DLSS context for this FidelityFX context"),
-        Some(ours) => {
+        None => Err("not a context made through DLSS's bridge"),
+        Some(Entry { ours: 0, .. }) => Err("no DLSS context for this FidelityFX context"),
+        Some(Entry { ours, .. }) => {
             let mut slot = ours as *mut c_void;
             // SAFETY: the title's non-null description; DLSS records on
             // the host list the swap gives it.
@@ -172,35 +275,59 @@ extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *const Header) -> Ret
                     dlss::dispatch(&mut slot, d)
                 })
             }
-            .and_then(|r| if r == OK { Ok(()) } else { Err("DLSS failed (see the dlss: error above)") })
+            .and_then(|r| {
+                if r == OK {
+                    Ok(())
+                } else {
+                    Err("DLSS failed (see the dlss: error above)")
+                }
+            })
         }
     };
-    match evaluated {
-        Ok(()) => {
-            if n <= LOGGED {
-                tracing::info!(n, "dlss: upscale dispatch evaluated by DLSS");
-            }
-            OK
+    if evaluated.is_ok() {
+        if n <= LOGGED {
+            tracing::info!(n, "dlss: upscale dispatch evaluated by DLSS");
         }
-        Err(why) => {
-            skipped(n, why);
-            // SAFETY: the title's own call with its own arguments.
-            unsafe { (real.dispatch)(context, desc) }
-        }
+        return OK;
     }
+    let why = evaluated.err().unwrap_or_default();
+    // SAFETY: the title's non-null description, read by its type.
+    let render = (!desc.is_null() && unsafe { (*desc).kind } == DISPATCH_UPSCALE)
+        .then(|| unsafe { (*desc.cast::<DispatchUpscale>()).render_size });
+    if let (Some(e), Some(render)) = (e, render)
+        && render != e.fsr_render
+    {
+        skipped(n, why, Some((render, e.fsr_render)));
+        return ERROR;
+    }
+    skipped(n, why, None);
+    // SAFETY: the title's own call with its own arguments.
+    unsafe { (real.dispatch)(context, desc) }
 }
 
-/// Says that dispatch `n` went to FSR: each of the first ones, then each
-/// reason once.
-fn skipped(n: u32, why: &'static str) {
-    static SEEN: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+/// Says that dispatch `n` was not evaluated by DLSS, and whether FSR got it
+/// (`refused`: the render size it was rendered at and the one FSR takes,
+/// so not): each of the first ones, then each reason once.
+fn skipped(n: u32, why: &'static str, refused: Option<([u32; 2], [u32; 2])>) {
+    static SEEN: Mutex<Vec<(&str, bool)>> = Mutex::new(Vec::new());
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    let new = !seen.contains(&why);
+    let key = (why, refused.is_some());
+    let new = !seen.contains(&key);
     if new {
-        seen.push(why);
+        seen.push(key);
     }
-    if n <= LOGGED || new {
-        tracing::warn!(n, why, "dlss: upscale dispatch not evaluated; the title's FSR upscales it");
+    if n > LOGGED && !new {
+        return;
+    }
+    match refused {
+        Some((render, fsr)) => tracing::error!(
+            n,
+            why,
+            ?render,
+            ?fsr,
+            "dlss: upscale dispatch not evaluated, and the title's FSR4 takes only its own render size: frame not upscaled"
+        ),
+        None => tracing::warn!(n, why, "dlss: upscale dispatch not evaluated; the title's FSR upscales it"),
     }
 }
 
@@ -213,6 +340,19 @@ mod tests {
         let partial = |name: &str| (name != "ffxQuery").then_some(0x1000);
         assert!(!take(&partial));
         assert!(ours("ffxDispatch").is_none());
-        assert!(beside(std::ptr::null_mut()).is_none());
+        assert!(entry(std::ptr::null_mut()).is_none());
+    }
+
+    #[test]
+    fn the_title_fsr_gets_a_maximum_it_takes_and_dlss_the_mode_size() {
+        let out = [1920, 1080];
+        // The tight and the legacy sizes stay; anything else is the tight.
+        assert_eq!(fsr_max([1280, 720], out), [1280, 720]);
+        assert_eq!(fsr_max([1920, 1080], out), [1920, 1080]);
+        assert_eq!(fsr_max([960, 540], out), [1280, 720]);
+        // DLSS renders at its mode's size, or the title's.
+        assert_eq!(dlss_max([1280, 720], out, Some(0.5)), [960, 540]);
+        assert_eq!(dlss_max([1280, 720], out, Some(1.0 / 3.0)), [640, 360]);
+        assert_eq!(dlss_max([1280, 720], out, None), [1280, 720]);
     }
 }
