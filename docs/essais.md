@@ -37,6 +37,7 @@ Suite de la nuit (même méthode, nouvelle base) :
 | Bateau piloté en jeu (7 min, `VICTORY_KEYS` tenu) | 8,6-9,9 fps sur l'eau ; W n'accélère pas avec cette disposition, A tourne | à suivre |
 | **Fusion Proudnoob4/VIctory-NVIDIA `nvidia-hybrid-v2` (PR #21)** | 105 / **93 ms (10,8 fps, p90 122)** ; fil de soumission 52-63 ms au lieu de 92-116 | gardé ; quelques carrés dans le ciel par moments |
 | `VICTORY_THIN_THREADS=4` au lieu de 5 sur 6 cœurs (Maykzera, 26/11) | **87 ms (11,5 fps), p90 112, pire 178** contre 93 / 122 | gardé (lanceur) |
+| Brume de chaleur 731a39171b568298 laissée de côté (foxhound `VICTORY_LEAVE_OUT` ; elle étale des blocs, aussi sur l'eau) | **84 ms (11,8 fps)**, p90 115 contre 93 / 122 ; visages nets, eau réaliste, en jeu atteint | gardé (lanceur) |
 | DLSS ultra performance (base #20) | 90 ms (11,2 fps), p90 114 ; image propre, eau réaliste | à proposer comme réglage rapide |
 | Listes wave-wide par défaut (Felix2180, Xeltax ; `VICTORY_WAVE_WIDE_ONLY`, + 926c…) | 115 ms / 108 ms ; **rectangles sombres sur l'eau, blocs sombres flottants, carrés dans le ciel** | rejeté (image) |
 | Ce qui limite maintenant | la carte : « the card about 89-98% busy » à 540p | outil de coût GPU par shader en cours ; base foxhound (trustno1, 27/11) à mesurer |
