@@ -2299,6 +2299,38 @@ impl CardPlan {
             }
         }
     }
+
+    /// Verification mode (`VICTORY_GPU_RO_CHECK=1`): warns if any compared
+    /// 64 KiB piece that changed on the card overlaps a GPU-read-only region.
+    fn check_gpu_ro(&self, differs: &[u32]) {
+        if !crate::shadow::gpu_ro_check() {
+            return;
+        }
+        static WARNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        for r in self.ranges.iter().filter(|r| !r.picked && r.compared) {
+            let (base, shadow_len) = r.shadow.span();
+            for p in 0..r.span.pieces {
+                if !differs.get((r.at + p) as usize).is_some_and(|&d| torn::flagged(d)) {
+                    continue;
+                }
+                let (lo, hi) = r.shadow.card_piece(&r.span, p);
+                let at = base + lo as u64;
+                let len = (hi - lo) as u64;
+                if crate::shadow::overlaps_gpu_readonly(at, len) {
+                    let n = WARNED.fetch_add(1, Ordering::Relaxed) + 1;
+                    if n <= 16 || n.is_power_of_two() {
+                        tracing::warn!(
+                            hit = n,
+                            piece = format_args!("{at:#x}..{:#x}", at + len),
+                            declared = format_args!("{:#x}..{:#x}", r.declared.0, r.declared.1),
+                            shadow = format_args!("{base:#x}+{shadow_len:#x}"),
+                            "VICTORY_GPU_RO_CHECK: GPU compare saw changed bytes inside a GPU-read-only region"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// What a submission does for copies in the card's memory.
@@ -4853,6 +4885,7 @@ impl Host {
             let mut seen = std::collections::HashSet::new();
             for &(plan, behind) in plans {
                 plan.picked_found(differs);
+                plan.check_gpu_ro(differs);
                 let flags: Vec<(usize, u32, bool)> = plan
                     .ranges
                     .iter()
@@ -9412,10 +9445,10 @@ impl Meter {
         split_line(frames);
         {
             let [passes, pieces, compares] = [0, 1, 2].map(|i| CARD_PASSES[i].swap(0, Ordering::Relaxed) as f64 / frames);
-            if passes + compares > 0.0 {
+            let gpu_ro_left = crate::shadow::GPU_RO_LEFT.swap(0, Ordering::Relaxed) as f64 / 1e6 / frames;
+            if passes + compares + gpu_ro_left > 0.0 {
                 tracing::info!(
-                    "our passes over copies in the card's memory per frame: {passes:.0} hash passes over {pieces:.0} pieces after \
-                     ranges were sent up (VICTORY_CARD_REHASH_RUNS=1 joins them: now {}), {compares:.0} compare passes",
+                    "our passes over copies in the card's memory per frame: {passes:.0} hash passes over {pieces:.0} pieces after                      ranges were sent up (VICTORY_CARD_REHASH_RUNS=1 joins them: now {}), {compares:.0} compare passes;                      {gpu_ro_left:.1} MB declared written in GPU-read-only memory left out (VICTORY_GPU_RO_SKIP=1)",
                     if rehash_runs() { "on" } else { "off" }
                 );
             }
