@@ -3121,6 +3121,7 @@ impl State {
         unsafe { list.list.Dispatch(x, y, z) };
         self.writes += 1;
         self.buffers_written();
+        self.planes_now(list);
         DISPATCHED.fetch_add(1, Ordering::Relaxed);
         if let Some(role) = p.stages.first().and_then(|s| s.shader.ambient)
             && crate::ambient::on()
@@ -3490,6 +3491,7 @@ impl State {
                     self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
                     self.mesh_scissor(list, false);
                     self.note_stores();
+                    self.planes_now(list);
                     DRAWN.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -4046,6 +4048,7 @@ impl State {
             };
             self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
             self.note_stores();
+            self.planes_now(list);
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
         if !ran {
@@ -4155,6 +4158,7 @@ impl State {
             };
             self.drew(crate::pipeline::host_pipeline(self.pipeline as This));
             self.note_stores();
+            self.planes_now(list);
             DRAWN.fetch_add(1, Ordering::Relaxed);
         }
         if !ran {
@@ -4173,6 +4177,16 @@ fn dedup_barriers() -> bool {
 }
 
 impl State {
+    /// A draw or dispatch was just recorded: the depth planes its shaders
+    /// wrote through their twins are drawn into the planes now
+    /// (`crate::host::depth_plane_now`), and the title's bindings, which
+    /// that pass replaced, set again.
+    fn planes_now(&mut self, list: &HostList) {
+        if list.planes_now() {
+            self.replay(list);
+        }
+    }
+
     /// Shaders that can write buffers were recorded: arguments may be others
     /// from here on.
     fn buffers_written(&mut self) {
@@ -4266,6 +4280,7 @@ impl State {
             return false;
         }
         self.drew(Some(p));
+        self.planes_now(list);
         DRAWN.fetch_add(1, Ordering::Relaxed);
         true
     }
@@ -4621,6 +4636,7 @@ impl State {
             self.drew(Some(p));
             self.note_stores();
         }
+        self.planes_now(list);
         // The scratch buffer stays readable as arguments: the next draw of
         // the window reads it with no barrier, and the next clamp moves it
         // back (`crate::indirect`).

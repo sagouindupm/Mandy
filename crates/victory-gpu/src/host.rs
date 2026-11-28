@@ -1598,6 +1598,26 @@ impl PlanePass {
     }
 }
 
+/// Whether a depth plane a shader wrote through its twin is drawn into the
+/// plane right after that draw or dispatch is recorded, not when the list
+/// closes (`VICTORY_DEPTH_PLANE_NOW=1`; off by default until measured).
+///
+/// The title's tiled lighting writes one class of materials a pixel into
+/// the depth plane of a 16-bit depth-stencil texture (960x540 at the
+/// Series S render scale) from a compute shader, then draws its lighting
+/// rectangles against it with the test "equal", one class a draw, in the
+/// same list. Drawn only at the list's close, the plane those draws test
+/// is the one of the frame before (the memory line's "times used before
+/// the pass", about once a frame), so a pixel whose class changed since
+/// (a moving sleeve, an edge) is lit as its old class: the sky's on a
+/// character. And a depth target drawn into after the shader, before the
+/// close, lost those draws' depth to the pass.
+#[cfg(windows)]
+pub(crate) fn depth_plane_now() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_DEPTH_PLANE_NOW").is_some_and(|v| v == "1"))
+}
+
 /// Records into `list` the pass that draws `plane`, the twin of the depth
 /// plane of `depth`, into that plane: `depth` in the depth-write state,
 /// `plane` readable by pixel shaders. The pass sets the list's descriptor
@@ -6945,6 +6965,44 @@ impl HostList {
         }
     }
 
+    /// A draw or dispatch that wrote depth planes' twins was just recorded
+    /// (`VICTORY_DEPTH_PLANE_NOW=1`, [`depth_plane_now`]): each such plane
+    /// is drawn from its twin here, as the list closing does
+    /// (`twins_to_depth`), and its stencil plane copied, so that the
+    /// commands after it see what the shader wrote, as on the console,
+    /// where the view and the depth target are the same memory. Returns
+    /// whether a pass was recorded: it leaves its own heap, root signature,
+    /// pipeline, depth target, viewport, scissor and topology set, and the
+    /// caller sets the title's again (`crate::draw::State::replay`).
+    /// After trustno1-coder/VIctory-NVIDIA PR #1018 (invismann, c100068f).
+    pub(crate) fn planes_now(&self) -> bool {
+        if !depth_plane_now() {
+            return false;
+        }
+        let mut twins = self.twins.lock().unwrap_or_else(|e| e.into_inner());
+        let written: Vec<_> = twins
+            .values_mut()
+            .filter(|u| u.twin.plane.is_some() && (u.behind[0] == Some(true) || u.late))
+            .map(|u| {
+                let copy = u.behind[0] == Some(true);
+                u.behind[0] = Some(false);
+                u.late = false;
+                (u.depth.clone(), u.twin.clone(), copy)
+            })
+            .collect();
+        drop(twins);
+        for (depth, twin, copy) in &written {
+            if *copy {
+                self.twin_copy(depth, twin, false);
+            }
+            self.pass_plane(depth, twin);
+        }
+        if !written.is_empty() {
+            crate::resource::PLANES[3].fetch_add(written.len() as u64, Ordering::Relaxed);
+        }
+        !written.is_empty()
+    }
+
     /// The draw or dispatch just prepared is recorded: the twins it writes
     /// now hold what their depth textures lack.
     pub(crate) fn twins_written(&self) {
@@ -9634,13 +9692,14 @@ impl Meter {
                     du2 = crate::resource::DEPTH_UNORDERED[2].load(Ordering::Relaxed),
                     du3 = crate::resource::DEPTH_UNORDERED[3].load(Ordering::Relaxed),
                     refused = format!(
-                        "{} ({} copies made of views off their buffer's elements); depth twins: {} alive, {} depth textures left without one; twin copies per frame: {twin_to_depth:.1} into depth textures, {twin_to_colour:.1} into twins; depth planes: {planes:.1} drawn from their twins per frame, {} times not given back to a twin, {} times used before the pass",
+                        "{} ({} copies made of views off their buffer's elements); depth twins: {} alive, {} depth textures left without one; twin copies per frame: {twin_to_depth:.1} into depth textures, {twin_to_colour:.1} into twins; depth planes: {planes:.1} drawn from their twins per frame, {} times not given back to a twin, {} times used before the pass, {} drawn right after their shader (VICTORY_DEPTH_PLANE_NOW)",
                         crate::descriptor::host::REFUSED_VIEWS.load(Ordering::Relaxed),
                         crate::shadow::OWN_MADE.load(Ordering::Relaxed),
                         crate::resource::TWINS[0].load(Ordering::Relaxed),
                         crate::resource::TWINS[1].load(Ordering::Relaxed),
                         crate::resource::PLANES[1].load(Ordering::Relaxed),
-                        crate::resource::PLANES[2].load(Ordering::Relaxed)
+                        crate::resource::PLANES[2].load(Ordering::Relaxed),
+                        crate::resource::PLANES[3].load(Ordering::Relaxed)
                     ),
                     making = crate::pipeline::making(),
                     placed = crate::descriptor::host::PLACED_TEXTURE_SLOTS.load(Ordering::Relaxed),
