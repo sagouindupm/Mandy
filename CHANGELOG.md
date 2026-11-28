@@ -4,7 +4,10 @@ VIctory S, the downloadable package (`VIctory-S-<version>.zip` on the
 [Releases](https://github.com/sagouindupm/Mandy/releases) page): the launcher `VIctory S.exe`, the engine
 `engine\victory.exe` and the Series S settings. Measurements behind each change: [docs/test-log.md](docs/test-log.md).
 
-## Unreleased
+## 0.3.0
+
+Faster and cleaner: in the boat mission on an RTX 3050 8 GB, **69-72 ms per frame (~14 fps)** against 74-81 ms for
+0.2.0 (two clean rounds each), and the worst frame 145-175 ms instead of up to 1.8 s.
 
 ### New
 
@@ -12,7 +15,26 @@ VIctory S, the downloadable package (`VIctory-S-<version>.zip` on the
   sprints, Space jumps, F enters vehicles, Tab opens the weapon wheel, M the map, H the phone. In a vehicle
   (F, or V by hand; the window's title shows `[driving]`): W accelerates, S brakes, Space is the handbrake, the
   mouse buttons aim and fire from the vehicle. AZERTY and QWERTZ by key place, or by printed letter (Settings,
-  "Keyboard layout"). Keys can be rebound (`VICTORY_KEYMAP`); the Help page lists the layout.
+  "Keyboard layout"). Keys can be rebound (`VICTORY_KEYMAP`); the Help page lists the layout. A controller
+  still works alongside.
+
+### Faster
+
+- **2 MB mapping sections** (`VICTORY_SECTION_MB=2` in `series-s\reglages.json`, after trustno1-coder's PR #44):
+  69-72 ms per frame instead of 74-81, worst frame 145-175 ms instead of up to 1.8 s.
+
+### Fixed
+
+- **Textures**: placed views no longer read padding words as texture data, so no more rainbow confetti on surfaces
+  (after trustno1-coder #58); BC7 blocks using dictionary entry 0 decode; a texture refused for lack of room on the
+  card is asked for again instead of staying black (after fxceless); a placed view aliased by another resource is
+  kept pinned; views written by the card are copied to their aliases. With fixes from trustno1-coder,
+  fxceless and Vice-Tay.
+
+### Known issues
+
+- Some faces in the prologue cutscenes can show a green/purple mosaic.
+- The sky can show through clothes in the boat scene.
 
 ## 0.2.0
 

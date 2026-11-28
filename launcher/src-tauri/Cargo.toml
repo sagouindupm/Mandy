@@ -1,6 +1,6 @@
 [package]
 name = "sagouindupm-launcher"
-version = "0.2.0"
+version = "0.3.0"
 description = "Sagouindupm | VIctory : lanceur graphique (profil Series S)"
 authors = ["sagouindupm"]
 license = "GPL-3.0-or-later"
