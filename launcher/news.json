@@ -2,6 +2,17 @@
   {
     "date": "2026-11-28",
     "en": {
+      "title": "0.3.1: no sky through clothes",
+      "text": "The sky no longer shows through moving clothes in the boat cutscene, and frames are about 3 ms faster (68-69 ms against 71 on an RTX 3050)."
+    },
+    "fr": {
+      "title": "0.3.1 : plus de ciel à travers les vêtements",
+      "text": "Le ciel ne se voit plus à travers les vêtements en mouvement dans la cinématique du bateau, et les images sont environ 3 ms plus rapides (68-69 ms contre 71 sur une RTX 3050)."
+    }
+  },
+  {
+    "date": "2026-11-28",
+    "en": {
       "title": "0.3: faster, PC controls",
       "text": "About 14 fps in the boat mission on an RTX 3050 (69-72 ms per frame against 74-81), no more rainbow confetti on textures, and keyboard and mouse laid out as on PC: right button aims, left button fires, even from vehicles."
     },

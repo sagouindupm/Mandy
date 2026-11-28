@@ -122,6 +122,7 @@ a row without a measurement is waiting for yours.
 | RTX 3050 8 GB, same PC | DLSS performance / quality (base of 27 Nov) | 102 ms / 176 ms per frame |
 | RTX 3050 8 GB, same PC | Frame generation (FSR 3 through dlssg-to-fsr3) with its memory settings (0.2) | 91 ms per real frame (~11 fps), **~22 frames shown**, characters textured |
 | RTX 3050 8 GB, same PC | 0.3: texture fixes and 2 MB mapping sections (two clean rounds) | **69-72 ms per frame, ~14 fps** (0.2.0: 74-81 ms), worst frame 145-175 ms |
+| RTX 3050 8 GB, same PC | 0.3.1: GPU-read-only memory not compared, depth planes drawn after their shader | **68-69 ms per frame** (0.3.0: 71 ms) on the boat route |
 | GTX 1660 / RTX 2060 6 GB | 6 GB profile | *to measure: help us* |
 | RTX 3060 12 GB, RTX 4060 8 GB | 8 GB / 11 GB and more profile | *to measure: help us* |
 | RTX 4050 6 GB laptop, 16 GB of RAM | 6 GB, 16 GB profile | *to measure: help us* |
