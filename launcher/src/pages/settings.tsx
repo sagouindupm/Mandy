@@ -189,6 +189,36 @@ function LowVramCard({ ctx }: { ctx: Ctx }) {
   )
 }
 
+/** Keys by their place on a US keyboard (AZERTY/QWERTZ automatic) or by their printed letter (« clavier_lettres » in
+ * lanceur.json: VICTORY_KEYBOARD=letters, « controles » in series-s/reglages.json). */
+function KeyboardCard({ ctx }: { ctx: Ctx }) {
+  const { t } = useI18n()
+  const letters = ctx.snap.settings.clavierLettres
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-6">
+        <div className="flex min-w-0 flex-col gap-1">
+          <CardTitle>{t("settings.keyboard")}</CardTitle>
+          <CardDescription>{t("settings.keyboard.desc")}</CardDescription>
+        </div>
+        <Select
+          value={letters ? "letters" : "places"}
+          onValueChange={(v) => ctx.setOption("clavier_lettres", v === "letters")}
+          disabled={ctx.running === "play"}
+        >
+          <SelectTrigger className="w-[300px] shrink-0" aria-label={t("settings.keyboard")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value="places">{t("settings.keyboard.places")}</SelectItem>
+            <SelectItem value="letters">{t("settings.keyboard.letters")}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </Card>
+  )
+}
+
 /** English or French, saved in lanceur.json (« langue ») and applied at once. */
 function LanguageCard() {
   const { t, lang, setLang } = useI18n()
@@ -333,6 +363,8 @@ export function SettingsPage({ ctx }: { ctx: Ctx }) {
         <FramegenCard ctx={ctx} />
         <LowVramCard ctx={ctx} />
       </div>
+
+      <KeyboardCard ctx={ctx} />
 
       <LanguageCard />
 

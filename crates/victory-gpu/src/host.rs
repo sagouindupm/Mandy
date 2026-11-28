@@ -11384,8 +11384,10 @@ fn caption_text(fps: f64, ms: f64, draws: f64) -> String {
         .unwrap_or_default();
     let shaders = crate::pipeline::kept()[2];
     let shown = shown_text(fps, crate::ffx::framegen::shown_per_rendered());
+    // A note for a few seconds (the keyboard's driving mode, `caption_note`).
+    let note = crate::caption_note::current().map(|n| format!("  |  {n}")).unwrap_or_default();
     format!(
-        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps{shown}  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders"
+        "Sagouindupm | VIctory  Series S  |  {fps:.0} fps{shown}  {ms:.0} ms  {draws:.0} draws  |  {card}{vram}  |  {shaders} shaders{note}"
     )
 }
 

@@ -23,7 +23,8 @@ pub struct Settings(pub Map<String, Value>);
 /// pipelines_import (this launcher only): the list whose shader containers are in the cache (imported with
 /// --shaders, or before a translation that kept them: pipelines_import_pending until it succeeds).
 /// framegen, petite_vram: the frame generation and low video memory options (off by default).
-fn defaults() -> [(&'static str, Value); 14] {
+/// clavier_lettres: keys read by their printed letter, not their place (« controles », off by default).
+fn defaults() -> [(&'static str, Value); 15] {
     [
         ("game_exe", json!("")),
         ("shaders_dir", json!("")),
@@ -39,6 +40,7 @@ fn defaults() -> [(&'static str, Value); 14] {
         ("pipelines_import_pending", json!("")),
         ("framegen", json!(false)),
         ("petite_vram", json!(false)),
+        ("clavier_lettres", json!(false)),
     ]
 }
 
@@ -326,6 +328,14 @@ impl Framegen {
     }
 }
 
+/// « controles » in reglages.json: the keyboard and mouse layout (documented there); the launcher sets the variable
+/// that reads keys by their printed letter when the player asks (« clavier_lettres »).
+#[derive(Deserialize, Clone)]
+pub struct Controls {
+    pub variable_clavier: String,
+    pub valeur_lettres: String,
+}
+
 #[derive(Deserialize, Clone)]
 pub struct Reglages {
     pub profil: String,
@@ -338,6 +348,7 @@ pub struct Reglages {
     pub dlss: Dlss,
     pub petite_vram: LowVram,
     pub framegen: Framegen,
+    pub controles: Controls,
     pub shaders: Shaders,
 }
 
@@ -452,6 +463,10 @@ pub fn game_env_for(r: &Reglages, s: &Settings, hw: &Hardware, toml: &str, skip:
         for (k, v) in &r.petite_vram.env {
             put(&mut set, k, value_str(v));
         }
+    }
+    // Keys by their printed letter: the player's choice (« controles »).
+    if s.bool("clavier_lettres") {
+        put(&mut set, &r.controles.variable_clavier, r.controles.valeur_lettres.clone());
     }
     // Frame generation: the player's choice, a card that has it, its files there (« framegen »).
     let fg = &r.framegen;

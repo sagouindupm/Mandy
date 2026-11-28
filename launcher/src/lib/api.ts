@@ -20,9 +20,10 @@ export type Settings = {
   pipelinesImport: string
   /** The window's language (« langue » in lanceur.json, "en" when absent). */
   langue: "en" | "fr"
-  /** The options of Settings (« framegen », « petite_vram » in lanceur.json), off by default. */
+  /** The options of Settings (« framegen », « petite_vram », « clavier_lettres » in lanceur.json), off by default. */
   framegen: boolean
   petiteVram: boolean
+  clavierLettres: boolean
 }
 
 /** Frame generation on this PC (« framegen » in series-s/reglages.json). */
@@ -143,6 +144,9 @@ export type Facts = {
   dxCache: number
 }
 
+/** The on/off options of Settings, in lanceur.json. */
+export type OptionName = "framegen" | "petite_vram" | "clavier_lettres"
+
 export type JobKind = "rust" | "vs" | "build" | "import" | "shaders" | "warm" | "framegen" | "play"
 
 /** The tasks' titles (i18n keys). */
@@ -166,7 +170,7 @@ export const api = {
   pickGame: (title: string, filter: string) => invoke<string | null>("pick_game", { title, filter }),
   pickDlss: (title: string) => invoke<string | null>("pick_dlss", { title }),
   setMode: (mode: string) => invoke<void>("set_mode", { mode }),
-  setOption: (name: "framegen" | "petite_vram", on: boolean) => invoke<void>("set_option", { name, on }),
+  setOption: (name: OptionName, on: boolean) => invoke<void>("set_option", { name, on }),
   setLang: (lang: "en" | "fr") => invoke<void>("set_lang", { lang }),
   runJob: (kind: JobKind) => invoke<number>("run_job", { kind }),
   stopJob: () => invoke<void>("stop_job"),

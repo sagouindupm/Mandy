@@ -23,6 +23,7 @@ mod census;
 mod coalesce;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod capture;
+pub mod caption_note;
 pub mod console;
 // LOCAL (port of fxceless #1189): Series S interface plane laid over the game (VICTORY_COMPOSE=1).
 #[cfg(windows)]
