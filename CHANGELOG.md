@@ -4,6 +4,27 @@ VIctory S, the downloadable package (`VIctory-S-<version>.zip` on the
 [Releases](https://github.com/sagouindupm/Mandy/releases) page): the launcher `VIctory S.exe`, the engine
 `engine\victory.exe` and the Series S settings. Measurements behind each change: [docs/test-log.md](docs/test-log.md).
 
+## 0.3.1
+
+About 3 ms faster and no more sky through moving clothes: in the boat mission on an RTX 3050 8 GB,
+**68-69 ms per frame** against 71 ms for 0.3.0.
+
+### Faster
+
+- **GPU-read-only memory no longer compared on the card** (`VICTORY_GPU_RO_SKIP=1` in `series-s\reglages.json`,
+  after PR #1014 by mikael-jarvinen): 68-69 ms per frame instead of 71 on the boat route.
+
+### Fixed
+
+- **Sky through moving clothes** (boat cutscene): a depth plane a shader wrote is now drawn right after that shader
+  (`VICTORY_DEPTH_PLANE_NOW=1` in `series-s\reglages.json`, after trustno1-coder/VIctory-NVIDIA PR #1018 by
+  invismann). No fps cost.
+
+### Known issues
+
+- Some faces in the prologue cutscenes can show a green/purple mosaic.
+- Small confetti squares can appear in the sky.
+
 ## 0.3.0
 
 Faster and cleaner: in the boat mission on an RTX 3050 8 GB, **69-72 ms per frame (~14 fps)** against 74-81 ms for
