@@ -137,6 +137,7 @@ finer lock nor more threads made it faster: to profile).
 
 | Frame generation (`VICTORY_FRAMEGEN=1`, x2) on RTX 3050 through dlssg-to-fsr3 (Nukem9, built from source at 0e253f63: `dbghelp.dll` loader + `dlssg_to_fsr3_amd_is_better.dll` + ini, next to victory.exe and in the Streamline 2.14.16 folder), with its memory rebalance `VICTORY_CARD_BUFFERS_MB=768` + `VICTORY_TEXTURE_ROOM_PERCENT=90` (boat mission) | trustno1-coder 6395727/22c6be2, pepezin-ai 1469efe (port), us (rebalance) | frame generation alone: 85 ms per real frame but **189 card "no room" refusals (black objects)**; with the rebalance **91 ms, 7 refusals, characters textured**, ~2x frames shown | 0.2: launcher option "Frame generation (FSR 3)", off by default (`framegen` in `series-s/reglages.json`) |
 | The 0.2 build (frame generation code merged) with frame generation **off**, against the final 0.1 build (RTX 3050, boat mission, one A/B round) | us | 73 ms against 79: the code costs nothing when off | 0.2 |
+| 2 MB mapping sections (`VICTORY_SECTION_MB=2`, trustno1 PR #44) with the texture fixes (trustno1 #58 placed views, fxceless texture re-ask, BC7 entry 0, aliased copies) | trustno1, fxceless, Vice-Tay | boat, two clean rounds each: published 0.2 build 74 / 81 ms; + SECTION_MB 71 / 74; + texture fixes 69 / 72 ms (14 fps), worst frame 145-175 ms. Not kept: trustno1 code ports + spike trio together 80 / 72 (no gain on top); neutral texture + KEEP_SHOWN=checked 102 / 114 ms and a logo-less shirt | `reglages.json` |
 
 ## Rejected (measured, don't redo without a new idea)
 
@@ -209,3 +210,21 @@ screenshot, then move it to Kept or Rejected.
 | Transmission tile allocation on wave32 (container f5d10cde..., our shader 1aa247ed3653b616, not skipped) | dff5bba2 (trustno1 PR #45, xss3009) | dark rectangles on the water: bridge approach, open sea, first boat | T |
 | A big compare's first slice is compared | 5aa3de06 (after fx 81d54b06f, PiloteCode #1407) | stale bytes after big copies; no visible change expected | |
 | NaN scrub skips image stores through integer texture UAVs | 1cafcbfb (ours; idea from Vice-Tay 6f179dd10) | with `VICTORY_NAN_SCRUB=1`: nothing should change but integer images (IDs, masks) | T |
+
+### Texture fixes for skin (branch fix/textures, to verify on the boat cutscene)
+
+Built 2026-11-27, **not run yet**. Mosaic = regular green/pink checker on the woman with red glasses (boat
+cutscene, ~150 s, few "no room" passes); confetti = random coloured noise on skin with frame generation on
+(~190 "passes that made none for lack of room").
+
+| What | Commits (source) | Switch | Where to look |
+|---|---|---|---|
+| Placed views ignore the padding words of their descriptions; at most a million ownerless view entries | trustno1 PR #58 (4eead67, 89fd936, 144aca0, 8bff6c2) | none (`VICTORY_OWNERLESS_VIEWS`, 1,048,576) | confetti on faces; RAM over a long run |
+| A texture the card had no room for is asked for again a second later | after fx e4245f3c1 (upstream #3198) | none | black or missing skin with frame generation; memory line "asked again ... made so" |
+| BC7 dictionary entry 0 keeps its first index (checked against our table file) | Vice-Tay d15d8e7b5 | none | mosaic: any BCPack BC7 texture with blocks of entry 0 |
+| Alias copies after an upload in the same list; the aliased texture pinned | fx 19a45d192, a463dcb18 | none | light atlas, sky light cache (lighting on skin), not the albedo |
+| A slot never shows a host copy still holding another texture's bytes | ours | `VICTORY_UNFILLED_NEUTRAL=1` (off) | confetti; log line "a slot made from a host copy that still holds another texture's bytes" counts it with the switch off too |
+| Packed textures read up to their neighbour | after lines9686-rgb b2230981c, 32a8c87d (fx#1401) | `VICTORY_PACKED_LEVELS=1` (off) | mosaic / noise on faces |
+| Moved-texture slots keep the old view only if the bytes match | trustno1 PR #280 (Mikey970) | `VICTORY_KEEP_SHOWN=checked` (default 1) | confetti while streaming |
+| 32-bit integer typed buffer views move bits | after fx f6a09d3ba (#684) | `VICTORY_BIT_EXACT_VIEWS=1` (off) | buffers only (meshlet culling): missing geometry, not textures |
+| Capture at a time, dump a captured frame's sampled textures as DDS | ours (diagnostics) | `VICTORY_CAPTURE_AT`, `VICTORY_DUMP_SAMPLED=1` | to name the mosaic texture's format and swizzle mode |

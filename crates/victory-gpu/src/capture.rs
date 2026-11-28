@@ -148,6 +148,22 @@ pub(crate) fn frame_drew(frame: u64, drawn: u64) {
             WAS_DOWN.store(false, Relaxed);
         }
     }
+    // `VICTORY_CAPTURE_AT=<seconds>[,<seconds>...]`: as F9, at those times
+    // since the start (the next frame presented once each has passed).
+    #[cfg(feature = "diagnostics")]
+    if folder().is_some()
+        && let Some(at) = capture_at()
+    {
+        let now = crate::host::now_ms();
+        let next = AT_NEXT.load(Relaxed);
+        if let Some(&ms) = at.get(next)
+            && now >= ms
+            && AT_NEXT.compare_exchange(next, next + 1, Relaxed, Relaxed).is_ok()
+        {
+            KEY_FRAME.store(frame + 1, Relaxed);
+            tracing::info!(frame = frame + 1, seconds = ms as f64 / 1e3, "VICTORY_CAPTURE_AT: this frame is captured");
+        }
+    }
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let before = LAST.swap(drawn, Relaxed);
     if world_on()
@@ -163,6 +179,29 @@ pub(crate) fn frame_drew(frame: u64, drawn: u64) {
         }
     }
 }
+
+/// `VICTORY_CAPTURE_AT`: the times, in milliseconds since the start, after
+/// which the next frame is captured as F9 captures it, in order.
+#[cfg(feature = "diagnostics")]
+fn capture_at() -> Option<&'static [u64]> {
+    static AT: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+    let at = AT.get_or_init(|| {
+        let mut at: Vec<u64> = std::env::var("VICTORY_CAPTURE_AT")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|s| s.trim().parse::<f64>().ok())
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .map(|s| (s * 1000.0) as u64)
+            .collect();
+        at.sort_unstable();
+        at
+    });
+    (!at.is_empty()).then_some(at.as_slice())
+}
+
+/// The next of [`capture_at`]'s times to wait for.
+#[cfg(feature = "diagnostics")]
+static AT_NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Whether frame `n` is saved.
 pub(crate) fn wanted(n: u64) -> bool {
@@ -495,6 +534,175 @@ fn dump_one(
         }
         buffer.Unmap(0, None);
     }
+}
+
+/// With `VICTORY_DUMP_SAMPLED=1` (and a capture folder): the title textures
+/// the draws of a captured frame ([`listed`]: `VICTORY_CAPTURE_FRAMES`,
+/// `VICTORY_CAPTURE_AT`, F9) read through their tables, in first-use order:
+/// one log line each with the title's description (console format,
+/// swizzle mode in `layout`, levels) and the host copy's, and its first
+/// level as `frame-<n>-s<i>-<resource>-<w>x<h>-f<format>.dds` (DX10 header,
+/// any DXGI format, block-compressed ones as they are: open them in
+/// RenderDoc, texconv or paint.net to see which one shows the fault).
+/// At most [`SAMPLED_MOST`] textures a frame.
+#[cfg(feature = "diagnostics")]
+static SAMPLED: std::sync::Mutex<Vec<(usize, std::sync::Arc<crate::resource::HostTexture>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(feature = "diagnostics")]
+const SAMPLED_MOST: usize = 3000;
+
+#[cfg(feature = "diagnostics")]
+fn sampled_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| folder().is_some() && crate::switch::on("VICTORY_DUMP_SAMPLED"))
+}
+
+/// Notes a title texture a draw of the frame being built reads
+/// ([`SAMPLED`]).
+#[cfg(feature = "diagnostics")]
+pub(crate) fn note_sampled(resource: crate::object::This) {
+    if resource.is_null() || !sampled_on() || !listed(crate::queue::presented() + 1) {
+        return;
+    }
+    let mut sampled = SAMPLED.lock().unwrap_or_else(|e| e.into_inner());
+    if sampled.len() < SAMPLED_MOST
+        && !sampled.iter().any(|&(r, _)| r == resource as usize)
+        && let Some(copy) = crate::resource::made_copy(resource)
+    {
+        sampled.push((resource as usize, copy));
+    }
+}
+
+/// At the present of frame `frame`: saves the textures [`note_sampled`]
+/// noted.
+#[cfg(feature = "diagnostics")]
+pub(crate) fn dump_sampled(frame: u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let sampled = std::mem::take(&mut *SAMPLED.lock().unwrap_or_else(|e| e.into_inner()));
+    if sampled.is_empty() {
+        return;
+    }
+    let Some(host) = crate::host::host() else { return };
+    let Some(folder) = folder() else { return };
+    tracing::info!(frame, textures = sampled.len(), "VICTORY_DUMP_SAMPLED: the textures this frame's draws read through their tables");
+    for (i, (resource, copy)) in sampled.iter().enumerate() {
+        let this = *resource as crate::object::This;
+        let texture = &copy.texture;
+        // SAFETY: a live resource.
+        let d = unsafe { texture.GetDesc() };
+        let title = crate::resource::texture_memory(this);
+        let swizzle = title
+            .as_ref()
+            .and_then(|(_, desc)| crate::resource::texture_layout(desc))
+            .map(|t| format!("{:?}", t.planes[0].layout.desc.swizzle));
+        tracing::info!(
+            frame,
+            i,
+            resource = ?this,
+            memory = ?title.as_ref().map(|t| t.0),
+            title = ?title.as_ref().map(|t| t.1),
+            swizzle = ?swizzle,
+            host_format = d.Format.0,
+            width = d.Width,
+            height = d.Height,
+            levels = d.MipLevels,
+            layers = d.DepthOrArraySize,
+            base = copy.base,
+            uploads = copy.uploads.load(Relaxed),
+            unfilled = copy.unfilled.load(Relaxed),
+            "a sampled texture"
+        );
+        if d.SampleDesc.Count > 1 || d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D {
+            continue;
+        }
+        let Some((bytes, block)) = crate::resource::element(d.Format.0 as u32) else {
+            continue;
+        };
+        let Ok(list) = host.new_list() else { continue };
+        let state = D3D12_RESOURCE_STATES(crate::host::legal_state(texture, copy.state.load(Relaxed)) as i32);
+        let read = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        // SAFETY: an open list of ours and a live texture.
+        let back = unsafe {
+            if state != read {
+                list.list.ResourceBarrier(&[crate::host::transition(texture, state, read)]);
+            }
+            let back = read_back(&host.device, &list.list, texture);
+            if state != read {
+                list.list.ResourceBarrier(&[crate::host::transition(texture, read, state)]);
+            }
+            back
+        };
+        list.close();
+        host.execute(&[&list]);
+        let Some((buffer, footprint)) = back else { continue };
+        let f = footprint.Footprint;
+        let (across, down) = ((u64::from(f.Width)).div_ceil(block), (u64::from(f.Height)).div_ceil(block));
+        let row = (across * bytes) as usize;
+        let mut data = std::ptr::null_mut();
+        // SAFETY: the copy finished; the mapping spans the footprint's rows.
+        let texels = unsafe {
+            if buffer.Map(0, None, Some(&mut data)).is_err() {
+                continue;
+            }
+            let pitch = f.RowPitch as usize;
+            let all = std::slice::from_raw_parts(data.cast::<u8>(), pitch * (down as usize).saturating_sub(1) + row);
+            let mut texels = Vec::with_capacity(row * down as usize);
+            for y in 0..down as usize {
+                texels.extend_from_slice(&all[y * pitch..y * pitch + row]);
+            }
+            buffer.Unmap(0, None);
+            texels
+        };
+        let name = format!("frame-{frame}-s{i:04}-{this:?}-{}x{}-f{}.dds", f.Width, f.Height, d.Format.0);
+        let _ = std::fs::write(folder.join(name), dds(f.Width, f.Height, d.Format.0 as u32, row as u32, block > 1, &texels));
+    }
+}
+
+/// A DDS file of one level: the magic, the 124-byte header, the DX10 header
+/// (any DXGI format), then the rows.
+#[cfg(feature = "diagnostics")]
+fn dds(width: u32, height: u32, format: u32, pitch: u32, compressed: bool, texels: &[u8]) -> Vec<u8> {
+    const CAPS: u32 = 0x1;
+    const HEIGHT: u32 = 0x2;
+    const WIDTH: u32 = 0x4;
+    const PITCH: u32 = 0x8;
+    const PIXEL_FORMAT: u32 = 0x1000;
+    const LINEAR_SIZE: u32 = 0x8_0000;
+    const FOURCC: u32 = 0x4;
+    const TEXTURE: u32 = 0x1000;
+    let mut out = Vec::with_capacity(148 + texels.len());
+    let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
+    put(u32::from_le_bytes(*b"DDS "));
+    put(124);
+    put(CAPS | HEIGHT | WIDTH | PIXEL_FORMAT | if compressed { LINEAR_SIZE } else { PITCH });
+    put(height);
+    put(width);
+    put(if compressed { texels.len() as u32 } else { pitch });
+    put(0); // depth
+    put(1); // levels
+    for _ in 0..11 {
+        put(0);
+    }
+    // The pixel format: a four-character code, "DX10".
+    put(32);
+    put(FOURCC);
+    put(u32::from_le_bytes(*b"DX10"));
+    for _ in 0..5 {
+        put(0);
+    }
+    put(TEXTURE);
+    for _ in 0..4 {
+        put(0);
+    }
+    // DX10: format, 2D, no flags, one element, alpha mode unknown.
+    put(format);
+    put(3);
+    put(0);
+    put(1);
+    put(0);
+    out.extend_from_slice(texels);
+    out
 }
 
 /// Logs which values a stencil plane read back by [`read_back_of`] holds

@@ -102,6 +102,9 @@ pub(crate) struct Staging {
     /// (`VICTORY_PARTIAL_DELTA=1`) Which subresources the list's copy leaves
     /// out, when this upload is one ([`delta`]).
     delta: Mutex<Option<delta::Plan>>,
+    /// (`VICTORY_PACKED_LEVELS=1`) The first title level from which on every
+    /// level was the texture's own at the last detiling (0: all of them).
+    packed_first: std::sync::atomic::AtomicU32,
 }
 
 /// What a texture's staging buffer holds: the hash of the memory detiled
@@ -300,7 +303,10 @@ pub(crate) fn alias(list: &HostList, placed: This, source: This) -> bool {
             }
         }
     };
-    let first = list.first_use(placed as usize);
+    // An upload from title memory can have already used this view. Only
+    // a copy from the same GPU source can satisfy this read.
+    list.first_use(placed as usize);
+    let new_source = list.alias_source_changed(to, from);
     // The source's first use in the list records nothing (its prelude
     // brings it to the state); a use in another way since the last copy
     // shows as a change of state.
@@ -315,11 +321,15 @@ pub(crate) fn alias(list: &HostList, placed: This, source: This) -> bool {
         unsafe { list.list.ResourceBarrier(&[barrier]) };
         before
     });
-    if !first && before.is_none() {
+    if !new_source && before.is_none() {
         return true;
     }
     card_writes(list, placed, to, None);
     crate::list::ensure_state(list, placed, COPY_DEST);
+    // Every level and layer is copied in (`crate::resource::unfilled_neutral`).
+    if let Some(copy) = crate::resource::made_copy(placed) {
+        copy.unfilled.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     let part = |texture: &ID3D12Resource, index: usize| D3D12_TEXTURE_COPY_LOCATION {
         // SAFETY: a borrowed pointer the location never releases.
         pResource: unsafe { std::mem::transmute_copy(texture) },
@@ -582,6 +592,10 @@ static HOST_WRITTEN: Mutex<Option<std::collections::HashSet<usize>>> = Mutex::ne
 
 /// A host copy or resolve writes `resource`.
 pub(crate) fn host_written(resource: This) {
+    // What the host copies in is its contents (`crate::resource::unfilled_neutral`).
+    if let Some(copy) = crate::resource::made_copy(resource) {
+        copy.unfilled.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     let new = {
         let mut set = HOST_WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
         set.get_or_insert_with(Default::default).insert(resource as usize)
@@ -840,6 +854,12 @@ pub(crate) fn upload_from(list: &HostList, resource: This, first: u32) {
         staging.forget();
         staging.dirty.store(true, Relaxed);
     }
+    // `VICTORY_PACKED_LEVELS=1`: the same for any other placed texture
+    // inside whose span another now starts, or no longer does.
+    if !staging.on_demand && packed_levels() && staging.packed_limit() != staging.judged()[1] {
+        staging.forget();
+        staging.dirty.store(true, Relaxed);
+    }
     // Levels on demand: the last upload left a held level without tiles
     // (the card had no room, or no heap could be had), and nothing else
     // would record an upload again until the title writes the texture: the
@@ -943,6 +963,9 @@ pub(crate) fn upload_from(list: &HostList, resource: This, first: u32) {
         unsafe { list.list.barriers(&[aliasing]) };
     }
     crate::list::ensure_state(list, resource, COPY_DEST);
+    // Its contents are the title's from this list on, not what its piece of
+    // a block held (`crate::resource::unfilled_neutral`).
+    copy.unfilled.store(false, Relaxed);
     // The staging buffer lives as long as `staging`, which the deferred
     // refresh below holds until the list is reset.
     for (i, footprint) in staging.footprints.iter().enumerate() {
@@ -1210,6 +1233,19 @@ impl Staging {
         let limit = crate::descriptor::host::next_start(start, start.saturating_add(self.layout.size))
             .map_or(u64::MAX, |at| at - start);
         [first, limit]
+    }
+
+    /// `VICTORY_PACKED_LEVELS=1`, for a texture not made with levels on
+    /// demand: where the next texture placed in this one's span starts, in
+    /// bytes from this one's start (`u64::MAX`: none does, or the switch
+    /// is off).
+    fn packed_limit(&self) -> u64 {
+        if self.on_demand || !packed_levels() {
+            return u64::MAX;
+        }
+        let start = self.memory as u64;
+        crate::descriptor::host::next_start(start, start.saturating_add(self.layout.size))
+            .map_or(u64::MAX, |at| at - start)
     }
 
     /// What [`Staging::judgement`] said at the last detiling.
@@ -1582,6 +1618,21 @@ impl Staging {
             let held = self.held_levels(judged);
             self.detiled.store(held, Relaxed);
             held
+        } else if packed_levels() {
+            // The levels whose bytes lie where another texture starts are
+            // that texture's: zeros here, not its bytes read as this
+            // one's (colour noise, or a piece of another picture), and the
+            // views start at the first level after which all are its own.
+            use std::sync::atomic::Ordering::Relaxed;
+            let limit = self.packed_limit();
+            self.judged[1].store(limit, Relaxed);
+            let held = if limit == u64::MAX { u32::MAX } else { self.held_levels([0, limit]) };
+            let first = first_own_level(held, self.layout.mips.len());
+            if self.packed_first.swap(first, Relaxed) != first {
+                PACKED[0].fetch_add(1, Relaxed);
+                crate::descriptor::host::levels_changed_after(self.memory as u64);
+            }
+            held
         } else {
             u32::MAX
         };
@@ -1643,6 +1694,54 @@ impl Staging {
         unsafe { std::ptr::write_bytes(self.data, 0, self.bytes as usize) };
         self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// `VICTORY_PACKED_LEVELS=1` (off by default; after lines9686-rgb
+/// b2230981c, fxceless/victory-fork#1401): a placed texture inside whose
+/// memory at full size another placed texture starts (the title holds only
+/// its smallest levels and puts the next texture where the larger ones would
+/// be) is read only as far as that start: the levels past it are zeros in
+/// its host copy and its views start at the first level before it
+/// ([`packed_first`]). Without it only textures with levels on demand were
+/// cut so, and any other such texture showed its neighbour's bytes as its
+/// own large levels: noise or a mosaic of another picture on faces and skin.
+pub(crate) fn packed_levels() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = std::env::var_os("VICTORY_PACKED_LEVELS").is_some_and(|v| v == "1");
+        if on {
+            tracing::info!("VICTORY_PACKED_LEVELS=1: placed textures with a neighbour inside their span are read up to it");
+        }
+        on
+    })
+}
+
+/// Since the start (`VICTORY_PACKED_LEVELS=1`): times a texture's first own
+/// level changed at a detiling (its slots are made again).
+pub(crate) static PACKED: [std::sync::atomic::AtomicU64; 1] = [const { std::sync::atomic::AtomicU64::new(0) }; 1];
+
+/// The first level from which on every one of `levels` levels has its bit
+/// in `held` (0 when all do; `levels` when the smallest does not).
+fn first_own_level(held: u32, levels: usize) -> u32 {
+    let levels = levels.min(32) as u32;
+    let mut first = levels;
+    while first > 0 && held & (1 << (first - 1)) != 0 {
+        first -= 1;
+    }
+    first
+}
+
+/// (`VICTORY_PACKED_LEVELS=1`) The first title level of `resource` from
+/// which on every level was its own at its last detiling, if that is not
+/// level 0: its views start there.
+pub(crate) fn packed_first(resource: This) -> Option<u32> {
+    if !packed_levels() {
+        return None;
+    }
+    let map = STAGING.lock().unwrap_or_else(|e| e.into_inner());
+    let s = map.as_ref()?.get(&(resource as usize))?;
+    let first = s.packed_first.load(std::sync::atomic::Ordering::Relaxed);
+    (first > 0 && (first as usize) < s.layout.mips.len()).then_some(first)
 }
 
 /// Lets go of a title texture's staging buffer (lists that recorded an
@@ -2078,6 +2177,7 @@ fn staging(resource: This, copy: &crate::resource::HostTexture, first: u32) -> O
         judged: [const { std::sync::atomic::AtomicU64::new(0) }; 2],
         waiting: std::sync::atomic::AtomicU64::new(0),
         delta: Mutex::new(None),
+        packed_first: std::sync::atomic::AtomicU32::new(0),
     });
     map.insert(resource as usize, s.clone());
     Some(s)

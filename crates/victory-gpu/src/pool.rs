@@ -631,6 +631,22 @@ pub(crate) fn begun_before(texture: &ID3D12Resource) -> Option<u64> {
     unseen.get(&raw).copied().filter(|&begun| begun > finished)
 }
 
+thread_local! {
+    /// The last texture this thread cut from a piece another texture had
+    /// before (its interface pointer; 0: the last one was cut from memory
+    /// never used).
+    static ON_USED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether `texture`, just made on this thread, was the last one cut from a
+/// piece another texture had before ([`texture`]): it holds that texture's
+/// bytes until something is written into it. (A piece never used holds
+/// zeros, as a new heap does.)
+pub(crate) fn on_used_piece(texture: &ID3D12Resource) -> bool {
+    let raw = texture.as_raw() as usize;
+    ON_USED.with(|last| last.get() == raw && last.replace(0) == raw)
+}
+
 /// Makes `texture` give `piece` back when the last reference to it goes.
 fn give_back_with(texture: &ID3D12Resource, piece: Piece) {
     const KEY: GUID = GUID::from_u128(0x6f0e2f0c_5a59_4b1e_9a3f_7f4d2c9be713);
@@ -675,7 +691,6 @@ pub(crate) unsafe fn texture(
     if info.SizeInBytes == u64::MAX {
         return None;
     }
-    #[cfg_attr(not(feature = "diagnostics"), allow(unused_variables))]
     let (piece, heap, again) = lock(&TEXTURES).take_ripe(info.SizeInBytes, info.Alignment.max(1), now(), Ripe::now(), || {
         let desc = D3D12_HEAP_DESC {
             SizeInBytes: BLOCK,
@@ -705,6 +720,7 @@ pub(crate) unsafe fn texture(
             HELD.fetch_add(piece.len, Ordering::Relaxed);
             give_back_with(&made, piece);
             made_now(&made);
+            ON_USED.with(|last| last.set(if again { made.as_raw() as usize } else { 0 }));
             #[cfg(feature = "diagnostics")]
             {
                 crate::book::made(&made, || "a texture in a block".into());

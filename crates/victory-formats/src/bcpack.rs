@@ -210,7 +210,7 @@ impl Tables {
             })
             .collect();
         let bc7 = (0..DICTIONARY)
-            .map(|_| {
+            .map(|k| {
                 let mut ep = Bc7Ep {
                     ctrl: r.u16(),
                     ..Default::default()
@@ -222,10 +222,16 @@ impl Tables {
                     bits: [r.u8(), r.u8()],
                     ..Default::default()
                 };
-                // Unused: the widths again in all entries but the first.
-                r.u16();
-                // Only 15 slots for set 1, which no entry uses (0 bits).
-                for v in &mut ix.ix.as_flattened_mut()[..31] {
+                // Entry 0 holds all 32 indices right after its widths; the
+                // others repeat the widths (unused) and hold 31, as set 1
+                // has only 15 slots, which no entry uses (0 bits).
+                let n = if k == 0 {
+                    32
+                } else {
+                    r.u16();
+                    31
+                };
+                for v in &mut ix.ix.as_flattened_mut()[..n] {
                     *v = r.u16() as i16;
                 }
                 (ep, ix)
@@ -1704,6 +1710,12 @@ mod tests {
     #[test]
     fn bc7_dictionary_indices_line_up() {
         let t = Tables::builtin().unwrap();
+        // Entry 0 keeps its leading index (no repeated widths before it).
+        let (ep0, ix0) = &t.bc7[0];
+        assert_eq!(ep0.ctrl, 0);
+        assert_eq!(ix0.bits, [4, 0]);
+        assert_eq!(ix0.ix[0], [2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(ix0.ix[1], [0; 16]);
         for (k, (_, ix)) in t.bc7.iter().enumerate() {
             let anchor = 0..1 << (ix.bits[0] - 1);
             let ok = (ix.bits[1] != 0 || ix.ix[1] == [0; 16]) && anchor.contains(&ix.ix[0][0]);
