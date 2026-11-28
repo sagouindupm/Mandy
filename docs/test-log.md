@@ -137,6 +137,7 @@ finer lock nor more threads made it faster: to profile).
 
 | Frame generation (`VICTORY_FRAMEGEN=1`, x2) on RTX 3050 through dlssg-to-fsr3 (Nukem9, built from source at 0e253f63: `dbghelp.dll` loader + `dlssg_to_fsr3_amd_is_better.dll` + ini, next to victory.exe and in the Streamline 2.14.16 folder), with its memory rebalance `VICTORY_CARD_BUFFERS_MB=768` + `VICTORY_TEXTURE_ROOM_PERCENT=90` (boat mission) | trustno1-coder 6395727/22c6be2, pepezin-ai 1469efe (port), us (rebalance) | frame generation alone: 85 ms per real frame but **189 card "no room" refusals (black objects)**; with the rebalance **91 ms, 7 refusals, characters textured**, ~2x frames shown | 0.2: launcher option "Frame generation (FSR 3)", off by default (`framegen` in `series-s/reglages.json`) |
 | The 0.2 build (frame generation code merged) with frame generation **off**, against the final 0.1 build (RTX 3050, boat mission, one A/B round) | us | 73 ms against 79: the code costs nothing when off | 0.2 |
+| 2 MB mapping sections (`VICTORY_SECTION_MB=2`, trustno1 PR #44) with the texture fixes (trustno1 #58 placed views, fxceless texture re-ask, BC7 entry 0, aliased copies) | trustno1, fxceless, Vice-Tay | boat, two clean rounds each: published 0.2 build 74 / 81 ms; + SECTION_MB 71 / 74; + texture fixes 69 / 72 ms (14 fps), worst frame 145-175 ms. Not kept: trustno1 code ports + spike trio together 80 / 72 (no gain on top); neutral texture + KEEP_SHOWN=checked 102 / 114 ms and a logo-less shirt | `reglages.json` |
 
 ## Rejected (measured, don't redo without a new idea)
 
