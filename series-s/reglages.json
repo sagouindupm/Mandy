@@ -73,7 +73,8 @@
         "VICTORY_CARD_ROOM_FOR_TARGETS_MB": "1280",
         "VICTORY_WAVE_WIDE_DIGESTS": "7099a57fded142613b44f410463d6be6",
         "VICTORY_VRAM_RESERVE": "max",
-        "VICTORY_AMBIENT_SETTLE": "250,3"
+        "VICTORY_AMBIENT_SETTLE": "250,3",
+        "VICTORY_SECTION_MB": "2"
       }
     },
     {
