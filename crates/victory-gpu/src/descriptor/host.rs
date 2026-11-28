@@ -975,6 +975,11 @@ impl Spans {
     /// The first span that starts inside `[start, end)` past the first
     /// [`HEAD`] bytes of it.
     fn next_start(&self, start: u64, end: u64) -> Option<u64> {
+        // (A texture no longer than its first block has no room for one;
+        // the range would begin past its end. After lines9686-rgb 32a8c87d.)
+        if start.saturating_add(HEAD) >= end {
+            return None;
+        }
         self.by_start.range(start.saturating_add(HEAD)..end).next().map(|(at, _)| *at)
     }
 
@@ -2548,6 +2553,11 @@ impl HostHeap {
                 self.put(slot);
                 self.keep(slot, kept);
                 remade += 1;
+                // The neutral texture for now: made again when next looked at.
+                if shown_neutral() {
+                    self.quick_is(slot, 0);
+                    self.made.set(slot, 0);
+                }
             }
         }
         remade
@@ -2645,10 +2655,7 @@ impl HostHeap {
             // (As `mirror`.)
             let stale = self.note_buffer(index, Some(&view), true);
             let old = view_at(shown as u32, (shown >> 32) as u32);
-            let kept = old.is_some_and(|old| match kin(&old, &view) {
-                Kin::Same => true,
-                kin => kin.kept(keep_shown()),
-            });
+            let kept = old.is_some_and(|old| kept_meanwhile(&old, &view));
             if shown == 0 || !kept {
                 #[cfg(feature = "diagnostics")]
                 note_before(index, shown, "neutral");
@@ -2767,6 +2774,16 @@ impl HostHeap {
                 #[cfg(feature = "diagnostics")]
                 let was = shown;
                 self.quick_is(f.index, 0);
+                // The neutral texture for a host copy not filled yet: shown
+                // late, looked at again after the next submission.
+                if shown_neutral() {
+                    self.made.set(f.index, 0);
+                    self.keep(f.index, kept);
+                    let after = crate::host::submissions().0;
+                    let again = Flip { after, late: f.late.or(Some(crate::frame::current())), ..f };
+                    FLIPS.lock().unwrap_or_else(|e| e.into_inner()).push(again);
+                    continue;
+                }
                 self.made.set(f.index, f.key);
                 self.keep(f.index, kept);
                 #[cfg(feature = "diagnostics")]
@@ -3084,6 +3101,8 @@ impl HostHeap {
     /// host cannot.
     pub(crate) fn make_at(&self, index: u32, view: &View) {
         let kept = make_twinned(view, self.at(index), self.twin(index));
+        // (A dynamic slot is made for one draw: the next one makes it again.)
+        let _ = shown_neutral();
         if kept.is_none() {
             null_for(view, self.at(index));
         }
@@ -3580,7 +3599,7 @@ impl HostHeap {
                 // ([`keep_shown`]): black, then grey for a frame or two is
                 // what popped.
                 if is_texture_view(&old) {
-                    let kept = kin.kept(keep_shown());
+                    let kept = kept_meanwhile(&old, &view);
                     rewritten(kin, kept);
                     if kept {
                         drop(held);
@@ -3608,10 +3627,7 @@ impl HostHeap {
                     return Some(view);
                 }
                 let old = view_at(shown as u32, (shown >> 32) as u32);
-                let kept = old.is_some_and(|old| match kin(&old, &view) {
-                    Kin::Same => true,
-                    kin => kin.kept(keep_shown()),
-                });
+                let kept = old.is_some_and(|old| kept_meanwhile(&old, &view));
                 if shown == 0 || !kept {
                     #[cfg(feature = "diagnostics")]
                     note_before(index, shown, "neutral, new texture");
@@ -3641,6 +3657,13 @@ impl HostHeap {
             } else {
                 make_twinned(&view, self.at(index), self.twin(index))
             };
+            // Shown as the neutral texture for now: not made from the view,
+            // and due for the texture pass, which uploads it and makes the
+            // slot again.
+            let neutral = !later && shown_neutral();
+            if neutral {
+                self.made.set(index, 0);
+            }
             if kept.is_none() && !self.sampler {
                 null_for(&view, self.at(index));
             }
@@ -3649,9 +3672,12 @@ impl HostHeap {
             }
             self.twin_made(index, kept.is_some() && twinned(&view));
             self.keep(index, kept.flatten());
-            self.quick_is(index, if later { 0 } else { key });
+            self.quick_is(index, if later || neutral { 0 } else { key });
             drop(held);
             self.unmake_stale(index, stale);
+            if neutral && is_texture_view(&view) {
+                self.queue_texture(index, true, false, crate::frame::current());
+            }
         }
         Some(view)
     }
@@ -4166,6 +4192,37 @@ fn twin_window(format: DXGI_FORMAT, first: u64, count: u32, stride: u32, raw: bo
     Some((from / 4, dwords, (start - from) as u32))
 }
 
+/// The format the host makes a typed buffer view in. Translated shaders
+/// declare every typed buffer load and store as 32-bit float
+/// (`victory_shader` `emit/lower.rs`, but for 16-bit accesses that move
+/// halves), and a view in a 32-bit integer format converts between float
+/// and integer values on the way: a store of an integer's bits as a float
+/// is written as the integer the float rounds to (zero for most of them),
+/// where the console moves the bits. The float format of the same width
+/// moves them unchanged, and matches what the shader declares. (The meshlet
+/// culling programs append packed meshlet numbers to an `R32_UINT` list
+/// this way.) `VICTORY_BIT_EXACT_VIEWS=1` turns it on; off by default here:
+/// not yet run in the game on this tree, and a 16-bit access that moves
+/// halves through a 32-bit integer view declares unsigned integers.
+fn bit_exact_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("VICTORY_BIT_EXACT_VIEWS").is_some_and(|v| v == "1")) {
+        return format;
+    }
+    bit_exact(format)
+}
+
+/// [`bit_exact_format`] when it is on.
+fn bit_exact(format: DXGI_FORMAT) -> DXGI_FORMAT {
+    match format {
+        DXGI_FORMAT_R32G32B32A32_UINT | DXGI_FORMAT_R32G32B32A32_SINT => DXGI_FORMAT_R32G32B32A32_FLOAT,
+        DXGI_FORMAT_R32G32B32_UINT | DXGI_FORMAT_R32G32B32_SINT => DXGI_FORMAT_R32G32B32_FLOAT,
+        DXGI_FORMAT_R32G32_UINT | DXGI_FORMAT_R32G32_SINT => DXGI_FORMAT_R32G32_FLOAT,
+        DXGI_FORMAT_R32_UINT | DXGI_FORMAT_R32_SINT => DXGI_FORMAT_R32_FLOAT,
+        other => other,
+    }
+}
+
 fn buffer_srv(
     address: u64,
     len: u64,
@@ -4201,6 +4258,7 @@ fn buffer_srv(
             Flags: D3D12_BUFFER_SRV_FLAG_RAW,
         };
     }
+    desc.Format = bit_exact_format(desc.Format);
     let element = element_size(&desc);
     // SAFETY: a buffer view's union member.
     let buffer = unsafe { &mut desc.Anonymous.Buffer };
@@ -4338,6 +4396,7 @@ fn buffer_uav(
     buffer.CounterOffsetInBytes = 0;
     let (first, count, stride) = (buffer.FirstElement, buffer.NumElements, buffer.StructureByteStride);
     let raw = buffer.Flags.0 & D3D12_BUFFER_UAV_FLAG_RAW.0 != 0;
+    desc.Format = bit_exact_format(desc.Format);
     if window.is_some() {
         // (Left out at first: every structured unordered access view was then
         // refused by `buffer_view_ok` and left null, runs 15 and 16.)
@@ -4538,6 +4597,20 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
     make_twinned(view, at, None)
 }
 
+thread_local! {
+    /// The last [`make_twinned`] on this thread showed the neutral texture
+    /// for a host copy that held another texture's bytes
+    /// (`crate::resource::unfilled_neutral`).
+    static SHOWN_NEUTRAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the last [`make_twinned`] on this thread showed the neutral
+/// texture in place of a host copy not filled yet: the slot is then not
+/// made from its view, and is made again when next looked at.
+fn shown_neutral() -> bool {
+    SHOWN_NEUTRAL.replace(false)
+}
+
 /// [`make`]; `twin`: where the raw twin of a buffer view goes
 /// ([`raw_twins`]; a constant buffer's is the same view again, other views
 /// have none).
@@ -4546,6 +4619,7 @@ fn make_twinned(
     at: D3D12_CPU_DESCRIPTOR_HANDLE,
     twin: Option<D3D12_CPU_DESCRIPTOR_HANDLE>,
 ) -> Option<Kept> {
+    SHOWN_NEUTRAL.set(false);
     let host = host()?;
     let device = &host.device;
     match view {
@@ -4587,6 +4661,23 @@ fn make_twinned(
             }
             crate::resource::shown_uncast(resource);
             if let Some(copy) = crate::resource::host_copy(resource) {
+                // What its piece of a block held before: the neutral texture
+                // until its upload is recorded (`VICTORY_UNFILLED_NEUTRAL=1`).
+                if copy.unfilled.load(std::sync::atomic::Ordering::Relaxed) {
+                    let n = crate::resource::UNFILLED_SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let on = crate::resource::unfilled_neutral();
+                    if n.is_power_of_two() {
+                        tracing::info!(
+                            so_far = n,
+                            neutral = on,
+                            "a slot made from a host copy that still holds another texture's bytes (its upload not recorded yet): shown as the neutral texture with VICTORY_UNFILLED_NEUTRAL=1"
+                        );
+                    }
+                    if on {
+                        SHOWN_NEUTRAL.set(true);
+                        return Some(neutral_for(view, at));
+                    }
+                }
                 let texture = &copy.texture;
                 // The title's views of textures with a stencil plane, as it
                 // describes them (format, dimension, component mapping, a
@@ -4646,6 +4737,29 @@ fn make_twinned(
                     && let Some(desc) = &mut desc
                 {
                     from_base(desc, copy.base);
+                }
+                // (`VICTORY_PACKED_LEVELS=1`) A texture whose larger levels lie
+                // where another texture starts is shown from its first own
+                // level (those levels are zeros in its host copy).
+                if let Some(first) = crate::texture::packed_first(resource)
+                    && first > copy.base
+                {
+                    // SAFETY: a live resource.
+                    let own = unsafe { texture.GetDesc() };
+                    let whole = D3D12_SHADER_RESOURCE_VIEW_DESC {
+                        Format: own.Format,
+                        ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+                        Shader4ComponentMapping: 5768,
+                        Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
+                            Texture2D: D3D12_TEX2D_SRV {
+                                MostDetailedMip: 0,
+                                MipLevels: u32::MAX,
+                                PlaneSlice: 0,
+                                ResourceMinLODClamp: 0.0,
+                            },
+                        },
+                    };
+                    crate::tiles::show_from(desc.get_or_insert(whole), first - copy.base, u32::from(own.MipLevels));
                 }
                 // SAFETY: a live texture and a slot of our heap.
                 unsafe {
@@ -4913,7 +5027,9 @@ fn kin(old: &View, new: &View) -> Kin {
 /// showing the one it shows until the new one is made and its upload has run
 /// (`VICTORY_KEEP_SHOWN`): 0: never, it reads as zeros, then as the neutral
 /// texture; 1: one of the same kind in another place or size; 2: any of the
-/// same dimension.
+/// same dimension; `checked`: as 1, except that a texture of the same
+/// description placed elsewhere ([`Kin::Moved`]) is kept only when both
+/// memories begin and end with the same 4 KiB.
 fn keep_shown() -> u8 {
     #[cfg(feature = "diagnostics")]
     if let Some(on) = crate::ab::pick("VICTORY_KEEP_SHOWN") {
@@ -4921,6 +5037,69 @@ fn keep_shown() -> u8 {
     }
     static KEEP: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
     *KEEP.get_or_init(|| std::env::var("VICTORY_KEEP_SHOWN").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1))
+}
+
+/// `VICTORY_KEEP_SHOWN=checked`: as 1, except that a slot written with a
+/// texture of the same description placed elsewhere ([`Kin::Moved`]) goes on
+/// showing the old one only where both memories begin and end with the same
+/// bytes, i.e. the title moved the texture. Otherwise it shows the neutral
+/// texture until the new one's upload has run.
+///
+/// Why: "the same kind elsewhere" also matches a streamer reusing a slot for
+/// a different texture of the same size and format (e.g. an albedo where a
+/// mask or another character's map was), which renders rainbow-noise texels on
+/// the surface until the upload lands.
+fn keep_checked() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VICTORY_KEEP_SHOWN").is_ok_and(|v| v.trim() == "checked"))
+}
+
+/// Since the start, under `VICTORY_KEEP_SHOWN=checked`: `[0]` moved slots
+/// whose memories began and ended alike (kept), `[1]` moved slots whose
+/// memories differed or were unreadable (shown neutral).
+static CHECKED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
+/// Whether `old` stays in a slot rewritten with `new` until `new`'s upload
+/// runs ([`keep_shown`], [`keep_checked`]).
+fn kept_meanwhile(old: &View, new: &View) -> bool {
+    match kin(old, new) {
+        Kin::Same => true,
+        Kin::Moved if keep_checked() => {
+            let same = moved_whole(old, new);
+            CHECKED[usize::from(!same)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            same
+        }
+        kin => kin.kept(keep_shown()),
+    }
+}
+
+/// Whether the memories of two placed texture views of one description begin
+/// and end with the same bytes (4 KiB each end; title memory read as the
+/// texture pass reads it). False where either cannot be read.
+fn moved_whole(old: &View, new: &View) -> bool {
+    let (View::Placed(false, resource, from), View::Placed(false, _, to)) = (old, new) else {
+        return false;
+    };
+    let at = |d: &[u32]| u64::from(d[10]) | u64::from(d[11]) << 32;
+    let Some(bytes) = crate::resource::placed_bytes(resource) else {
+        return false;
+    };
+    same_ends(at(from), at(to), bytes, |at, out| crate::host::read_into(at as *const u8, out))
+}
+
+/// Whether `[a, a + bytes)` and `[b, b + bytes)` hold the same first and last
+/// 4 KiB (all of them under 8 KiB), read by `read` (false: unreadable).
+fn same_ends(a: u64, b: u64, bytes: u64, read: impl Fn(u64, &mut [u8]) -> bool) -> bool {
+    const END: u64 = 4096;
+    if a == 0 || b == 0 || bytes == 0 {
+        return false;
+    }
+    let ends = if bytes <= 2 * END { vec![(0, bytes)] } else { vec![(0, END), (bytes - END, END)] };
+    let (mut x, mut y) = (vec![0u8; END as usize * 2], vec![0u8; END as usize * 2]);
+    ends.into_iter().all(|(offset, len)| {
+        let len = len as usize;
+        read(a + offset, &mut x[..len]) && read(b + offset, &mut y[..len]) && x[..len] == y[..len]
+    })
 }
 
 /// Slots that showed a texture and were written with a view of another,
@@ -4941,12 +5120,14 @@ fn rewritten(kin: Kin, kept: bool) {
     let n: u64 = REWRITTEN[..4].iter().map(|n| n.load(Relaxed)).sum();
     if n.is_multiple_of(5000) {
         tracing::info!(
-            "slots that showed a texture and were written with another, since the start: {} of the same kind elsewhere, {} of another size, {} others, {} of another dimension; {} of them kept what they showed meanwhile (VICTORY_KEEP_SHOWN)",
+            "slots that showed a texture and were written with another, since the start: {} of the same kind elsewhere, {} of another size, {} others, {} of another dimension; {} of them kept what they showed meanwhile (VICTORY_KEEP_SHOWN); moved ones checked: {} with the same bytes kept, {} with other bytes shown neutral (VICTORY_KEEP_SHOWN=checked)",
             REWRITTEN[0].load(Relaxed),
             REWRITTEN[1].load(Relaxed),
             REWRITTEN[2].load(Relaxed),
             REWRITTEN[3].load(Relaxed),
-            REWRITTEN[4].load(Relaxed)
+            REWRITTEN[4].load(Relaxed),
+            CHECKED[0].load(Relaxed),
+            CHECKED[1].load(Relaxed)
         );
     }
 }
@@ -5432,6 +5613,32 @@ mod tests {
         assert_eq!(view(5, u32::MAX, 5.5), (2, u32::MAX, 2.5));
         // (Two levels the copy has not.)
         assert_eq!(view(1, 4, 0.0), (0, 2, 0.0));
+    }
+
+    /// Typed buffer views of 32-bit integer formats are made in the float
+    /// format of the same width (the shaders' float loads and stores then
+    /// move the bits); every other format is the title's.
+    #[test]
+    fn typed_buffer_views_of_32_bit_integers_move_bits() {
+        for (title, host) in [
+            (DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32_FLOAT),
+            (DXGI_FORMAT_R32_SINT, DXGI_FORMAT_R32_FLOAT),
+            (DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32_FLOAT),
+            (DXGI_FORMAT_R32G32B32_SINT, DXGI_FORMAT_R32G32B32_FLOAT),
+            (DXGI_FORMAT_R32G32B32A32_UINT, DXGI_FORMAT_R32G32B32A32_FLOAT),
+        ] {
+            assert_eq!(bit_exact(title), host);
+            assert_eq!(crate::resource::element(title.0 as u32), crate::resource::element(host.0 as u32));
+        }
+        for kept in [
+            DXGI_FORMAT_R32_FLOAT,
+            DXGI_FORMAT_R32_TYPELESS,
+            DXGI_FORMAT_UNKNOWN,
+            DXGI_FORMAT_R16G16_UINT,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+        ] {
+            assert_eq!(bit_exact(kept), kept);
+        }
     }
 
     /// 2D textures and arrays have a neutral stand-in, others a null view.
@@ -6721,3 +6928,41 @@ pub(crate) fn list_views() -> bool {
 }
 
 
+#[cfg(test)]
+mod keep_checked_tests {
+    /// `VICTORY_KEEP_SHOWN=checked`: a texture of the same description elsewhere stands for the
+    /// new one only where both memories begin and end alike (a move), not where a streamer
+    /// gave the slot another texture of that size and format, nor where a memory is unreadable.
+    #[test]
+    fn a_moved_texture_is_kept_only_with_the_same_ends() {
+        let memory: Vec<u8> = (0..64 * 1024u32).map(|i| (i * 31 + i / 4096) as u8).collect();
+        let mut moved = memory.clone();
+        let mut other = memory.clone();
+        // (The middle of a move may still differ: only the ends are compared.)
+        moved[20_000] ^= 0xff;
+        other[64 * 1024 - 1] ^= 1;
+        let all = [memory.as_slice(), moved.as_slice(), other.as_slice()];
+        let base = |i: usize| (i as u64 + 1) << 32;
+        let read = |at: u64, out: &mut [u8]| {
+            let Some(bytes) = all.get(((at >> 32) as usize).wrapping_sub(1)) else {
+                return false;
+            };
+            let offset = (at & 0xffff_ffff) as usize;
+            match bytes.get(offset..offset + out.len()) {
+                Some(src) => {
+                    out.copy_from_slice(src);
+                    true
+                }
+                None => false,
+            }
+        };
+        let len = memory.len() as u64;
+        assert!(super::same_ends(base(0), base(1), len, read));
+        assert!(!super::same_ends(base(0), base(2), len, read));
+        // Unreadable (no such memory) or no address: not kept.
+        assert!(!super::same_ends(base(0), base(7), len, read));
+        assert!(!super::same_ends(0, base(1), len, read));
+        // Under 8 KiB: compared whole.
+        assert!(super::same_ends(base(0), base(1), 6000, read));
+    }
+}
