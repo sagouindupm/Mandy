@@ -74,7 +74,9 @@
         "VICTORY_WAVE_WIDE_DIGESTS": "7099a57fded142613b44f410463d6be6",
         "VICTORY_VRAM_RESERVE": "max",
         "VICTORY_AMBIENT_SETTLE": "250,3",
-        "VICTORY_SECTION_MB": "2"
+        "VICTORY_SECTION_MB": "2",
+        "VICTORY_GPU_RO_SKIP": "1",
+        "VICTORY_DEPTH_PLANE_NOW": "1"
       }
     },
     {

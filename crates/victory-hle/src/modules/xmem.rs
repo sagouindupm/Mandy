@@ -61,6 +61,34 @@ const PAGES_64K: u32 = PAGES_2M | PAGES_64K_BIT;
 /// adds GPU access bits (0x800-0x40000). Write-combining and uncached are
 /// dropped too: our GPU side reads this memory through the CPU.
 const HOST_PROTECTION: u32 = 0x1ff;
+/// Official `winnt.h` / Xbox GDK GPU page-protection bits in `XMemVirtualAlloc`'s
+/// `protect` argument. Any region carrying a read-only GPU protection bit
+/// (`READONLY`, `EXECUTE`, `EXECUTE_READ`) and neither writable bit
+/// (`READWRITE`, `EXECUTE_READWRITE`) cannot be written by shaders on console
+/// hardware. (`PAGE_GRAPHICS_NOACCESS`, 0x800, is intentionally excluded
+/// because titles pass `PAGE_NOACCESS | PAGE_GRAPHICS_NOACCESS` on empty
+/// `MEM_RESERVE_PLACEHOLDER` reservations before replacing sub-ranges.)
+const PAGE_GRAPHICS_READONLY: u32 = 0x0000_1000;
+const PAGE_GRAPHICS_READWRITE: u32 = 0x0000_2000;
+const PAGE_GRAPHICS_EXECUTE: u32 = 0x0000_4000;
+const PAGE_GRAPHICS_EXECUTE_READ: u32 = 0x0000_8000;
+const PAGE_GRAPHICS_EXECUTE_READWRITE: u32 = 0x0001_0000;
+const PAGE_GRAPHICS_RO_MASK: u32 =
+    PAGE_GRAPHICS_READONLY | PAGE_GRAPHICS_EXECUTE | PAGE_GRAPHICS_EXECUTE_READ;
+const PAGE_GRAPHICS_RW_MASK: u32 = PAGE_GRAPHICS_READWRITE | PAGE_GRAPHICS_EXECUTE_READWRITE;
+
+fn note_gpu_protection(at: usize, size: usize, asked: u32) {
+    if at == 0 || size == 0 {
+        return;
+    }
+    // (Anything else counts as writable: a range wrongly taken for
+    // GPU-read-only would lose shader writes.)
+    if asked & PAGE_GRAPHICS_RO_MASK != 0 && asked & PAGE_GRAPHICS_RW_MASK == 0 {
+        victory_gpu::title_memory_gpu_readonly(at, size);
+    } else {
+        victory_gpu::title_memory_gpu_writable(at, size);
+    }
+}
 /// XMem flags of memory both processors reach: all of ours.
 const GRAPHICS: u64 = 3;
 /// XMem flag bit of 32-bit graphics memory.
@@ -116,6 +144,12 @@ pub extern "system" fn XMemVirtualAlloc(
     if placeholder {
         if kind & MEM_REPLACE_PLACEHOLDER != 0 {
             // Part of a placeholder the title split: it stays one.
+            // Still record console GPU page-protection bits (e.g.
+            // PAGE_GRAPHICS_EXECUTE_READ vs PAGE_GRAPHICS_READWRITE on split
+            // sub-regions of a shared placed buffer).
+            if !base.is_null() {
+                note_gpu_protection(base as usize, size, asked);
+            }
             return base;
         }
         protect = PAGE_NOACCESS;
@@ -184,6 +218,14 @@ pub extern "system" fn XMemVirtualAlloc(
     }
     if !at.is_null() && !placeholder {
         victory_gpu::title_memory_allocated(at as usize, size);
+    }
+    if !at.is_null() {
+        // A fresh reservation: what an earlier one there was noted as goes
+        // (a split reservation may have been let go with `len` 0).
+        if constrained {
+            victory_gpu::title_memory_gpu_writable(at as usize, size);
+        }
+        note_gpu_protection(at as usize, size, asked);
     }
     note_protection(asked, kind, flags, at as usize, size);
     at
@@ -1956,12 +1998,31 @@ extern "system" fn title_virtual_free(address: *mut c_void, size: usize, kind: u
     unsafe { VirtualFree(address, size, kind) }
 }
 
+/// The title's own `VirtualProtect`: as before, the host's, and the GPU
+/// access the console bits ask for is noted ([`note_gpu_protection`]).
+/// Anything but a granted read-only GPU protection counts as writable, even
+/// a call the host refuses (it does not know the console bits): a range
+/// wrongly taken for GPU-read-only would lose shader writes, one wrongly
+/// taken for writable costs only a compare.
+extern "system" fn title_virtual_protect(address: *const c_void, size: usize, protect: u32, old: *mut u32) -> BOOL {
+    use windows_sys::Win32::System::Memory::VirtualProtect;
+    // SAFETY: the title's own arguments.
+    let ok = unsafe { VirtualProtect(address, size, protect, old) };
+    if ok != 0 && protect & PAGE_GRAPHICS_RO_MASK != 0 && protect & PAGE_GRAPHICS_RW_MASK == 0 {
+        victory_gpu::title_memory_gpu_readonly(address as usize, size);
+    } else if !address.is_null() && size != 0 {
+        victory_gpu::title_memory_gpu_writable(address as usize, size);
+    }
+    ok
+}
+
 pub(crate) fn module() -> HleModule {
     HleModule {
         name: "xmem",
         dlls: &["xmem.dll", "kernel32.dll", "kernelbase.dll", "api-ms-win-core-memory-*"],
         exports: vec![
             crate::HleExport { name: "VirtualFree", address: title_virtual_free as *const () as usize },
+            crate::HleExport { name: "VirtualProtect", address: title_virtual_protect as *const () as usize },
             hle_export!(XMemAlloc),
             hle_export!(XMemFree),
             hle_export!(XMemAllocDefault),

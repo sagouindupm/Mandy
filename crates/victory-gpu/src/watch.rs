@@ -3465,6 +3465,7 @@ pub fn title_memory_unmapping(at: usize, len: usize) {
 /// was noted of its blocks (guarded, clean, absent) would be taken for true
 /// of the next memory at the address.
 pub fn title_memory_freed(at: usize, len: usize) {
+    crate::shadow::gpu_readonly_freed(at, len);
     if len != 0 {
         crate::shadow::lazy_release_range(at, len);
     }
