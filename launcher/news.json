@@ -1,5 +1,16 @@
 [
   {
+    "date": "2026-11-28",
+    "en": {
+      "title": "0.3: faster, PC controls",
+      "text": "About 14 fps in the boat mission on an RTX 3050 (69-72 ms per frame against 74-81), no more rainbow confetti on textures, and keyboard and mouse laid out as on PC: right button aims, left button fires, even from vehicles."
+    },
+    "fr": {
+      "title": "0.3 : plus rapide, commandes PC",
+      "text": "Environ 14 fps dans la mission du bateau sur une RTX 3050 (69-72 ms par image contre 74-81), plus de confettis arc-en-ciel sur les textures, et clavier et souris comme sur PC : clic droit pour viser, clic gauche pour tirer, même depuis un véhicule."
+    }
+  },
+  {
     "date": "2026-11-27",
     "en": {
       "title": "0.2: frame generation",
