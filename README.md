@@ -163,13 +163,38 @@ session records them, and "Build" (step 4) adds them. On an NVIDIA card, also se
 </details>
 
 <details>
-<summary><b>AZERTY keyboard, mouse, controller?</b></summary>
+<summary><b>Keyboard and mouse, AZERTY, controller?</b></summary>
 
-An XInput controller (Xbox controller) is recognised; without one, the keyboard acts as a fallback controller
-(Enter = A, Backspace = B, Space = X, arrows = D-pad). Mouse: click in the game window to capture it, **Alt** or
-**Esc** releases it. **AZERTY** keyboard: keys at the same place as in QWERTY (ZQSD) come with
-[PR #29](https://github.com/sagouindupm/Mandy/pull/29); meanwhile, if movement does not respond, switch Windows
-to QWERTY while you play (Windows + Space) or use a controller.
+An XInput controller (Xbox controller) is recognised and always works, alongside the keyboard. The game reads a
+controller only, so the keyboard and the mouse play one, laid out as on PC. Click in the game window to capture the
+mouse; **Alt** or **Esc** frees it. Keys go by their **place** on a US keyboard: on **AZERTY** or QWERTZ you move
+with ZQSD (launcher, Settings, "Keyboard layout", or `VICTORY_KEYBOARD=letters`, to go by printed letter).
+
+A GTA-style controller does different things on foot and in a vehicle, so there are two modes: **F** (enter or exit a
+vehicle) switches between them, **V** switches by hand (when you did not get in, or were thrown out). The window's
+title shows `[driving]` or `[on foot]` for a few seconds.
+
+| On foot | | In a vehicle | |
+|---|---|---|---|
+| W A S D | move | W / S | accelerate (RT) / brake, reverse (LT) |
+| mouse | camera | A D | steer |
+| right / left button | aim (LT) / fire (RT) | Space | handbrake (RB) |
+| Shift | sprint (A) | right / left button | aim (LB) / fire while aiming (RB) |
+| Space | jump (X) | F | exit (Y), on foot again |
+| F | enter a vehicle (Y), driving mode | E | horn (L3) |
+| E / Q | interact, pick up / cover (both RB) | R | cinematic camera (B) |
+| R | reload, melee (B) | C, middle button | look behind (R3) |
+| Ctrl | crouch, stealth (L3) | V | switch mode by hand |
+| C, middle button | look behind (R3) | | |
+| X | walk | | |
+| Tab | weapon wheel (LB, held) | | |
+| wheel | D-pad left / right (weapons) | | |
+| M / Esc / H | map (View) / pause (Menu) / phone (D-pad up) | | |
+| arrows, Enter, Backspace | D-pad, A, B (menus) | | |
+
+In a vehicle, Tab, the wheel, M, Esc, H, the arrows, Enter and Backspace do as on foot. `VICTORY_KEYMAP=<file>`
+rebinds keys over this layout (format in `crates/victory-hle/src/modules/gameinput/keymap.rs`, e.g. `[driving]` then
+`Space = a`); `VICTORY_KEYMAP=classic` is the layout of before (one mode, Tab = View, Z/C triggers).
 </details>
 
 <details>

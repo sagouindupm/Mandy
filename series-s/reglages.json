@@ -288,6 +288,26 @@
       "fichiers": ["dbghelp.dll", "dlssg_to_fsr3_amd_is_better.dll", "dlssg_to_fsr3.ini"]
     }
   },
+  "controles": {
+    "note": "Keyboard and mouse (crates/victory-hle/src/modules/gameinput/keymap.rs): the title reads a gamepad only, so the keyboard and the mouse drive a stand-in pad (merged with a real controller, which always works). Two modes, as a GTA-style pad does different things on foot and in a vehicle: F (enter/exit) and V flip them, the window title shows [on foot] or [driving] for a few seconds. Keys go by their place on a US keyboard, so AZERTY and QWERTZ get the same places (ZQSD); the option of both launchers (clavier_lettres in lanceur.json, off by default) reads them by their printed letter instead. VICTORY_KEYMAP=<file> rebinds over the PC layout ([both], [foot], [driving] sections, 'W = rt' lines, see keymap.rs); VICTORY_KEYMAP=classic is the layout of before. VICTORY_MOUSE_LOOK=<gain> (0.15), VICTORY_MOUSE_INVERT=1, VICTORY_WHEEL_PULSE_MS=<ms> (150).",
+    "variable_clavier": "VICTORY_KEYBOARD",
+    "valeur_lettres": "letters",
+    "variable_disposition": "VICTORY_KEYMAP",
+    "a_pied": {
+      "W A S D": "left stick (move)", "mouse": "right stick (camera)", "right button": "LT (aim)", "left button": "RT (fire)",
+      "Shift": "A (sprint, held)", "Space": "X (jump)", "F": "Y (enter a vehicle) + driving mode", "E": "RB (interact, pick up)",
+      "Q": "RB (cover)", "R": "B (reload, melee)", "Ctrl": "L3 (crouch, stealth)", "C / middle button": "R3 (look behind)",
+      "X": "walk (half stick)", "Tab": "LB (weapon wheel, held)", "wheel": "d-pad left / right (weapons)", "M": "View (map)",
+      "Esc": "Menu (pause; frees the mouse)", "H": "d-pad up (phone)", "arrows": "d-pad", "Enter / Backspace": "A / B (menus)",
+      "I J K L": "right stick", "V": "driving mode"
+    },
+    "en_vehicule": {
+      "W": "RT (accelerate)", "S": "LT (brake, reverse)", "A D": "left stick left / right (steer)", "Space": "RB (handbrake)",
+      "mouse": "right stick (camera)", "right button": "LB (aim, drive-by)", "left button": "RB (fire while aiming)",
+      "F": "Y (exit) + on foot", "E": "L3 (horn)", "C / middle button": "R3 (look behind)", "R": "B (cinematic camera)",
+      "Shift": "A", "X": "X", "V": "on foot", "the others": "as on foot (Tab, wheel, M, Esc, H, arrows, Enter, Backspace)"
+    }
+  },
   "shaders": {
     "note": "The card's facts for the shader translation (NVIDIA: waves of 32, 1,000,000 views): without them the cache is useless in game. Threads: all logical cores but two (at least 2).",
     "env_nvidia": {

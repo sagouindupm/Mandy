@@ -25,8 +25,9 @@ function Get-Settings {
 #   ancien_plan         : power plan active before the graphical launcher changed it (to go back).
 #   framegen            : frame generation on ("framegen" in reglages.json), off by default.
 #   petite_vram         : low video memory mode ("petite_vram" in reglages.json), off by default.
+#   clavier_lettres     : keys read by their printed letter, not their place ("controles" in reglages.json), off.
 function Complete-Settings($s) {
-    $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; pipelines_liste = ''; nv_cache_ok = $false; ancien_plan = ''; framegen = $false; petite_vram = $false }
+    $defaults = [ordered]@{ dlss_dir = ''; dlss_mode = ''; pipelines_parties = -1; pipelines_liste = ''; nv_cache_ok = $false; ancien_plan = ''; framegen = $false; petite_vram = $false; clavier_lettres = $false }
     foreach ($k in $defaults.Keys) {
         if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $defaults[$k] }
     }
@@ -242,6 +243,8 @@ function Get-GameEnvMap($s, $hw, [string]$FgDir = $FramegenDir) {
     foreach ($k in $prof.Env.Keys) { $set[$k] = $prof.Env[$k] }
     # Low video memory mode (the player's choice): see "petite_vram" in reglages.json.
     if ($s.petite_vram -eq $true) { foreach ($p in $Reglages.petite_vram.env.PSObject.Properties) { $set[$p.Name] = [string]$p.Value } }
+    # Keys by their printed letter (the player's choice): see "controles" in reglages.json.
+    if ($s.clavier_lettres -eq $true) { $set[$Reglages.controles.variable_clavier] = [string]$Reglages.controles.valeur_lettres }
     # Frame generation (the player's choice, a card that has it, its files there): see "framegen" in reglages.json.
     $fg = $Reglages.framegen
     $fgOn = $s.framegen -eq $true -and $prof.Framegen -and (Test-FramegenFiles $FgDir)
@@ -303,7 +306,7 @@ function Set-GameEnv($s) {
     $map = Get-GameEnvMap $s (Get-Hardware)
     # This console stays open between sessions: what an option set for an earlier session goes when it is off now.
     $fg = $Reglages.framegen
-    $optional = @($fg.env.PSObject.Properties.Name) + @($fg.sans_dlss.PSObject.Properties.Name) + @($fg.variable_dossier) + @($Reglages.petite_vram.env.PSObject.Properties.Name)
+    $optional = @($fg.env.PSObject.Properties.Name) + @($fg.sans_dlss.PSObject.Properties.Name) + @($fg.variable_dossier) + @($Reglages.petite_vram.env.PSObject.Properties.Name) + @($Reglages.controles.variable_clavier)
     foreach ($k in $optional) { if (-not $map.Set.Contains($k)) { Remove-Item "env:$k" -ErrorAction SilentlyContinue } }
     foreach ($k in $map.Set.Keys) { Set-Item "env:$k" $map.Set[$k] }
     foreach ($k in $map.Remove) { Remove-Item "env:$k" -ErrorAction SilentlyContinue }

@@ -1,8 +1,9 @@
 //! `gameinput.dll`: input devices from the host. Gamepads come from XInput
-//! (host slots 0-3); while none is connected, the keyboard drives one
-//! stand-in gamepad (`FALLBACK_BUTTONS`). The keyboard is a device of its own
-//! too. A focused window also has a mouse, captured by a click in the window
-//! and freed by Alt or Esc ([`cursor`]). A poll thread records changes
+//! (host slots 0-3); the keyboard and the mouse drive one stand-in gamepad,
+//! by a PC layout with an on-foot and a driving mode ([`keymap`]), merged with
+//! the host pads ([`one_pad`]). The keyboard is a device of its own too. A
+//! focused window also has a mouse, captured by a click in the window and
+//! freed by Alt or Esc ([`cursor`]). A poll thread records changes
 //! and runs device callbacks on connect and disconnect.
 #![allow(non_snake_case)]
 // Title code calls these through the objects, passing pointers the real API
@@ -21,6 +22,9 @@ use std::time::{Duration, Instant};
 use super::xasync::{E_INVALIDARG, E_NOTIMPL};
 use super::xgameruntime::{HRESULT, S_OK};
 use crate::{HleExport, HleModule};
+
+mod keymap;
+use keymap::{Controls, Input, Keymap, Wheel};
 
 /// The documented errors.
 pub const DEVICE_DISCONNECTED: HRESULT = 0x838A_0001_u32 as i32;
@@ -64,31 +68,8 @@ const DEVICES: usize = MOUSE + 1;
 const HISTORY: usize = 256;
 const POLL: Duration = Duration::from_millis(8);
 
-/// The keyboard's stand-in gamepad (virtual key, button); README lists it.
-/// Sticks: W/A/S/D left, I/J/K/L right; triggers Z and C. The X key held
-/// on the keyboard walks ([`WALK_KEY`]): Space is the X button then; the
-/// scripted keys (`VICTORY_KEYS`) keep X as the X button.
-const FALLBACK_BUTTONS: [(u8, u32); 15] = [
-    (0x1B, MENU), // Esc
-    (0x09, VIEW), // Tab
-    (0x0D, A),    // Enter
-    (0x08, B),    // Backspace
-    (b'X', X),
-    (0x20, X), // Space
-    (b'Y', Y),
-    (0x26, UP), // arrows
-    (0x28, DOWN),
-    (0x25, LEFT),
-    (0x27, RIGHT),
-    (b'Q', LEFT_SHOULDER),
-    (b'E', RIGHT_SHOULDER),
-    (b'F', LEFT_STICK),
-    (b'H', RIGHT_STICK),
-];
-
-/// The key that, held on the keyboard, makes the stand-in pad's left stick
-/// walk: [`WALK_SPEED`] of a full push.
-const WALK_KEY: u8 = b'X';
+/// How far the left stick goes while the walk key (X on foot, [`keymap`])
+/// is held: half a push.
 const WALK_SPEED: f32 = 0.5;
 
 /// A gamepad reading: triggers 0 to 1, sticks -1 to 1 (up positive).
@@ -161,7 +142,7 @@ fn mouse_delta(
 /// fxceless's fork; Alt and Esc only freeing it, sagouindupm).
 pub(crate) mod cursor {
     use std::sync::LazyLock;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     static CAPTURED: AtomicBool = AtomicBool::new(false);
     /// The title window has focus (kept by the host poll).
@@ -258,6 +239,33 @@ pub(crate) mod cursor {
         held.iter().any(|vk| RELEASE_KEYS.contains(vk))
     }
 
+    /// Wheel turns (`WM_MOUSEWHEEL`, 120 a notch) not taken yet.
+    static WHEEL: AtomicI32 = AtomicI32::new(0);
+
+    /// The window procedure saw the wheel turn by `delta` (120 a notch,
+    /// away from the player positive): counted while the cursor is held,
+    /// like the buttons.
+    pub(crate) fn wheel(delta: i16) {
+        if held() {
+            WHEEL.fetch_add(i32::from(delta), Ordering::Relaxed);
+        }
+    }
+
+    /// Whole notches turned since the last call; the rest waits. None while
+    /// the cursor is free.
+    pub(crate) fn take_wheel() -> i32 {
+        if !held() {
+            WHEEL.store(0, Ordering::Relaxed);
+            return 0;
+        }
+        let mut notches = 0;
+        let _ = WHEEL.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |turned| {
+            notches = turned / 120;
+            Some(turned - notches * 120)
+        });
+        notches
+    }
+
     #[cfg(test)]
     pub(crate) fn set_captured(on: bool) {
         CAPTURED.store(on, Ordering::Relaxed);
@@ -273,9 +281,10 @@ trait Source: Send {
     fn mouse(&mut self) -> Option<MouseState> {
         None
     }
-    /// The walk key ([`WALK_KEY`]) is held on the keyboard, not scripted.
-    fn walking(&mut self) -> bool {
-        false
+    /// Mouse wheel notches since the last poll (away from the player
+    /// positive), while the cursor is captured.
+    fn wheel(&mut self) -> i32 {
+        0
     }
     /// Motor speeds: low frequency (left), high frequency (right).
     fn rumble(&mut self, slot: usize, low: u16, high: u16);
@@ -306,37 +315,22 @@ fn us_letter(scan: u8) -> Option<u8> {
     })
 }
 
-/// The stand-in pad for `keys`; `walking`: the walk key is held on the
-/// keyboard, so it is no X button and the left stick goes at walk speed.
-fn fallback(keys: &[KeyState], walking: bool) -> PadState {
-    let on = |vk: u8| {
-        if keys.iter().any(|k| key_at(k) == vk) && !(walking && vk == WALK_KEY) {
-            1.0
-        } else {
-            0.0
-        }
-    };
-    let (mut left_x, mut left_y): (f32, f32) = (on(b'D') - on(b'A'), on(b'W') - on(b'S'));
-    if walking {
-        // Diagonals too: the stick's length is the walk speed.
-        let length = left_x.hypot(left_y);
-        if length > 0.0 {
-            left_x *= WALK_SPEED / length;
-            left_y *= WALK_SPEED / length;
-        }
-    }
-    PadState {
-        buttons: FALLBACK_BUTTONS
-            .iter()
-            .filter(|(vk, _)| on(*vk) != 0.0)
-            .fold(0, |all, (_, bit)| all | bit),
-        left_trigger: on(b'Z'),
-        right_trigger: on(b'C'),
-        left_x,
-        left_y,
-        right_x: on(b'L') - on(b'J'),
-        right_y: on(b'I') - on(b'K'),
-    }
+/// The scan code of a letter's place on a US keyboard ([`us_letter`]'s
+/// inverse): the scripted keys (`VICTORY_KEYS`) are named by their letter
+/// and keep it on any layout.
+#[cfg(any(windows, test))]
+fn us_scan(letter: u8) -> Option<u8> {
+    const ROWS: [(u8, &[u8]); 3] = [(0x10, b"QWERTYUIOP"), (0x1E, b"ASDFGHJKL"), (0x2C, b"ZXCVBNM")];
+    ROWS.iter().find_map(|&(first, row)| Some(first + row.iter().position(|&c| c == letter)? as u8))
+}
+
+/// The inputs of the layout ([`keymap`]) held now: `keys` by their place
+/// ([`key_at`]) and the mouse's `buttons` (bits, as the mouse reading has
+/// them: only while the cursor is captured).
+fn held(keys: &[KeyState], buttons: u32) -> Vec<Input> {
+    let mut held: Vec<Input> = keys.iter().map(|k| Input::from(key_at(k))).collect();
+    held.extend((0..5).filter(|bit| buttons & (1 << bit) != 0).map(|bit| keymap::MOUSE_BUTTON + bit as Input));
+    held
 }
 
 /// The mouse as the stand-in pad's right stick, so that it turns the camera
@@ -590,6 +584,8 @@ struct State {
     /// The mouse's last cumulative position and the right stick it moves
     /// ([`Look`]).
     look: Look,
+    /// The keyboard and mouse layout, its mode and the wheel ([`keymap`]).
+    controls: Controls,
     callbacks: Vec<Registration>,
     /// Asynchronous enumerations, delivered by the next poll.
     pending: Vec<Event>,
@@ -643,6 +639,7 @@ impl Hub {
                 pending: Vec::new(),
                 running: Vec::new(),
                 look: Look::default(),
+                controls: Controls::new(pc_map(), Wheel::from_env(POLL)),
             }),
             returned: Condvar::new(),
         }));
@@ -659,6 +656,7 @@ impl Hub {
     /// A hub over the host's input, polled from now on.
     fn start(source: Box<dyn Source>) -> &'static Hub {
         let hub = Hub::new(source, one_pad());
+        hub.state().controls = Controls::new(keymap::from_env(), Wheel::from_env(POLL));
         hub.poll();
         std::thread::spawn(move || {
             loop {
@@ -675,16 +673,16 @@ impl Hub {
 
     /// Reads the host once; device callbacks run on the calling thread.
     fn poll(&self) {
-        let (pads, keys, mouse, walking) = {
+        let (pads, keys, mouse, wheel) = {
             let mut source = lock(&self.source);
             let pads: [_; PADS] = std::array::from_fn(|slot| source.pad(slot));
             // Keys first: Alt or Esc frees the cursor before the mouse is read.
             let keys = source.keys();
-            (pads, keys, source.mouse(), source.walking())
+            (pads, keys, source.mouse(), source.wheel())
         };
         let events =
             self.state()
-                .poll(&self.devices, self.one_pad, pads, (keys, walking), mouse);
+                .poll(&self.devices, self.one_pad, pads, (keys, wheel), mouse);
         self.deliver(events);
     }
 
@@ -729,16 +727,21 @@ impl State {
         devices: &[Device; DEVICES],
         one_pad: bool,
         pads: [Option<PadState>; PADS],
-        (keys, walking): (Vec<KeyState>, bool),
+        (keys, wheel): (Vec<KeyState>, i32),
         mouse: Option<MouseState>,
     ) -> Vec<Event> {
         let now = now();
         let mut events = std::mem::take(&mut self.pending);
         self.update(devices, MOUSE, mouse.map(Value::Mouse), now, &mut events);
         let look = self.look.moved(mouse.as_ref());
-        let fallback = |keys: &[KeyState], walking: bool| merged(fallback(keys, walking), look);
+        let (stand_in, changed) = self.controls.pad(&held(&keys, mouse.map_or(0, |m| m.buttons)), wheel);
+        if let Some(mode) = changed {
+            tracing::info!("keyboard: {} (F or V)", mode.note());
+            victory_gpu::caption_note::show(mode.note());
+        }
+        let fallback = merged(stand_in, look);
         if one_pad {
-            let pad = pads.into_iter().flatten().fold(fallback(&keys, walking), merged);
+            let pad = pads.into_iter().flatten().fold(fallback, merged);
             self.update(devices, FALLBACK, Some(Value::Pad(pad)), now, &mut events);
             self.update(devices, KEYBOARD, Some(Value::Keys(keys)), now, &mut events);
             return events;
@@ -747,7 +750,7 @@ impl State {
         for (slot, pad) in pads.into_iter().enumerate() {
             self.update(devices, slot, pad.map(Value::Pad), now, &mut events);
         }
-        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys, walking)));
+        let fallback = (!any_pad).then_some(Value::Pad(fallback));
         self.update(devices, FALLBACK, fallback, now, &mut events);
         self.update(devices, KEYBOARD, Some(Value::Keys(keys)), now, &mut events);
         events
@@ -800,6 +803,13 @@ impl State {
             );
         }
     }
+}
+
+/// The built-in PC layout, for hubs that do not read `VICTORY_KEYMAP`
+/// (tests); [`Hub::start`] puts the asked one in.
+fn pc_map() -> &'static Keymap {
+    static MAP: LazyLock<Keymap> = LazyLock::new(Keymap::pc);
+    &MAP
 }
 
 #[cfg(windows)]
@@ -1404,7 +1414,8 @@ mod host {
     use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
+        GetAsyncKeyState, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1,
+        VK_XBUTTON2,
     };
     use windows_sys::Win32::UI::Input::XboxController::{
         XINPUT_GAMEPAD, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_BACK,
@@ -1463,8 +1474,6 @@ mod host {
         empty_until: [Option<Instant>; PADS],
         previous_cursor: Option<(i32, i32)>,
         mouse: MouseState,
-        /// The walk key is held on the keyboard ([`WALK_KEY`]).
-        walking: bool,
         was_captured: bool,
         /// We clipped the cursor (`ClipCursor`), so we let it go.
         clipped: bool,
@@ -1473,8 +1482,9 @@ mod host {
         swallowed: u32,
     }
 
-    /// The three mouse buttons the device reports, by bit.
-    const MOUSE_BUTTONS: [u16; 3] = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON];
+    /// The mouse buttons the device reports, by bit (left, right, middle,
+    /// the two side buttons).
+    const MOUSE_BUTTONS: [u16; 5] = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2];
 
     impl Host {
         /// Keeps the cursor's focus rule: freed when the title window does
@@ -1565,14 +1575,13 @@ mod host {
                 pad.buttons |= super::A;
             }
             // The scripted keys (`VICTORY_KEYS`) also press the first
-            // pad's buttons, by the stand-in pad's table: with a real pad
-            // connected the stand-in is not there, and a title that listens
-            // to the pad (the title's start screen) saw nothing.
+            // pad's buttons, by the layout's on-foot buttons (`keymap`):
+            // with a real pad connected and `VICTORY_ONE_PAD=0` the stand-in
+            // is not there, and a title that listens to the pad (the title's
+            // start screen) saw nothing.
             if slot == 0 {
                 for vk in scripted() {
-                    if let Some(&(_, button)) = super::FALLBACK_BUTTONS.iter().find(|(key, _)| *key == vk) {
-                        pad.buttons |= button;
-                    }
+                    pad.buttons |= keymap::from_env().buttons(keymap::Mode::Foot, Input::from(vk));
                 }
             }
             Some(pad)
@@ -1582,12 +1591,13 @@ mod host {
             let focused = focused_window().is_some();
             Self::focus(focused);
             // The scripted keys are pressed with or without focus, and never
-            // capture, free the cursor or walk.
+            // capture or free the cursor; a letter is at its US place on any
+            // layout (`us_scan`).
             let mut down = scripted();
             if auto_a_pressed() && !down.contains(&0x0D) {
                 down.push(0x0D);
             }
-            self.walking = false;
+            let script = down.len();
             if focused {
                 // Left/right modifier keys only, as devices report them; no
                 // mouse buttons (below 0x08).
@@ -1599,13 +1609,16 @@ mod host {
                 if cursor::releases(&held) {
                     cursor::release();
                 }
-                self.walking = held.contains(&WALK_KEY);
                 down.extend(held);
             }
             down.into_iter()
-                .map(|vk| KeyState {
-                    // SAFETY: plain query.
-                    scan_code: unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_VSC_EX) },
+                .enumerate()
+                .map(|(i, vk)| KeyState {
+                    scan_code: match us_scan(vk).filter(|_| i < script) {
+                        Some(scan) => u32::from(scan),
+                        // SAFETY: plain query.
+                        None => unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_VSC_EX) },
+                    },
                     virtual_key: vk,
                     // shortcut: no characters (code point 0);
                     // the title reads scan codes and virtual keys only.
@@ -1682,8 +1695,8 @@ mod host {
             Some(self.mouse)
         }
 
-        fn walking(&mut self) -> bool {
-            self.walking
+        fn wheel(&mut self) -> i32 {
+            cursor::take_wheel()
         }
 
         fn rumble(&mut self, slot: usize, low: u16, high: u16) {
@@ -1699,8 +1712,9 @@ mod host {
     /// Debugging aid: `VICTORY_KEYS=<seconds>:<key>,...` holds each key for
     /// 0.2 s that long after input starts (`<from>-<to>:<key>`: all that
     /// time), with or without focus. A key is a
-    /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Up`, `Down`,
-    /// `Left`, `Right` (the stand-in pad's table maps them to buttons).
+    /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Space`, `Up`,
+    /// `Down`, `Left`, `Right` (the layout, `keymap`, maps them to buttons:
+    /// X walks, Space is the X button).
     /// In every build: the benchmark script continues the save with it.
     fn scripted() -> Vec<u8> {
         static SCRIPT: LazyLock<(Instant, Vec<(Duration, Duration, u8)>)> = LazyLock::new(|| {
@@ -1712,6 +1726,7 @@ mod host {
                     "Esc" => 0x1B,
                     "Tab" => 0x09,
                     "Back" => 0x08,
+                    "Space" => 0x20,
                     "Up" => 0x26,
                     "Down" => 0x28,
                     "Left" => 0x25,
@@ -2055,20 +2070,105 @@ mod tests {
         assert_eq!(captured_buttons(3, true, true, 0), (3, 0));
     }
 
+    /// The stand-in pad of the PC layout on foot for `keys` and the mouse's
+    /// `buttons`.
+    fn on_foot(keys: &[KeyState], buttons: u32) -> PadState {
+        pc_map().pad(keymap::Mode::Foot, &held(keys, buttons))
+    }
+
     #[test]
     fn the_x_key_walks_and_space_is_the_x_button() {
-        // Scripted (or not held on the keyboard): X is the X button.
-        let pad = fallback(&[key(b'X'), key(b'W')], false);
-        assert_eq!((pad.buttons, pad.left_y), (X, 1.0));
-        // Held on the keyboard: no X button, the stick at walk speed, also
-        // on a diagonal.
-        let pad = fallback(&[key(b'X'), key(b'W')], true);
+        // X: no X button, the stick at walk speed, also on a diagonal.
+        let pad = on_foot(&[key(b'X'), key(b'W')], 0);
         assert_eq!((pad.buttons, pad.left_x, pad.left_y), (0, 0.0, WALK_SPEED));
-        let pad = fallback(&[key(b'X'), key(b'W'), key(b'D')], true);
+        let pad = on_foot(&[key(b'X'), key(b'W'), key(b'D')], 0);
         assert!((pad.left_x.hypot(pad.left_y) - WALK_SPEED).abs() < 1e-6);
         assert!(pad.left_x > 0.0 && pad.left_y > 0.0);
         // Walking still lets Space press X.
-        assert_eq!(fallback(&[key(b'X'), key(0x20)], true).buttons, X);
+        assert_eq!(on_foot(&[key(b'X'), key(0x20)], 0).buttons, X);
+    }
+
+    #[test]
+    fn an_azerty_keyboard_plays_by_the_places() {
+        // AZERTY: Z/Q/S/D move (US W/A/S/D places), A is Q's place (cover),
+        // the scan codes as Windows gives them.
+        let azerty = |scan: u32, letter: u8| KeyState {
+            scan_code: scan,
+            code_point: u32::from(letter.to_ascii_lowercase()),
+            virtual_key: letter,
+            dead_key: false,
+        };
+        let (z, q, a, w) = (azerty(0x11, b'Z'), azerty(0x1E, b'Q'), azerty(0x10, b'A'), azerty(0x2C, b'W'));
+        let pad = on_foot(&[z, q], 0);
+        assert_eq!((pad.left_x, pad.left_y, pad.buttons), (-1.0, 1.0, 0));
+        assert_eq!(on_foot(&[a], 0).buttons, RIGHT_SHOULDER, "the key at Q's place: cover");
+        assert_eq!(on_foot(&[w], 0), PadState::default(), "the key at Z's place: nothing on foot");
+        // Driving: the key at W's place (Z) accelerates.
+        let pad = pc_map().pad(keymap::Mode::Driving, &held(&[z], 0));
+        assert_eq!(pad.right_trigger, 1.0);
+        // The scripted keys keep their letter on any layout.
+        assert_eq!(us_scan(b'W'), Some(0x11));
+        assert_eq!(us_scan(b'M'), Some(0x32));
+        assert_eq!(us_scan(b'1'), None);
+        for c in b'A'..=b'Z' {
+            assert_eq!(us_letter(us_scan(c).unwrap()), Some(c));
+        }
+    }
+
+    #[test]
+    fn mouse_buttons_reach_the_stand_in_pad() {
+        // Left fires (RT), right aims (LT), middle is R3.
+        assert_eq!(on_foot(&[], 1).right_trigger, 1.0);
+        assert_eq!(on_foot(&[], 2).left_trigger, 1.0);
+        assert_eq!(on_foot(&[], 4).buttons, RIGHT_STICK);
+        // Through the hub: the mouse reading's buttons (captured cursor).
+        let (hub, host) = fake_with(true);
+        host.lock().unwrap().mouse = Some(MouseState { buttons: 3, ..MouseState::default() });
+        hub.poll();
+        let r = current(hub, GAMEPAD_KIND, FALLBACK).unwrap();
+        let p = pad(r);
+        assert_eq!((p.left_trigger, p.right_trigger), (1.0, 1.0));
+        release(r);
+    }
+
+    #[test]
+    fn the_keyboard_drives_and_a_controller_still_merges() {
+        let (hub, host) = fake_with(true);
+        let stand_in = |hub: &Hub| match &hub.state().slots[FALLBACK].history.back().unwrap().value {
+            Value::Pad(p) => *p,
+            _ => unreachable!(),
+        };
+        // F: Y, and the driving mode.
+        host.lock().unwrap().keys = vec![key(b'F')];
+        hub.poll();
+        assert_eq!(stand_in(hub).buttons, Y);
+        assert_eq!(hub.state().controls.mode, keymap::Mode::Driving);
+        // W accelerates; a pad's half-pressed RT and its A merge in.
+        host.lock().unwrap().keys = vec![key(b'W'), key(b'A')];
+        host.lock().unwrap().pads[0] =
+            Some(PadState { buttons: A, right_trigger: 0.5, left_trigger: 0.25, ..Default::default() });
+        hub.poll();
+        let p = stand_in(hub);
+        assert_eq!((p.buttons, p.right_trigger, p.left_trigger, p.left_x, p.left_y), (A, 1.0, 0.25, -1.0, 0.0));
+        // V: on foot again, W moves.
+        host.lock().unwrap().pads[0] = None;
+        host.lock().unwrap().keys = vec![key(b'V'), key(b'W')];
+        hub.poll();
+        assert_eq!(hub.state().controls.mode, keymap::Mode::Foot);
+        let p = stand_in(hub);
+        assert_eq!((p.right_trigger, p.left_y), (0.0, 1.0));
+        // The wheel: a notch down is a short d-pad right.
+        host.lock().unwrap().keys.clear();
+        hub.state().controls = Controls::new(pc_map(), Wheel::new(2, 1));
+        let state = &mut *hub.state();
+        let devices = &hub.devices;
+        let pads = [None; PADS];
+        state.poll(devices, true, pads, (Vec::new(), -1), None);
+        let p = match &state.slots[FALLBACK].history.back().unwrap().value {
+            Value::Pad(p) => *p,
+            _ => unreachable!(),
+        };
+        assert_eq!(p.buttons, RIGHT);
     }
 
     #[test]
@@ -2168,7 +2268,7 @@ mod tests {
         register(hub, KEYBOARD_KIND, 2, &log);
         assert_eq!(*log.lock().unwrap(), [(KEYBOARD, STATUS_CONNECTED, 0)]);
 
-        let keys = vec![key(b'W'), key(0x0D), key(b'L'), key(b'C')];
+        let keys = vec![key(b'W'), key(0x0D), key(b'L'), key(0xA2)];
         host.lock().unwrap().keys = keys.clone();
         hub.poll();
         let r = current(hub, KEYBOARD_KIND, KEYBOARD).unwrap();
@@ -2185,10 +2285,9 @@ mod tests {
         assert_eq!(
             pad(r),
             PadState {
-                buttons: A,
+                buttons: A | LEFT_STICK,
                 left_y: 1.0,
                 right_x: 1.0,
-                right_trigger: 1.0,
                 ..Default::default()
             }
         );

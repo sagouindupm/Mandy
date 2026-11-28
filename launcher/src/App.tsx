@@ -10,7 +10,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { type Key, useI18n } from "@/i18n"
-import { type Facts, type GameCheck, type JobKind, type Snapshot, JOB_KEYS, api, shortGpu } from "@/lib/api"
+import { type Facts, type GameCheck, type JobKind, type OptionName, type Snapshot, JOB_KEYS, api, shortGpu } from "@/lib/api"
 import { type ActionId, type Step, computeSteps, todo } from "@/lib/steps"
 import { HelpPage } from "@/pages/help"
 import { PlayPage } from "@/pages/play"
@@ -45,7 +45,7 @@ export type Ctx = {
   stop: () => void
   setMode: (mode: string) => Promise<void>
   /** An option of Settings; turning frame generation on fetches its files when they are missing. */
-  setOption: (name: "framegen" | "petite_vram", on: boolean) => Promise<void>
+  setOption: (name: OptionName, on: boolean) => Promise<void>
   /** NVIDIA's Streamline files for frame generation (series-s/framegen.ps1). */
   getFramegenFiles: () => Promise<boolean>
   pickDlss: () => Promise<void>

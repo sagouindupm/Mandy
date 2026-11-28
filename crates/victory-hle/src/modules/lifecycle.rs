@@ -280,6 +280,8 @@ extern "system" fn window_proc(
             // SAFETY: a plain query.
             cursor::click(unsafe { wm::GetForegroundWindow() } == hwnd);
         }
+        // The wheel's notches, for the layout's weapon keys (`keymap`).
+        wm::WM_MOUSEWHEEL => cursor::wheel((wparam >> 16) as u16 as i16),
         wm::WM_KILLFOCUS => cursor::release(),
         wm::WM_ENTERSIZEMOVE => cursor::size_move(true),
         wm::WM_EXITSIZEMOVE => cursor::size_move(false),

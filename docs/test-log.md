@@ -31,7 +31,7 @@ Rest of the night (same method, new base):
 | Mouse: mouse device (trustno1 #9, superboynick) + click = capture, Alt/Esc = release, X = walk | 98 ms, full run; a 1st version that re-centred the cursor without focus stopped the game around 285 s | kept |
 | DLSS (Streamline) fixed: the game's FSR4 gets 1280x720 as its maximum size, DLSS renders below it; the evaluation goes into the `VICTORY_THIN` stream | performance: 102 ms, clean picture; quality (720p): 176 ms, the best-looking picture | kept (option), PR to come on base #21 |
 | `VICTORY_WINDOWS_BAR_MB=3072` on 32 GB | 100 ms, peak RAM unchanged (20.3 GB), VRAM +550 MB | automatic under 24 GB only |
-| Boat driven in game (7 min, `VICTORY_KEYS` held) | 8.6-9.9 fps on the water; W does not accelerate with this layout, A turns | to follow up |
+| Boat driven in game (7 min, `VICTORY_KEYS` held) | 8.6-9.9 fps on the water; W does not accelerate with this layout, A turns | PC layout with a driving mode (F/V; W = RT): unit-tested, not tried in game yet |
 | **Merge of Proudnoob4/VIctory-NVIDIA `nvidia-hybrid-v2` (PR #21)** | 105 / **93 ms (10.8 fps, p90 122)**; submitting thread 52-63 ms instead of 92-116 | kept; a few squares in the sky at times |
 | `VICTORY_THIN_THREADS=4` instead of 5 on 6 cores (Maykzera, 26 Nov) | **87 ms (11.5 fps), p90 112, worst 178** against 93 / 122 | kept (launcher) |
 | Heat haze 731a39171b568298 left out (foxhound `VICTORY_LEAVE_OUT`; it smears blocks, on the water too) | **84 ms (11.8 fps)**, p90 115 against 93 / 122; sharp faces, realistic water, in game reached | kept (launcher) |

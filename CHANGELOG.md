@@ -4,6 +4,16 @@ VIctory S, the downloadable package (`VIctory-S-<version>.zip` on the
 [Releases](https://github.com/sagouindupm/Mandy/releases) page): the launcher `VIctory S.exe`, the engine
 `engine\victory.exe` and the Series S settings. Measurements behind each change: [docs/test-log.md](docs/test-log.md).
 
+## Unreleased
+
+### New
+
+- **Keyboard and mouse laid out as on PC**: WASD, mouse camera, right button aims, left button fires, Shift
+  sprints, Space jumps, F enters vehicles, Tab opens the weapon wheel, M the map, H the phone. In a vehicle
+  (F, or V by hand; the window's title shows `[driving]`): W accelerates, S brakes, Space is the handbrake, the
+  mouse buttons aim and fire from the vehicle. AZERTY and QWERTZ by key place, or by printed letter (Settings,
+  "Keyboard layout"). Keys can be rebound (`VICTORY_KEYMAP`); the Help page lists the layout.
+
 ## 0.2.0
 
 ### New

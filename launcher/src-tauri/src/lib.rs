@@ -81,6 +81,8 @@ struct SettingsView {
     /// The frame generation and low video memory options (« framegen », « petite_vram » in lanceur.json).
     framegen: bool,
     petite_vram: bool,
+    /// Keys by their printed letter, not their place (« clavier_lettres » in lanceur.json).
+    clavier_lettres: bool,
 }
 
 /// Frame generation on this PC (« framegen » in reglages.json).
@@ -225,6 +227,7 @@ fn snapshot(app: State<'_, App>) -> Res<Snapshot> {
             langue: lang_of(&s).to_string(),
             framegen: s.bool("framegen"),
             petite_vram: s.bool("petite_vram"),
+            clavier_lettres: s.bool("clavier_lettres"),
         },
         game_ok: game_ready(p, &s),
         game_check: game_check(p, &s),
@@ -436,11 +439,11 @@ fn set_mode(app: State<'_, App>, mode: String) -> Res<()> {
     s.save(&app.paths)
 }
 
-/// The options of Settings, in lanceur.json: « framegen » (frame generation) and « petite_vram » (low video memory
-/// mode).
+/// The options of Settings, in lanceur.json: « framegen » (frame generation), « petite_vram » (low video memory
+/// mode) and « clavier_lettres » (keys by their printed letter).
 #[tauri::command]
 fn set_option(app: State<'_, App>, name: String, on: bool) -> Res<()> {
-    if name != "framegen" && name != "petite_vram" {
+    if !["framegen", "petite_vram", "clavier_lettres"].contains(&name.as_str()) {
         return Err(format!("Unknown option: {name}"));
     }
     let mut s = Settings::load(&app.paths);
@@ -844,6 +847,9 @@ fn profile_text(p: &Profile, s: &Settings, r: &Reglages, dlss_ok: bool) -> Strin
     if s.bool("petite_vram") {
         lines.push("Low video memory mode: on".into());
     }
+    if s.bool("clavier_lettres") {
+        lines.push("Keyboard: by printed letter".into());
+    }
     lines.extend(p.warnings.iter().map(|m| format!("! {}", m.plain())));
     if !p.env.is_empty() {
         lines.push(format!("Changed: {}", p.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")));
@@ -961,6 +967,7 @@ fn print_env(args: &[String]) -> Result<(), String> {
                 "--gpu" => gpu = Some(next()?),
                 "--framegen" => s.set("framegen", next()? == "on"),
                 "--low-vram" => s.set("petite_vram", next()? == "on"),
+                "--keyboard" => s.set("clavier_lettres", next()? == "letters"),
                 "--framegen-dir" => fg_dir = Some(PathBuf::from(next()?)),
                 other => return Err(format!("Unknown option: {other}")),
             }
